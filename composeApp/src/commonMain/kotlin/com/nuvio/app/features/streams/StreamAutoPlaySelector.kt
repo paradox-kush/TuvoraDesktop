@@ -61,6 +61,96 @@ object StreamAutoPlaySelector {
             activeResolverProviderId = activeResolverProviderId,
         ).stream
 
+    /** Readiness check shared with the next-episode selector. */
+    fun isStreamReadyForAutoPlay(
+        stream: StreamItem,
+        debridEnabled: Boolean,
+        activeResolverProviderId: String?,
+    ): Boolean = stream.isAutoPlayable(debridEnabled, activeResolverProviderId)
+
+    /**
+     * The streams an auto-play decision may consider: source-scoped, filtered to the
+     * selected addons/plugins, and — in regex mode — matching the user's pattern.
+     * Unlike [evaluateAutoPlayStream] this never gates on MANUAL mode, so callers that
+     * resolve an explicit "play next" action can rank candidates themselves.
+     */
+    fun autoPlayCandidateStreams(
+        streams: List<StreamItem>,
+        mode: StreamAutoPlayMode,
+        regexPattern: String,
+        source: StreamAutoPlaySource,
+        installedAddonNames: Set<String>,
+        selectedAddons: Set<String>,
+        selectedPlugins: Set<String>,
+    ): List<StreamItem> {
+        val candidateStreams = scopedCandidateStreams(
+            streams = streams,
+            source = source,
+            installedAddonNames = installedAddonNames,
+            selectedAddons = selectedAddons,
+            selectedPlugins = selectedPlugins,
+        )
+        if (mode != StreamAutoPlayMode.REGEX_MATCH) return candidateStreams
+        val regexFilter = regexStreamFilter(regexPattern) ?: return emptyList()
+        return candidateStreams.filter(regexFilter)
+    }
+
+    private fun scopedCandidateStreams(
+        streams: List<StreamItem>,
+        source: StreamAutoPlaySource,
+        installedAddonNames: Set<String>,
+        selectedAddons: Set<String>,
+        selectedPlugins: Set<String>,
+    ): List<StreamItem> {
+        val sourceScopedStreams = when (source) {
+            StreamAutoPlaySource.ALL_SOURCES -> streams
+            StreamAutoPlaySource.INSTALLED_ADDONS_ONLY -> streams.filter { it.addonName in installedAddonNames }
+            StreamAutoPlaySource.ENABLED_PLUGINS_ONLY -> streams.filter { it.addonName !in installedAddonNames }
+        }
+        return sourceScopedStreams.filter { stream ->
+            val isAddonStream = stream.addonName in installedAddonNames
+            if (isAddonStream) {
+                selectedAddons.isEmpty() || stream.addonName in selectedAddons
+            } else {
+                selectedPlugins.isEmpty() || stream.addonName in selectedPlugins
+            }
+        }
+    }
+
+    private fun regexStreamFilter(regexPattern: String): ((StreamItem) -> Boolean)? {
+        val pattern = regexPattern.trim()
+
+        val userRegex = runCatching { Regex(pattern, RegexOption.IGNORE_CASE) }.getOrNull()
+            ?: return null
+
+        val exclusionMatches = Regex("\\(\\?![^)]*?\\(([^)]+)\\)").findAll(pattern)
+
+        val exclusionWords = exclusionMatches
+            .flatMap { match -> match.groupValues[1].split("|") }
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .toList()
+
+        val excludeRegex = if (exclusionWords.isNotEmpty()) {
+            Regex("\\b(${exclusionWords.joinToString("|")})\\b", RegexOption.IGNORE_CASE)
+        } else null
+
+        return { stream ->
+            val url = stream.playableDirectUrl.orEmpty()
+
+            val searchableText = buildString {
+                append(stream.addonName).append(' ')
+                append(stream.name.orEmpty()).append(' ')
+                append(stream.streamLabel).append(' ')
+                append(stream.description.orEmpty()).append(' ')
+                append(url)
+            }
+
+            userRegex.containsMatchIn(searchableText) &&
+                (excludeRegex == null || !excludeRegex.containsMatchIn(searchableText))
+        }
+    }
+
     fun evaluateAutoPlayStream(
         streams: List<StreamItem>,
         mode: StreamAutoPlayMode,
@@ -77,19 +167,13 @@ object StreamAutoPlaySelector {
     ): StreamAutoPlayEvaluation {
         if (streams.isEmpty()) return StreamAutoPlayEvaluation()
 
-        val sourceScopedStreams = when (source) {
-            StreamAutoPlaySource.ALL_SOURCES -> streams
-            StreamAutoPlaySource.INSTALLED_ADDONS_ONLY -> streams.filter { it.addonName in installedAddonNames }
-            StreamAutoPlaySource.ENABLED_PLUGINS_ONLY -> streams.filter { it.addonName !in installedAddonNames }
-        }
-        val candidateStreams = sourceScopedStreams.filter { stream ->
-            val isAddonStream = stream.addonName in installedAddonNames
-            if (isAddonStream) {
-                selectedAddons.isEmpty() || stream.addonName in selectedAddons
-            } else {
-                selectedPlugins.isEmpty() || stream.addonName in selectedPlugins
-            }
-        }
+        val candidateStreams = scopedCandidateStreams(
+            streams = streams,
+            source = source,
+            installedAddonNames = installedAddonNames,
+            selectedAddons = selectedAddons,
+            selectedPlugins = selectedPlugins,
+        )
         if (candidateStreams.isEmpty()) return StreamAutoPlayEvaluation()
         if (mode == StreamAutoPlayMode.MANUAL && !bingeGroupOnly) {
             return StreamAutoPlayEvaluation()
@@ -130,42 +214,9 @@ object StreamAutoPlaySelector {
             StreamAutoPlayMode.MANUAL -> emptyList()
             StreamAutoPlayMode.FIRST_STREAM -> candidateStreams
             StreamAutoPlayMode.REGEX_MATCH -> {
-                val pattern = regexPattern.trim()
-
-                val userRegex = runCatching { Regex(pattern, RegexOption.IGNORE_CASE) }.getOrNull()
+                val regexFilter = regexStreamFilter(regexPattern)
                     ?: return StreamAutoPlayEvaluation()
-
-                val exclusionMatches = Regex("\\(\\?![^)]*?\\(([^)]+)\\)").findAll(pattern)
-
-                val exclusionWords = exclusionMatches
-                    .flatMap { match -> match.groupValues[1].split("|") }
-                    .map { it.trim() }
-                    .filter { it.isNotBlank() }
-                    .toList()
-
-                val excludeRegex = if (exclusionWords.isNotEmpty()) {
-                    Regex("\\b(${exclusionWords.joinToString("|")})\\b", RegexOption.IGNORE_CASE)
-                } else null
-
-                candidateStreams.filter { stream ->
-                    val url = stream.playableDirectUrl.orEmpty()
-
-                    val searchableText = buildString {
-                        append(stream.addonName).append(' ')
-                        append(stream.name.orEmpty()).append(' ')
-                        append(stream.streamLabel).append(' ')
-                        append(stream.description.orEmpty()).append(' ')
-                        append(url)
-                    }
-
-                    if (!userRegex.containsMatchIn(searchableText)) return@filter false
-
-                    if (excludeRegex != null && excludeRegex.containsMatchIn(searchableText)) {
-                        return@filter false
-                    }
-
-                    true
-                }
+                candidateStreams.filter(regexFilter)
             }
         }
         if (matchingStreams.isEmpty() && preferredStream == null) return StreamAutoPlayEvaluation()

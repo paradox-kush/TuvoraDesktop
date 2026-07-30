@@ -4629,6 +4629,7 @@ private fun TabletFloatingTopBar(
                         tokens.colors.surface
                     },
                     shape = tokens.shapes.chip,
+                    modifier = Modifier.clickable { onTabSelected(AppScreenTab.Settings) },
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = tokens.spacing.listGap, vertical = tokens.spacing.controlGap),
@@ -4640,10 +4641,10 @@ private fun TabletFloatingTopBar(
                             onClick = { onTabSelected(AppScreenTab.Settings) },
                             onProfileSelected = onProfileSelected,
                             onAddProfileRequested = onAddProfileRequested,
+                            avatarSize = 34,
                         )
                         Text(
                             text = stringResource(Res.string.compose_nav_profile),
-                            modifier = Modifier.clickable { onTabSelected(AppScreenTab.Settings) },
                             style = MaterialTheme.typography.labelLarge,
                             color = if (selectedTab == AppScreenTab.Settings) {
                                 tokens.colors.textPrimary

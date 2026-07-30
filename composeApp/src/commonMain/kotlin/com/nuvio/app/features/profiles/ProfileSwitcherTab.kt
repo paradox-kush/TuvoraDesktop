@@ -100,6 +100,7 @@ fun ProfileSwitcherTab(
     onAddProfileRequested: () -> Unit,
     triggerContent: (@Composable (selected: Boolean) -> Unit)? = null,
     openPopupOnClick: Boolean = false,
+    avatarSize: Int = 28,
     modifier: Modifier = Modifier,
 ) {
     val tokens = MaterialTheme.nuvio
@@ -257,7 +258,7 @@ fun ProfileSwitcherTab(
                 profile = activeProfile,
                 avatars = avatars,
                 selected = selected,
-                size = 28,
+                size = avatarSize,
             )
         }
 

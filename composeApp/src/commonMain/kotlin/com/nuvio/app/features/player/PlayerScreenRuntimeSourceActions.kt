@@ -370,7 +370,7 @@ internal fun PlayerScreenRuntime.switchToDownloadedEpisode(downloadItem: Downloa
     controlsVisible = true
 }
 
-internal fun PlayerScreenRuntime.playNextEpisode() {
+internal fun PlayerScreenRuntime.playNextEpisode(manual: Boolean = false) {
     scope.launchPlayerNextEpisodeAutoPlay(
         previousJob = nextEpisodeAutoPlayJob,
         nextEpisodeInfo = nextEpisodeInfo,
@@ -380,6 +380,10 @@ internal fun PlayerScreenRuntime.playNextEpisode() {
         contentType = contentType,
         settings = playerSettingsUiState,
         currentStreamBingeGroup = currentStreamBingeGroup,
+        currentProviderAddonId = activeProviderAddonId,
+        currentLanguageTargets = currentPlaybackLanguageTargets(),
+        contentOriginalLanguage = contentOriginalLanguage(),
+        manualTrigger = manual,
         onDownloadedEpisodeSelected = { item, episode -> switchToDownloadedEpisode(item, episode) },
         onEpisodeStreamSelected = { stream, episode -> switchToEpisodeStream(stream, episode) },
         onManualSelectionRequired = { nextVideo ->
@@ -392,11 +396,39 @@ internal fun PlayerScreenRuntime.playNextEpisode() {
         onSearchingChanged = { nextEpisodeAutoPlaySearching = it },
         onSourceNameChanged = { nextEpisodeAutoPlaySourceName = it },
         onCountdownChanged = { nextEpisodeAutoPlayCountdown = it },
-        onNextEpisodeCardVisibleChanged = { showNextEpisodeCard = it },
+        onNextEpisodeCardVisibleChanged = { visible ->
+            showNextEpisodeCard = visible
+            if (!visible) nextEpisodeFlowIsManual = false
+        },
     )?.let { job ->
         nextEpisodeAutoPlayJob = job
     }
 }
+
+/**
+ * The language(s) the user is currently watching in, most-truthful first: the selected
+ * audio track, then whatever the playing stream advertised, then the content's own language.
+ */
+internal fun PlayerScreenRuntime.currentPlaybackLanguageTargets(): Set<String> {
+    val selectedTrack = audioTracks.firstOrNull { it.index == selectedAudioIndex }
+        ?: audioTracks.firstOrNull { it.isSelected }
+    resolveAudioTrackLanguageTarget(selectedTrack)?.let { return setOf(it) }
+
+    val advertised = languageCodesInText(
+        listOf(activeStreamTitle, activeStreamSubtitle, activeTorrentFilename)
+            .filterNot { it.isNullOrBlank() }
+            .joinToString(" "),
+    ) - MULTI_LANGUAGE_MARKER
+    if (advertised.isNotEmpty()) return advertised
+
+    return contentOriginalLanguage()?.let(::setOf) ?: emptySet()
+}
+
+internal fun PlayerScreenRuntime.contentOriginalLanguage(): String? =
+    resolveContentLanguage(
+        language = metaUiState.meta?.language,
+        country = metaUiState.meta?.country,
+    ) ?: normalizeLanguageCode(args.contentLanguage)
 
 internal fun PlayerScreenRuntime.openSourcesPanel() {
     val vid = activeVideoId ?: return
@@ -426,6 +458,8 @@ private data class EpisodeResume(val positionMs: Long, val fraction: Float?)
 
 private fun PlayerScreenRuntime.resetEpisodePanelAndNextEpisodeState() {
     showNextEpisodeCard = false
+    nextEpisodeCardDismissed = false
+    nextEpisodeFlowIsManual = false
     showSourcesPanel = false
     showEpisodesPanel = false
     episodeStreamsPanelState = EpisodeStreamsPanelState()

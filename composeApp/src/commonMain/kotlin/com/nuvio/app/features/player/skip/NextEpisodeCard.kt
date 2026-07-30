@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -184,6 +185,18 @@ fun NextEpisodeCard(
                     modifier = Modifier.padding(start = 3.dp),
                 )
             }
+
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.6f),
+                modifier = Modifier
+                    .padding(start = 4.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onDismiss)
+                    .padding(5.dp)
+                    .size(13.dp),
+            )
         }
     }
 }

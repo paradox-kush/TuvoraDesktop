@@ -107,8 +107,21 @@ fun LiveTvScreen(
         val resolved = LiveTvData.resolveSource(currentContentId, currentTitle, currentLogo)
         if (resolved == null) resolveError = true else source = resolved
     }
-    val onRetry: () -> Unit = {
-        if (playbackError != null && source != null) controller?.retry() else retryTick++
+    // Always re-resolve on retry: live links carry expiring tokens (Stalker create_link is
+    // single-use/short-TTL), so controller.retry() would just replay the dead URL.
+    val onRetry: () -> Unit = { retryTick++ }
+
+    // One AUTOMATIC fresh re-resolve per resolved URL: a mid-watch 401 (token expired, or the
+    // portal session was rotated by another device on the same MAC) recovers invisibly; a second
+    // failure on the freshly minted link means the channel/account is the problem — surface the
+    // error pill instead of hammering the portal.
+    var autoRefreshBurntUrl by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(playbackError) {
+        val failedUrl = source?.url ?: return@LaunchedEffect
+        if (playbackError != null && autoRefreshBurntUrl != failedUrl) {
+            autoRefreshBurntUrl = failedUrl
+            retryTick++
+        }
     }
 
     // Guide channel column (once, from the launch channel's account).
@@ -161,51 +174,91 @@ fun LiveTvScreen(
         modifier = modifier.fillMaxSize().background(colors.surface),
     ) {
         val fullscreen = maxWidth > maxHeight
+        val hasError = resolveError || playbackError != null
 
         // Back in fullscreen exits fullscreen instead of leaving the screen.
         PlatformBackHandler(enabled = fullscreen) { manualOrientation = false }
-
         if (fullscreen) {
             EnterImmersivePlayerMode(keepScreenAwake = snapshot.isPlaying || snapshot.isLoading)
-            FullscreenLiveLayout(
-                title = currentTitle,
-                source = source,
-                resolveError = resolveError,
-                playbackError = playbackError,
-                snapshot = snapshot,
-                colors = colors,
-                onControllerReady = { controller = it },
-                onSnapshot = { snapshot = it },
-                onError = { playbackError = it },
-                onPlayPause = { if (snapshot.isPlaying) controller?.pause() else controller?.play() },
-                onRetry = onRetry,
-                onExitFullscreen = { manualOrientation = false },
-                onBack = onBack,
-            )
-        } else {
-            DockedLiveLayout(
-                title = currentTitle,
-                logo = currentLogo,
-                nowNext = nowNext,
-                source = source,
-                resolveError = resolveError,
-                playbackError = playbackError,
-                snapshot = snapshot,
-                channels = channels,
-                currentContentId = currentContentId,
-                nowMs = nowMs,
-                programmesOf = { programmes[it] },
-                onNeedProgrammes = onNeedProgrammes,
-                onSelectChannel = ::switchTo,
-                colors = colors,
-                onControllerReady = { controller = it },
-                onSnapshot = { snapshot = it },
-                onError = { playbackError = it },
-                onPlayPause = { if (snapshot.isPlaying) controller?.pause() else controller?.play() },
-                onRetry = onRetry,
-                onEnterFullscreen = { manualOrientation = true },
-                onBack = onBack,
-            )
+        }
+
+        // Fullscreen controls auto-hide while playing; always shown when docked.
+        var controlsVisible by remember { mutableStateOf(true) }
+        LaunchedEffect(fullscreen) { controlsVisible = true }
+        LaunchedEffect(controlsVisible, fullscreen, snapshot.isPlaying) {
+            if (fullscreen && controlsVisible && snapshot.isPlaying) {
+                delay(3500)
+                controlsVisible = false
+            }
+        }
+        val showPlayPause = !hasError && !(snapshot.isLoading && !snapshot.isPlaying)
+
+        Column(
+            modifier = Modifier.fillMaxSize().then(
+                if (fullscreen) Modifier else Modifier.statusBarsPadding(),
+            ),
+        ) {
+            // The player box keeps a STABLE position (always the Column's first child); only its size
+            // modifier changes between docked (16:9) and fullscreen (fill). The MPV SurfaceView is
+            // therefore never detached/reattached on rotation, so the stream doesn't reload/rebuffer.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (fullscreen) Modifier.weight(1f) else Modifier.aspectRatio(16f / 9f))
+                    .background(Color.Black)
+                    .then(
+                        if (fullscreen) Modifier.clickable { controlsVisible = !controlsVisible } else Modifier,
+                    ),
+            ) {
+                LivePlayerSurface(
+                    source = source,
+                    onControllerReady = { controller = it },
+                    onSnapshot = { snapshot = it },
+                    onError = { playbackError = it },
+                )
+
+                // Loading / error indicators (both orientations).
+                when {
+                    hasError -> Box(Modifier.fillMaxSize(), Alignment.Center) { ErrorPill(colors.danger, onRetry) }
+                    snapshot.isLoading && !snapshot.isPlaying ->
+                        Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = colors.accent) }
+                }
+
+                if (fullscreen) {
+                    FullscreenControls(
+                        visible = controlsVisible,
+                        title = currentTitle,
+                        isPlaying = snapshot.isPlaying,
+                        showPlayPause = showPlayPause,
+                        danger = colors.danger,
+                        onPlayPause = { if (snapshot.isPlaying) controller?.pause() else controller?.play() },
+                        onExitFullscreen = { manualOrientation = false },
+                        onBack = onBack,
+                    )
+                } else {
+                    DockedPlayerOverlay(
+                        isPlaying = snapshot.isPlaying,
+                        showPlayPause = showPlayPause,
+                        danger = colors.danger,
+                        onPlayPause = { if (snapshot.isPlaying) controller?.pause() else controller?.play() },
+                        onEnterFullscreen = { manualOrientation = true },
+                        onBack = onBack,
+                    )
+                }
+            }
+
+            if (!fullscreen) {
+                NowBar(logo = currentLogo, title = currentTitle, nowNext = nowNext, nowMs = nowMs, colors = colors)
+                LiveGuideGrid(
+                    channels = channels,
+                    currentContentId = currentContentId,
+                    nowMs = nowMs,
+                    programmesOf = { programmes[it] },
+                    onNeedProgrammes = onNeedProgrammes,
+                    onSelectChannel = ::switchTo,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                )
+            }
         }
     }
 }
@@ -221,83 +274,6 @@ private fun nowNextOf(list: List<XtreamProgram>?, nowMs: Long): NowNext {
         ?: sorted.indexOfFirst { it.startMs > nowMs }.takeIf { it >= 0 }?.let { it - 1 }
         ?: 0
     return NowNext(sorted.getOrNull(nowIdx), sorted.getOrNull(nowIdx + 1))
-}
-
-// ---------------------------------------------------------------------------------------------
-// Docked (portrait) layout
-// ---------------------------------------------------------------------------------------------
-
-@Composable
-private fun DockedLiveLayout(
-    title: String,
-    logo: String?,
-    nowNext: NowNext,
-    source: LiveChannelSource?,
-    resolveError: Boolean,
-    playbackError: String?,
-    snapshot: PlayerPlaybackSnapshot,
-    channels: List<LiveGuideChannel>,
-    currentContentId: String,
-    nowMs: Long,
-    programmesOf: (String) -> List<XtreamProgram>?,
-    onNeedProgrammes: (String) -> Unit,
-    onSelectChannel: (LiveGuideChannel) -> Unit,
-    colors: com.nuvio.app.core.ui.NuvioColorTokens,
-    onControllerReady: (PlayerEngineController) -> Unit,
-    onSnapshot: (PlayerPlaybackSnapshot) -> Unit,
-    onError: (String?) -> Unit,
-    onPlayPause: () -> Unit,
-    onRetry: () -> Unit,
-    onEnterFullscreen: () -> Unit,
-    onBack: () -> Unit,
-) {
-    Column(
-        modifier = Modifier.fillMaxSize().statusBarsPadding(),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f)
-                .background(Color.Black),
-        ) {
-            LivePlayerSurface(
-                source = source,
-                onControllerReady = onControllerReady,
-                onSnapshot = onSnapshot,
-                onError = onError,
-            )
-            DockedPlayerOverlay(
-                title = title,
-                snapshot = snapshot,
-                resolveError = resolveError,
-                playbackError = playbackError,
-                accent = colors.accent,
-                danger = colors.danger,
-                onPlayPause = onPlayPause,
-                onRetry = onRetry,
-                onEnterFullscreen = onEnterFullscreen,
-                onBack = onBack,
-            )
-        }
-
-        NowBar(
-            logo = logo,
-            title = title,
-            nowNext = nowNext,
-            nowMs = nowMs,
-            colors = colors,
-        )
-
-        LiveGuideGrid(
-            channels = channels,
-            currentContentId = currentContentId,
-            nowMs = nowMs,
-            programmesOf = programmesOf,
-            onNeedProgrammes = onNeedProgrammes,
-            onSelectChannel = onSelectChannel,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-        )
-    }
 }
 
 @Composable
@@ -364,21 +340,17 @@ private fun NowBar(
     }
 }
 
+/** Portrait overlay: back + LIVE + fullscreen button on top, play/pause centered. */
 @Composable
 private fun DockedPlayerOverlay(
-    title: String,
-    snapshot: PlayerPlaybackSnapshot,
-    resolveError: Boolean,
-    playbackError: String?,
-    accent: Color,
+    isPlaying: Boolean,
+    showPlayPause: Boolean,
     danger: Color,
     onPlayPause: () -> Unit,
-    onRetry: () -> Unit,
     onEnterFullscreen: () -> Unit,
     onBack: () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
-        // Top row: back + LIVE badge.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -391,114 +363,69 @@ private fun DockedPlayerOverlay(
             Spacer(Modifier.weight(1f))
             OverlayIconButton(Icons.Filled.Fullscreen, "Fullscreen", onEnterFullscreen)
         }
-
-        // Center: loading / error / play-pause.
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            when {
-                resolveError || playbackError != null -> ErrorPill(danger, onRetry)
-                snapshot.isLoading && !snapshot.isPlaying -> CircularProgressIndicator(color = accent)
-                else -> OverlayIconButton(
-                    if (snapshot.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    "Play/pause",
-                    onPlayPause,
-                    big = true,
-                )
-            }
+        if (showPlayPause) {
+            OverlayIconButton(
+                if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                "Play/pause",
+                onPlayPause,
+                big = true,
+                modifier = Modifier.align(Alignment.Center),
+            )
         }
     }
 }
 
-// ---------------------------------------------------------------------------------------------
-// Fullscreen (landscape) layout
-// ---------------------------------------------------------------------------------------------
-
+/** Landscape overlay (fades in/out): back + LIVE + title on top, play/pause centered, minimise bottom-right. */
 @Composable
-private fun FullscreenLiveLayout(
+private fun FullscreenControls(
+    visible: Boolean,
     title: String,
-    source: LiveChannelSource?,
-    resolveError: Boolean,
-    playbackError: String?,
-    snapshot: PlayerPlaybackSnapshot,
-    colors: com.nuvio.app.core.ui.NuvioColorTokens,
-    onControllerReady: (PlayerEngineController) -> Unit,
-    onSnapshot: (PlayerPlaybackSnapshot) -> Unit,
-    onError: (String?) -> Unit,
+    isPlaying: Boolean,
+    showPlayPause: Boolean,
+    danger: Color,
     onPlayPause: () -> Unit,
-    onRetry: () -> Unit,
     onExitFullscreen: () -> Unit,
     onBack: () -> Unit,
 ) {
-    var controlsVisible by remember { mutableStateOf(true) }
-    LaunchedEffect(controlsVisible, snapshot.isPlaying) {
-        if (controlsVisible && snapshot.isPlaying) {
-            delay(3500)
-            controlsVisible = false
+    AnimatedVisibility(visible = visible, enter = fadeIn(), exit = fadeOut()) {
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.28f))) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(NuvioTokens.Space.s12),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OverlayIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
+            Spacer(Modifier.width(NuvioTokens.Space.s12))
+            LiveBadge(danger)
+            Spacer(Modifier.width(NuvioTokens.Space.s12))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (showPlayPause) {
+            OverlayIconButton(
+                if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                "Play/pause",
+                onPlayPause,
+                big = true,
+                modifier = Modifier.align(Alignment.Center),
+            )
+        }
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(NuvioTokens.Space.s16),
+        ) {
+            OverlayIconButton(Icons.Filled.FullscreenExit, "Exit fullscreen", onExitFullscreen)
         }
     }
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-            .clickable { controlsVisible = !controlsVisible },
-    ) {
-        LivePlayerSurface(
-            source = source,
-            onControllerReady = onControllerReady,
-            onSnapshot = onSnapshot,
-            onError = onError,
-        )
-        when {
-            resolveError || playbackError != null ->
-                Box(Modifier.fillMaxSize(), Alignment.Center) { ErrorPill(colors.danger, onRetry) }
-            snapshot.isLoading && !snapshot.isPlaying ->
-                Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = colors.accent) }
-        }
-
-        AnimatedVisibility(
-            visible = controlsVisible,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.28f))) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                        .padding(NuvioTokens.Space.s12),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    OverlayIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
-                    Spacer(Modifier.width(NuvioTokens.Space.s12))
-                    LiveBadge(colors.danger)
-                    Spacer(Modifier.width(NuvioTokens.Space.s12))
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color.White,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                if (!(resolveError || playbackError != null) && !(snapshot.isLoading && !snapshot.isPlaying)) {
-                    OverlayIconButton(
-                        if (snapshot.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        "Play/pause",
-                        onPlayPause,
-                        big = true,
-                        modifier = Modifier.align(Alignment.Center),
-                    )
-                }
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(NuvioTokens.Space.s16),
-                ) {
-                    OverlayIconButton(Icons.Filled.FullscreenExit, "Exit fullscreen", onExitFullscreen)
-                }
-            }
-        }
     }
 }
 

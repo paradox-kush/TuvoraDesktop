@@ -618,6 +618,40 @@ fun resolveContentLanguage(language: String?, country: String?): String? {
     return null
 }
 
+/** Marker emitted by [languageCodesInText] when the text advertises multiple audio languages. */
+const val MULTI_LANGUAGE_MARKER = "multi"
+
+private val MultiLanguageTokens = setOf("multi", "multilang", "multiaudio", "dual", "dualaudio")
+
+/**
+ * Best-effort language detection over free-form release text (stream names, filenames,
+ * scraper descriptions). Full language names match in any case; bare ISO-639-2 tags only
+ * match when fully uppercase ("HIN", "ENG") — lowercase/titlecase 3-letter words collide
+ * with ordinary words and names ("Ben", "May", "Mar").
+ */
+fun languageCodesInText(text: String?): Set<String> {
+    if (text.isNullOrBlank()) return emptySet()
+    val found = linkedSetOf<String>()
+    for (match in Regex("[A-Za-z]+").findAll(text)) {
+        val token = match.value
+        val lower = token.lowercase()
+        when {
+            lower in MultiLanguageTokens -> found += MULTI_LANGUAGE_MARKER
+            lower == "portuguese" || lower == "portugues" -> found += "pt"
+            lower == "spanish" || lower == "espanol" || lower == "castellano" -> found += "es"
+            else -> {
+                LanguageNameAliases[lower]?.let { found += it.lowercase() }
+                    ?: run {
+                        if (token.length == 3 && token.all { it.isUpperCase() }) {
+                            LanguageCodeAliases[lower]?.let { found += it.lowercase() }
+                        }
+                    }
+            }
+        }
+    }
+    return found
+}
+
 private val COUNTRY_TO_LANGUAGE_MAP = mapOf(
     // ISO 3166-1 alpha-2
     "jp" to "ja", "kr" to "ko", "cn" to "zh", "tw" to "zh",

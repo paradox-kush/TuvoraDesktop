@@ -17,7 +17,11 @@ import com.nuvio.app.features.tmdb.TmdbTitleBundle
 internal object XtreamStreamSource {
     private val log = Logger.withTag("XtreamStreamSource")
 
-    fun groupId(acc: XtreamAccount): String = "xtream-match:${acc.id}"
+    /** Prefix of every matched-lane group id — lets the player recognise an iptv-matched stream
+     *  (and recover its account) from `activeProviderAddonId` alone. */
+    const val GROUP_ID_PREFIX = "xtream-match:"
+
+    fun groupId(acc: XtreamAccount): String = "$GROUP_ID_PREFIX${acc.id}"
 
     suspend fun streamsFor(acc: XtreamAccount, type: String, videoId: String, season: Int?, episode: Int?): List<StreamItem> {
         val kind = when (TmdbService.normalizeMediaType(type)) {

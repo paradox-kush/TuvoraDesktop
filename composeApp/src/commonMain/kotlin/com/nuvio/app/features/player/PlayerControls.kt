@@ -5,6 +5,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +33,7 @@ import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.Replay10
+import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.VideoLibrary
@@ -89,6 +92,7 @@ internal fun PlayerControlsShell(
     onVideoSettingsClick: (() -> Unit)? = null,
     onSourcesClick: (() -> Unit)? = null,
     onEpisodesClick: (() -> Unit)? = null,
+    onNextEpisodeClick: (() -> Unit)? = null,
     onOpenInExternalPlayer: (() -> Unit)? = null,
     onSubmitIntroClick: (() -> Unit)? = null,
     parentalWarnings: List<ParentalWarning> = emptyList(),
@@ -191,6 +195,7 @@ internal fun PlayerControlsShell(
                     onAudioClick = onAudioClick,
                     onSourcesClick = onSourcesClick,
                     onEpisodesClick = onEpisodesClick,
+                    onNextEpisodeClick = onNextEpisodeClick,
                     isLive = isLive,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -498,6 +503,7 @@ private fun ProgressControls(
     onAudioClick: () -> Unit,
     onSourcesClick: (() -> Unit)? = null,
     onEpisodesClick: (() -> Unit)? = null,
+    onNextEpisodeClick: (() -> Unit)? = null,
     isLive: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
@@ -556,7 +562,9 @@ private fun ProgressControls(
                 ),
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                    modifier = Modifier
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -592,6 +600,13 @@ private fun ProgressControls(
                             label = stringResource(Res.string.compose_player_episodes),
                             icon = Icons.Rounded.VideoLibrary,
                             onClick = onEpisodesClick,
+                        )
+                    }
+                    if (onNextEpisodeClick != null) {
+                        PlayerActionPillButton(
+                            label = stringResource(Res.string.compose_player_next_episode),
+                            icon = Icons.Rounded.SkipNext,
+                            onClick = onNextEpisodeClick,
                         )
                     }
                 }

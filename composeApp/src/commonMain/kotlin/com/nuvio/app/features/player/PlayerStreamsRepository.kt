@@ -185,6 +185,54 @@ object PlayerStreamsRepository {
             return
         }
 
+        // Xtream IPTV: a namespaced id resolves to one direct stream — no addons/debrid. Without
+        // this lane the addon path below finds nothing for xtream ids, so the in-player
+        // expired-link refresh (tryRefreshCredentialedSourceAfterError polls THIS repository)
+        // could never mint a replacement. Stalker always re-resolves FRESH: its create_link play
+        // URLs are single-use/short-TTL, and the registry-cached one was consumed by the last play.
+        if (com.nuvio.app.features.iptv.XtreamItemRegistry.isXtreamId(videoId)) {
+            val registry = com.nuvio.app.features.iptv.XtreamItemRegistry
+            val isStalkerSource = registry.parseId(videoId)?.let { parsed ->
+                com.nuvio.app.features.iptv.XtreamRepository.uiState.value.accounts
+                    .firstOrNull { it.id == parsed.accountId }
+                    ?.sourceType == com.nuvio.app.features.iptv.SOURCE_TYPE_STALKER
+            } ?: false
+            stateFlow.value = StreamsUiState(isAnyLoading = true)
+            val job = scope.launch {
+                if (isStalkerSource || registry.streamItemFor(videoId) == null) {
+                    runCatchingUnlessCancelled {
+                        MetaDetailsRepository.ensureXtreamStreamRegistered(videoId, forceFresh = isStalkerSource)
+                    }
+                }
+                val stream = registry.streamItemFor(videoId)
+                stateFlow.value = if (stream != null) {
+                    val group = AddonStreamGroup(
+                        addonName = stream.addonName,
+                        addonId = "xtream",
+                        streams = listOf(stream),
+                        isLoading = false,
+                    )
+                    val presentedGroup = StreamBadgePresentation.apply(
+                        groups = listOf(group),
+                        rules = streamBadgeRules,
+                    ).firstOrNull() ?: group
+                    StreamsUiState(
+                        groups = listOf(presentedGroup),
+                        activeAddonIds = setOf("xtream"),
+                        isAnyLoading = false,
+                    )
+                } else {
+                    log.w { "Player xtream lane: no stream for id=$videoId" }
+                    StreamsUiState(
+                        isAnyLoading = false,
+                        emptyStateReason = com.nuvio.app.features.streams.StreamsEmptyStateReason.NoStreamsFound,
+                    )
+                }
+            }
+            setJob(job)
+            return
+        }
+
         val installedAddons = AddonRepository.uiState.value.addons.enabledAddons()
         PlayerSettingsRepository.ensureLoaded()
         val playerSettings = PlayerSettingsRepository.uiState.value

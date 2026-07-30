@@ -28,6 +28,12 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
     contentType: String?,
     settings: PlayerSettingsUiState,
     currentStreamBingeGroup: String?,
+    currentProviderAddonId: String?,
+    currentLanguageTargets: Set<String>,
+    contentOriginalLanguage: String?,
+    // User-initiated (button/card tap) vs. automatic near-end trigger: manual skips the
+    // countdown and may open the source picker; auto never surfaces a panel uninvited.
+    manualTrigger: Boolean,
     onDownloadedEpisodeSelected: (DownloadItem, MetaVideo) -> Unit,
     onEpisodeStreamSelected: (StreamItem, MetaVideo) -> Unit,
     onManualSelectionRequired: (MetaVideo) -> Unit,
@@ -57,43 +63,15 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
     onCountdownChanged(null)
 
     val type = contentType ?: parentMetaType
-    val shouldAutoSelectInManualMode =
-        settings.streamAutoPlayMode == StreamAutoPlayMode.MANUAL &&
-            (
-                settings.streamAutoPlayNextEpisodeEnabled ||
-                    settings.streamAutoPlayPreferBingeGroup
-                )
-
-    val bingeGroupOnlyManualMode =
-        shouldAutoSelectInManualMode &&
-            !settings.streamAutoPlayNextEpisodeEnabled &&
-            settings.streamAutoPlayPreferBingeGroup
-
-    val effectiveMode = if (shouldAutoSelectInManualMode) {
-        StreamAutoPlayMode.FIRST_STREAM
-    } else {
-        settings.streamAutoPlayMode
-    }
-    val effectiveSource = if (shouldAutoSelectInManualMode) {
-        StreamAutoPlaySource.ALL_SOURCES
-    } else {
-        settings.streamAutoPlaySource
-    }
-    val effectiveSelectedAddons = if (shouldAutoSelectInManualMode) {
-        emptySet()
-    } else {
-        settings.streamAutoPlaySelectedAddons
-    }
-    val effectiveSelectedPlugins = if (shouldAutoSelectInManualMode) {
-        emptySet()
-    } else {
-        settings.streamAutoPlaySelectedPlugins
-    }
-    val effectiveRegex = if (shouldAutoSelectInManualMode) {
-        ""
-    } else {
-        settings.streamAutoPlayRegex
-    }
+    // Users who configured an explicit auto-play mode keep their scoping/regex and its
+    // pick-anything fallback; everyone else gets the tiered same-provider/same-language flow
+    // that ends in the manual picker.
+    val usesConfiguredAutoPlay = settings.streamAutoPlayMode != StreamAutoPlayMode.MANUAL
+    val effectiveMode = if (usesConfiguredAutoPlay) settings.streamAutoPlayMode else StreamAutoPlayMode.FIRST_STREAM
+    val effectiveSource = if (usesConfiguredAutoPlay) settings.streamAutoPlaySource else StreamAutoPlaySource.ALL_SOURCES
+    val effectiveSelectedAddons = if (usesConfiguredAutoPlay) settings.streamAutoPlaySelectedAddons else emptySet()
+    val effectiveSelectedPlugins = if (usesConfiguredAutoPlay) settings.streamAutoPlaySelectedPlugins else emptySet()
+    val effectiveRegex = if (usesConfiguredAutoPlay) settings.streamAutoPlayRegex else ""
     val preferredBingeGroup = if (settings.streamAutoPlayPreferBingeGroup) {
         currentStreamBingeGroup
     } else {
@@ -137,8 +115,8 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
             settleAutoSelect()
         }
 
-        fun trySelectStream(streams: List<StreamItem>): StreamItem? =
-            StreamAutoPlaySelector.selectAutoPlayStream(
+        fun trySelectStream(streams: List<StreamItem>, confidentTiersOnly: Boolean = false): StreamItem? {
+            val candidates = StreamAutoPlaySelector.autoPlayCandidateStreams(
                 streams = streams,
                 mode = effectiveMode,
                 regexPattern = effectiveRegex,
@@ -146,29 +124,23 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
                 installedAddonNames = installedAddonNames,
                 selectedAddons = effectiveSelectedAddons,
                 selectedPlugins = effectiveSelectedPlugins,
-                preferredBingeGroup = preferredBingeGroup,
-                preferBingeGroupInSelection = settings.streamAutoPlayPreferBingeGroup,
-                bingeGroupOnly = bingeGroupOnlyManualMode,
-                debridEnabled = debridSettings.canResolvePlayableLinks,
-                activeResolverProviderId = debridSettings.activeResolverProviderId,
             )
-
-        fun tryBingeGroupOnly(streams: List<StreamItem>): StreamItem? {
-            if (preferredBingeGroup == null || !settings.streamAutoPlayPreferBingeGroup) return null
-            return StreamAutoPlaySelector.selectAutoPlayStream(
-                streams = streams,
-                mode = effectiveMode,
-                regexPattern = effectiveRegex,
-                source = effectiveSource,
-                installedAddonNames = installedAddonNames,
-                selectedAddons = effectiveSelectedAddons,
-                selectedPlugins = effectiveSelectedPlugins,
-                preferredBingeGroup = preferredBingeGroup,
-                preferBingeGroupInSelection = true,
-                bingeGroupOnly = true,
-                debridEnabled = debridSettings.canResolvePlayableLinks,
-                activeResolverProviderId = debridSettings.activeResolverProviderId,
-            )
+            return PlayerNextEpisodeSourceSelector.select(
+                streams = candidates,
+                currentProviderAddonId = currentProviderAddonId,
+                currentBingeGroup = preferredBingeGroup,
+                currentLanguages = currentLanguageTargets,
+                contentOriginalLanguage = contentOriginalLanguage,
+                isReady = { stream ->
+                    StreamAutoPlaySelector.isStreamReadyForAutoPlay(
+                        stream = stream,
+                        debridEnabled = debridSettings.canResolvePlayableLinks,
+                        activeResolverProviderId = debridSettings.activeResolverProviderId,
+                    )
+                },
+                allowAnyFallback = usesConfiguredAutoPlay && !confidentTiersOnly,
+                confidentTiersOnly = confidentTiersOnly,
+            )?.stream
         }
 
         val innerJob = launch {
@@ -187,7 +159,9 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
                         }
                     }
                 } else if (allStreams.isNotEmpty()) {
-                    val earlyMatch = tryBingeGroupOnly(allStreams)
+                    // While providers are still answering, only grab high-confidence
+                    // continuations (same provider or same release chain).
+                    val earlyMatch = trySelectStream(allStreams, confidentTiersOnly = true)
                     if (earlyMatch != null) {
                         selectStream(earlyMatch)
                     }
@@ -264,17 +238,21 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
         val selected = selectedStream
         if (selected != null) {
             onSourceNameChanged(selected.addonName)
-            for (i in 3 downTo 1) {
-                onCountdownChanged(i)
-                delay(1000)
+            if (!manualTrigger) {
+                for (i in 3 downTo 1) {
+                    onCountdownChanged(i)
+                    delay(1000)
+                }
             }
             onEpisodeStreamSelected(selected, nextVideo)
             onNextEpisodeCardVisibleChanged(false)
             onCountdownChanged(null)
             onSourceNameChanged(null)
-        } else {
+        } else if (manualTrigger) {
             onManualSelectionRequired(nextVideo)
             onNextEpisodeCardVisibleChanged(false)
         }
+        // Auto flow with no confident match: keep the card up, quietly idle — tapping it
+        // re-runs as a manual trigger and surfaces the source picker.
     }
 }

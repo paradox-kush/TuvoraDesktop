@@ -650,10 +650,13 @@ object MetaDetailsRepository {
      * default. Returns true once a playable item is registered. Called from the direct-play path
      * (StreamsRepository) so it doesn't have to go through the detail screen first.
      */
-    suspend fun ensureXtreamStreamRegistered(id: String): Boolean {
+    suspend fun ensureXtreamStreamRegistered(id: String, forceFresh: Boolean = false): Boolean {
         // A blank registered URL is a Stalker placeholder — fall through to resolve it fresh.
+        // [forceFresh] skips the cache short-circuit: Stalker create_link URLs are single-use /
+        // short-TTL, so a replay (or a mid-playback 401) must mint a NEW link even though the
+        // registry still holds the previous, already-consumed one.
         val existing = XtreamItemRegistry.get(id)
-        if (existing != null && !existing.streamUrl.isNullOrBlank()) return true
+        if (!forceFresh && existing != null && !existing.streamUrl.isNullOrBlank()) return true
         XtreamRepository.ensureLoaded()
         val parsed = XtreamItemRegistry.parseId(id) ?: return false
         val account = XtreamRepository.uiState.value.accounts

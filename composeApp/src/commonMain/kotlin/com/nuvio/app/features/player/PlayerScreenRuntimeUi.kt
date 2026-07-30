@@ -547,6 +547,17 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
             },
             onSourcesClick = if (activeVideoId != null) { { openSourcesPanel() } } else null,
             onEpisodesClick = if (isSeries) { { openEpisodesPanel() } } else null,
+            onNextEpisodeClick = if (isSeries && nextEpisodeInfo?.hasAired == true) {
+                {
+                    nextEpisodeAutoPlayJob?.cancel()
+                    nextEpisodeFlowIsManual = true
+                    nextEpisodeCardDismissed = false
+                    showNextEpisodeCard = true
+                    playNextEpisode(manual = true)
+                }
+            } else {
+                null
+            },
             onOpenInExternalPlayer = args.onOpenInExternalPlayer?.let { openExternal ->
                 {
                     val loadedSubtitles = addonSubtitles
@@ -1322,11 +1333,14 @@ private fun BoxScope.RenderPlaybackOverlays(
             nextEpisodeAutoPlayCountdown = nextEpisodeAutoPlayCountdown,
             onPlayNextEpisode = {
                 nextEpisodeAutoPlayJob?.cancel()
-                playNextEpisode()
+                nextEpisodeFlowIsManual = true
+                playNextEpisode(manual = true)
             },
             onDismissNextEpisode = {
                 nextEpisodeAutoPlayJob?.cancel()
                 showNextEpisodeCard = false
+                nextEpisodeCardDismissed = true
+                nextEpisodeFlowIsManual = false
                 nextEpisodeAutoPlaySearching = false
                 nextEpisodeAutoPlaySourceName = null
                 nextEpisodeAutoPlayCountdown = null

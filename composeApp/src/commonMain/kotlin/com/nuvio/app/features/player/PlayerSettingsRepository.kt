@@ -68,7 +68,7 @@ data class PlayerSettingsUiState(
     val animeSkipClientId: String = "",
     val introDbApiKey: String = "",
     val introSubmitEnabled: Boolean = false,
-    val streamAutoPlayNextEpisodeEnabled: Boolean = false,
+    val streamAutoPlayNextEpisodeEnabled: Boolean = true,
     val streamAutoPlayPreferBingeGroup: Boolean = true,
     val streamAutoPlayReuseBingeGroup: Boolean = true,
     val nextEpisodeThresholdMode: NextEpisodeThresholdMode = NextEpisodeThresholdMode.PERCENTAGE,
@@ -135,7 +135,7 @@ object PlayerSettingsRepository {
     private var animeSkipClientId = ""
     private var introDbApiKey = ""
     private var introSubmitEnabled = false
-    private var streamAutoPlayNextEpisodeEnabled = false
+    private var streamAutoPlayNextEpisodeEnabled = true
     private var streamAutoPlayPreferBingeGroup = true
     private var streamAutoPlayReuseBingeGroup = true
     private var nextEpisodeThresholdMode = NextEpisodeThresholdMode.PERCENTAGE
@@ -207,7 +207,7 @@ object PlayerSettingsRepository {
         animeSkipClientId = ""
         introDbApiKey = ""
         introSubmitEnabled = false
-        streamAutoPlayNextEpisodeEnabled = false
+        streamAutoPlayNextEpisodeEnabled = true
         streamAutoPlayPreferBingeGroup = true
         streamAutoPlayReuseBingeGroup = true
         nextEpisodeThresholdMode = NextEpisodeThresholdMode.PERCENTAGE
@@ -339,7 +339,7 @@ object PlayerSettingsRepository {
         animeSkipClientId = PlayerSettingsStorage.loadAnimeSkipClientId() ?: ""
         introDbApiKey = PlayerSettingsStorage.loadIntroDbApiKey() ?: ""
         introSubmitEnabled = PlayerSettingsStorage.loadIntroSubmitEnabled() ?: false
-        streamAutoPlayNextEpisodeEnabled = PlayerSettingsStorage.loadStreamAutoPlayNextEpisodeEnabled() ?: false
+        streamAutoPlayNextEpisodeEnabled = PlayerSettingsStorage.loadStreamAutoPlayNextEpisodeEnabled() ?: true
         streamAutoPlayPreferBingeGroup = PlayerSettingsStorage.loadStreamAutoPlayPreferBingeGroup() ?: true
         streamAutoPlayReuseBingeGroup = PlayerSettingsStorage.loadStreamAutoPlayReuseBingeGroup() ?: true
         nextEpisodeThresholdMode = PlayerSettingsStorage.loadNextEpisodeThresholdMode()

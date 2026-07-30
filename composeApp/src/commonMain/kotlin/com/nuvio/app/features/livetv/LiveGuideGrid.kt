@@ -38,7 +38,7 @@ import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.iptv.XtreamProgram
 
-private val CHANNEL_COL_WIDTH = 76.dp
+private val CHANNEL_COL_WIDTH = 88.dp
 private val ROW_HEIGHT = 64.dp
 private val MINUTE_WIDTH = 3.5.dp
 private const val WINDOW_HOURS = 5
@@ -162,20 +162,20 @@ private fun GuideRow(
             .background(rowBg),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Pinned channel cell (logo + name). Whole row is the tap target for switching.
-        Row(
+        // Pinned channel cell: icon on top, short channel name below. Whole cell switches channel.
+        Column(
             modifier = Modifier
                 .width(CHANNEL_COL_WIDTH)
                 .height(ROW_HEIGHT)
                 .clickable(onClick = onClick)
-                .padding(horizontal = NuvioTokens.Space.s6),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
+                .padding(horizontal = NuvioTokens.Space.s4, vertical = NuvioTokens.Space.s6),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s2, Alignment.CenterVertically),
         ) {
             Box(
                 modifier = Modifier
-                    .width(44.dp)
-                    .height(44.dp)
+                    .width(30.dp)
+                    .height(30.dp)
                     .clip(RoundedCornerShape(NuvioTokens.Radius.sm))
                     .background(cardColor),
                 contentAlignment = Alignment.Center,
@@ -184,7 +184,7 @@ private fun GuideRow(
                     AsyncImage(
                         model = channel.logo,
                         contentDescription = channel.name,
-                        modifier = Modifier.fillMaxSize().padding(3.dp),
+                        modifier = Modifier.fillMaxSize().padding(2.dp),
                         contentScale = ContentScale.Fit,
                     )
                 } else {
@@ -196,6 +196,14 @@ private fun GuideRow(
                     )
                 }
             }
+            Text(
+                text = channel.name,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (isCurrent) accent else textPrimary,
+                fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
 
         // Scrolling programme lane (shares the header's scroll state).

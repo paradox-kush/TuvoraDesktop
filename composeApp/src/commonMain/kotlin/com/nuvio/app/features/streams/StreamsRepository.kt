@@ -161,7 +161,15 @@ object StreamsRepository {
         // (Series episodes are already handled by embedded streams above; this covers VOD
         // movies, which have no videos, and any registered live channel.)
         if (XtreamItemRegistry.isXtreamId(videoId)) {
-            val xtreamStream = XtreamItemRegistry.streamItemFor(videoId)
+            // Stalker play URLs are single-use/short-TTL create_link tokens: NEVER serve the
+            // registry-cached one (it was consumed by the last play) — force a fresh mint every
+            // stream-list build. Xtream/M3U URLs are stable, so the cache stays their fast path.
+            val isStalkerSource = XtreamItemRegistry.parseId(videoId)?.let { parsed ->
+                XtreamRepository.uiState.value.accounts
+                    .firstOrNull { it.id == parsed.accountId }
+                    ?.sourceType == com.nuvio.app.features.iptv.SOURCE_TYPE_STALKER
+            } ?: false
+            val xtreamStream = if (isStalkerSource) null else XtreamItemRegistry.streamItemFor(videoId)
             if (xtreamStream != null) {
                 val group = AddonStreamGroup(
                     addonName = xtreamStream.addonName,
@@ -180,14 +188,15 @@ object StreamsRepository {
                     isAnyLoading = false,
                 )
             } else {
-                // Registry miss: a persisted id (Continue Watching / Library) wasn't browsed this
-                // session. Rebuild + re-register it via MetaDetailsRepository (which fetches vodInfo
-                // for the correct container extension), then retry, before giving up.
+                // Registry miss (persisted id not browsed this session) OR a Stalker source whose
+                // cached single-use URL must not be replayed: rebuild/re-mint + re-register via
+                // MetaDetailsRepository (which fetches vodInfo for the correct container extension,
+                // and for Stalker resolves a FRESH create_link), then retry, before giving up.
                 _uiState.value = StreamsUiState(requestToken = requestToken, isAnyLoading = true)
                 activeJob?.cancel()
                 activeJob = scope.launch {
                     val rebuilt = runCatchingUnlessCancelled {
-                        MetaDetailsRepository.ensureXtreamStreamRegistered(videoId)
+                        MetaDetailsRepository.ensureXtreamStreamRegistered(videoId, forceFresh = isStalkerSource)
                     }.getOrDefault(false)
                     val retried = if (rebuilt) XtreamItemRegistry.streamItemFor(videoId) else null
                     if (retried != null) {
