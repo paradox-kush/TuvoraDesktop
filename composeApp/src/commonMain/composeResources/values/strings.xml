@@ -34,14 +34,14 @@
     <string name="addons_badge_unavailable">Unavailable</string>
     <string name="addons_configure">Configure addon</string>
     <string name="addons_delete">Delete addon</string>
-    <string name="addons_appstore_add_description">Bring your library into Nuvio with the addons you use.</string>
-    <string name="addons_appstore_empty_subtitle">Add an addon to start building your library.</string>
-    <string name="addons_appstore_empty_title">Make Nuvio yours.</string>
-    <string name="addons_appstore_input_placeholder">Addon URL</string>
-    <string name="addons_appstore_install_button">Add Addon</string>
+    <string name="addons_appstore_add_description">Connect your own media server to browse and play from your personal library.</string>
+    <string name="addons_appstore_empty_subtitle">Add a server URL above when you want Tuvora to show your private library.</string>
+    <string name="addons_appstore_empty_title">No personal libraries connected.</string>
+    <string name="addons_appstore_input_placeholder">Server URL</string>
+    <string name="addons_appstore_install_button">Add</string>
     <string name="store_empty_unavailable_title">Nothing here yet</string>
     <string name="store_empty_unavailable_message">Your current addons don’t have anything to show here.</string>
-    <string name="addons_empty_subtitle">Add a manifest URL to start loading catalogs, metadata, streams or subtitles into Nuvio.</string>
+    <string name="addons_empty_subtitle">Add a manifest URL to start loading catalogs, metadata, streams or subtitles into Tuvora.</string>
     <string name="addons_empty_title">No addons installed yet.</string>
     <string name="addons_error_enter_url">Enter an addon URL.</string>
     <string name="addons_input_placeholder">Addon URL</string>
@@ -152,7 +152,7 @@
     <string name="collections_editor_tmdb_list_helper">Example: https://www.themoviedb.org/list/8504994 or 8504994.</string>
     <string name="collections_editor_tmdb_person_helper">Example: https://www.themoviedb.org/person/31-tom-hanks or 31.</string>
     <string name="collections_editor_tmdb_display_title">Display title</string>
-    <string name="collections_editor_tmdb_title_helper">Shown as the row/tab name. If blank, Nuvio creates one from the source.</string>
+    <string name="collections_editor_tmdb_title_helper">Shown as the row/tab name. If blank, Tuvora creates one from the source.</string>
     <string name="collections_editor_tmdb_title_placeholder">Marvel Movies, Netflix Originals, Pixar</string>
     <string name="collections_editor_tmdb_person_title_placeholder">Tom Hanks Movies, Favorite Actors</string>
     <string name="collections_editor_tmdb_director_title_placeholder">Christopher Nolan Movies, Favorite Directors</string>
@@ -311,7 +311,7 @@
     <string name="collections_tab_all">All</string>
     <string name="collections_your_collections">Your Collections</string>
     <string name="compose_about_based_on_version_format">Based on Nuvio %1$s</string>
-    <string name="compose_about_made_with">Made with ❤️ by Tapframe and friends</string>
+    <string name="compose_about_made_with">Made with ❤️ by Nuvio · Rebranded by Paradox</string>
     <string name="compose_about_version_format">Version %1$s (%2$s)</string>
     <string name="compose_action_off">Off</string>
     <string name="compose_action_on">On</string>
@@ -452,7 +452,7 @@
     <string name="compose_settings_root_check_updates_description">Download latest release</string>
     <string name="compose_settings_root_check_updates_title">Check for updates</string>
     <string name="compose_settings_root_content_discovery_description">Manage addons and discovery sources.</string>
-    <string name="compose_settings_root_content_discovery_description_appstore">Manage addons and choose what appears in Nuvio.</string>
+    <string name="compose_settings_root_content_discovery_description_appstore">Manage addons and choose what appears in Tuvora.</string>
     <string name="compose_settings_root_downloads_description">Manage your downloaded movies and episodes.</string>
     <string name="compose_settings_root_downloads_description_appstore">Manage what you’ve saved on this device.</string>
     <string name="compose_settings_root_downloads_title">Downloads</string>
@@ -713,7 +713,7 @@
     <string name="settings_content_discovery_section_home">HOME</string>
     <string name="settings_content_discovery_section_sources">SOURCES</string>
     <string name="settings_content_discovery_addons_description">Install, remove, refresh, and sort your content sources.</string>
-    <string name="settings_content_discovery_addons_description_appstore">Add and manage the addons you use with Nuvio.</string>
+    <string name="settings_content_discovery_addons_description_appstore">Connect personal media sources and manage access to your own library.</string>
     <string name="settings_content_discovery_plugins_description">Install JavaScript scraper repositories and test providers internally.</string>
     <string name="settings_content_discovery_homescreen_description">Adjust home layout, content visibility, and poster behavior</string>
     <string name="settings_content_discovery_meta_screen_description">Settings for the detail and episode screens.</string>
@@ -744,7 +744,7 @@
     <string name="settings_debrid_disconnect">Disconnect</string>
     <string name="settings_debrid_device_auth_connected">%1$s is connected on this device.</string>
     <string name="settings_debrid_device_auth_starting">Starting secure sign-in...</string>
-    <string name="settings_debrid_device_auth_instructions">Open the link and enter this code to approve Nuvio.</string>
+    <string name="settings_debrid_device_auth_instructions">Open the link and enter this code to approve Tuvora.</string>
     <string name="settings_debrid_device_auth_code_copied">Code copied.</string>
     <string name="settings_debrid_device_auth_open">Open link</string>
     <string name="settings_debrid_device_auth_waiting">Waiting for approval...</string>
@@ -855,10 +855,10 @@
     <string name="settings_meta_tab_layout_description">Group sections into tabs like the TV app. Assign up to 3 sections per tab group.</string>
     <string name="settings_meta_trailers">Trailers</string>
     <string name="settings_meta_trailers_description">Trailer rail and playback shortcuts.</string>
-    <string name="settings_notifications_disabled_in_app">Notifications are currently disabled in Nuvio.</string>
+    <string name="settings_notifications_disabled_in_app">Notifications are currently disabled in Tuvora.</string>
     <string name="settings_notifications_episode_release_alerts">Episode release alerts</string>
     <string name="settings_notifications_episode_release_alerts_description">Schedule local notifications when a new episode for a saved show becomes available.</string>
-    <string name="settings_notifications_permission_disabled">System notifications are disabled for Nuvio. Enable them to receive alerts and test notifications.</string>
+    <string name="settings_notifications_permission_disabled">System notifications are disabled for Tuvora. Enable them to receive alerts and test notifications.</string>
     <string name="settings_notifications_scheduled_count">%1$d release alerts are currently scheduled on this device.</string>
     <string name="settings_notifications_section_alerts">ALERTS</string>
     <string name="settings_notifications_section_test">TEST</string>
@@ -868,7 +868,7 @@
     <string name="settings_notifications_test_requires_saved_show">Save a show to your library first to test notifications.</string>
     <string name="settings_notifications_test_title">Test notification</string>
     <string name="community_section_title">Community</string>
-    <string name="community_section_description">See the people building and supporting Nuvio across Mobile, TV, and Web.</string>
+    <string name="community_section_description">See the people building and supporting Tuvora across Mobile, TV, and Web.</string>
     <string name="community_donation_progress_title">This month&apos;s server &amp; maintenance</string>
     <string name="community_donation_progress_complete">Covered. Additional support now goes to development.</string>
     <string name="community_donation_progress_remaining">After 100%, additional support goes to development.</string>
@@ -1133,17 +1133,17 @@
     <string name="trakt_library_source_dialog_title">Library Source</string>
     <string name="trakt_library_source_dialog_subtitle">Choose where to save and manage your library items</string>
     <string name="trakt_library_source_trakt">Trakt</string>
-    <string name="trakt_library_source_nuvio">Nuvio Library</string>
+    <string name="trakt_library_source_nuvio">Tuvora Library</string>
     <string name="trakt_library_source_trakt_selected">Trakt library selected</string>
-    <string name="trakt_library_source_nuvio_selected">Nuvio library selected</string>
+    <string name="trakt_library_source_nuvio_selected">Tuvora library selected</string>
     <string name="trakt_watch_progress_title">Watch Progress</string>
     <string name="trakt_watch_progress_subtitle">Choose which progress source powers resume and continue watching</string>
     <string name="trakt_watch_progress_dialog_title">Watch Progress</string>
-    <string name="trakt_watch_progress_dialog_subtitle">Choose whether resume and continue watching should use Trakt or Nuvio Sync while Trakt scrobbling stays active.</string>
+    <string name="trakt_watch_progress_dialog_subtitle">Choose whether resume and continue watching should use Trakt or Tuvora Sync while Trakt scrobbling stays active.</string>
     <string name="trakt_watch_progress_source_trakt">Trakt</string>
-    <string name="trakt_watch_progress_source_nuvio">Nuvio Sync</string>
+    <string name="trakt_watch_progress_source_nuvio">Tuvora Sync</string>
     <string name="trakt_watch_progress_trakt_selected">Watch progress source set to Trakt</string>
-    <string name="trakt_watch_progress_nuvio_selected">Watch progress source set to Nuvio Sync</string>
+    <string name="trakt_watch_progress_nuvio_selected">Watch progress source set to Tuvora Sync</string>
     <string name="trakt_more_like_this_source_title">More Like This source</string>
     <string name="trakt_more_like_this_source_subtitle">Choose where recommendations come from on detail pages</string>
     <string name="trakt_more_like_this_source_dialog_title">More Like This source</string>
@@ -1283,7 +1283,7 @@
     <string name="details_series_missing_numbers">This addon returned videos for the series, but none included season or episode numbers.</string>
     <string name="details_series_no_metadata">This addon did not provide episode metadata for this series.</string>
     <string name="details_series_unpublished">Episodes have not been published by this addon yet.</string>
-    <string name="details_servers_unreachable">Your device is online, but Nuvio could not reach required servers.</string>
+    <string name="details_servers_unreachable">Your device is online, but Tuvora could not reach required servers.</string>
     <string name="details_show_less">Show Less</string>
     <string name="details_show_more">Show More ▾</string>
     <string name="details_writer">Writer</string>
@@ -1440,7 +1440,7 @@
     <string name="updates_debug_test_title">Test update banner</string>
     <string name="updates_install_failed">Unable to start installation</string>
     <string name="updates_latest_version">You&apos;re using the latest version.</string>
-    <string name="updates_message_allow_installs">Enable app installs for Nuvio, then come back and continue.</string>
+    <string name="updates_message_allow_installs">Enable app installs for Tuvora, then come back and continue.</string>
     <string name="updates_message_downloading">Downloading update...</string>
     <string name="updates_message_no_updates">No updates found.</string>
     <string name="updates_message_ready">A new version is ready to install.</string>
@@ -1454,7 +1454,7 @@
     <string name="addon_already_installed">That addon is already installed.</string>
     <string name="addon_invalid_url">Enter a valid addon URL</string>
     <string name="addon_load_manifest_failed">Unable to load manifest</string>
-    <string name="app_brand_name">Nuvio</string>
+    <string name="app_brand_name">Tuvora</string>
     <string name="auth_account_deletion_failed">Account deletion failed</string>
     <string name="auth_sign_in_failed">Sign-in failed</string>
     <string name="auth_sign_out_failed">Sign-out failed</string>
@@ -1925,7 +1925,7 @@
     <string name="downloads_error_open_partial_file_failed">Failed to open partial download file</string>
     <string name="downloads_error_partial_file_not_open">Partial download file is not open</string>
     <string name="downloads_error_write_partial_file_failed">Failed to write partial download file</string>
-    <string name="library_local_tab_title">Nuvio Library</string>
+    <string name="library_local_tab_title">Tuvora Library</string>
     <string name="network_connection_issue">Connection issue</string>
     <string name="network_empty_response_body">Empty response body</string>
     <string name="network_please_check_connection">Please check your connection and try again.</string>
@@ -2027,7 +2027,7 @@
     <string name="collections_editor_trakt_list_title_format">Trakt List %1$s</string>
     <string name="external_player_android_system">Android system player</string>
     <string name="p2p_consent_title">P2P Streaming</string>
-    <string name="p2p_consent_body">This stream uses peer-to-peer (P2P) technology. By enabling P2P, you acknowledge and agree that:\n\n• Your IP address will be visible to other peers in the network\n• You are solely responsible for the content you access\n• You confirm you have the legal right to stream this content in your jurisdiction\n• Nuvio does not host, distribute, or control any P2P content\n• Nuvio bears no liability for any legal consequences arising from your use of P2P streaming\n\nYou use this feature entirely at your own risk. P2P can be disabled anytime in Settings.</string>
+    <string name="p2p_consent_body">This stream uses peer-to-peer (P2P) technology. By enabling P2P, you acknowledge and agree that:\n\n• Your IP address will be visible to other peers in the network\n• You are solely responsible for the content you access\n• You confirm you have the legal right to stream this content in your jurisdiction\n• Tuvora does not host, distribute, or control any P2P content\n• Tuvora bears no liability for any legal consequences arising from your use of P2P streaming\n\nYou use this feature entirely at your own risk. P2P can be disabled anytime in Settings.</string>
     <string name="p2p_consent_enable">Enable P2P</string>
     <string name="p2p_consent_cancel">Cancel</string>
     <string name="p2p_error_unknown">Unknown torrent error</string>
@@ -2084,4 +2084,16 @@
         <item quantity="one">%d title</item>
         <item quantity="other">%d titles</item>
     </plurals>
+    <string name="compose_settings_page_iptv">IPTV (Xtream Codes)</string>
+    <string name="compose_settings_page_iptv_add_playlist">Add Playlist</string>
+    <string name="compose_settings_page_iptv_edit_playlist">Edit Playlist</string>
+    <string name="compose_settings_page_iptv_content">Content &amp; Categories</string>
+    <string name="compose_settings_page_iptv_category_checklist">Categories</string>
+    <string name="settings_account_checking">Checking sign-in status…</string>
+    <string name="settings_account_sign_in">Sign In</string>
+    <string name="settings_homescreen_hide_catalog_underline">Hide Catalog Underline</string>
+    <string name="settings_homescreen_hide_catalog_underline_description">Remove the accent line under catalog and collection titles throughout the app.</string>
+    <string name="theme_marigold">Marigold</string>
+    <string name="home_empty_iptv_hint_title">No content yet</string>
+    <string name="home_empty_iptv_hint_message">Add your IPTV playlist in Settings to see your channels, movies, and series here.</string>
 </resources>

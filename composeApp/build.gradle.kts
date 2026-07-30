@@ -50,10 +50,25 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
     abstract val supabaseFallbackUrl: Property<String>
 
     @get:Input
+    abstract val nuvioSupabaseUrl: Property<String>
+
+    @get:Input
+    abstract val nuvioSupabaseAnonKey: Property<String>
+
+    @get:Input
+    abstract val syncBackendManifestUrl: Property<String>
+
+    @get:Input
     abstract val sentryDsn: Property<String>
 
     @get:Input
     abstract val sentryEnvironment: Property<String>
+
+    @get:Input
+    abstract val tmdbApiKey: Property<String>
+
+    @get:Input
+    abstract val debugBuild: Property<Boolean>
 
     @get:Input
     abstract val realtimeSyncEnabled: Property<Boolean>
@@ -74,6 +89,30 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
                 |    const val URL = "${supabaseUrl.get()}"
                 |    const val ANON_KEY = "${supabaseAnonKey.get()}"
                 |    const val FALLBACK_URL = "${supabaseFallbackUrl.get()}"
+                |    const val NUVIO_URL = "${nuvioSupabaseUrl.get()}"
+                |    const val NUVIO_ANON_KEY = "${nuvioSupabaseAnonKey.get()}"
+                |}
+                """.trimMargin()
+            )
+            resolve("SyncBackendBootstrapConfig.kt").writeText(
+                """
+                |package com.nuvio.app.core.network
+                |
+                |object SyncBackendBootstrapConfig {
+                |    const val SWITCH_MANIFEST_URL = "${syncBackendManifestUrl.get()}"
+                |}
+                """.trimMargin()
+            )
+        }
+
+        outDir.resolve("com/nuvio/app/core/build").apply {
+            mkdirs()
+            resolve("AppBuildConfig.kt").writeText(
+                """
+                |package com.nuvio.app.core.build
+                |
+                |object AppBuildConfig {
+                |    const val IS_DEBUG_BUILD = ${debugBuild.get()}
                 |}
                 """.trimMargin()
             )
@@ -106,7 +145,20 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
             )
         }
 
-        outDir.resolve("com/nuvio/app/features/tmdb/TmdbConfig.kt").delete()
+        outDir.resolve("com/nuvio/app/features/tmdb").apply {
+            mkdirs()
+            // Default TMDB key so TMDB-dependent features (IPTV stream matching, id
+            // conversion) work out of the box; a user-entered key in settings overrides it.
+            resolve("TmdbConfig.kt").writeText(
+                """
+                |package com.nuvio.app.features.tmdb
+                |
+                |internal object TmdbConfig {
+                |    const val DEFAULT_API_KEY = "${tmdbApiKey.get()}"
+                |}
+                """.trimMargin()
+            )
+        }
 
         outDir.resolve("com/nuvio/app/features/trakt").apply {
             mkdirs()
@@ -450,10 +502,14 @@ val macosNotaryAppSpecificPassword = macosNotaryPassword
     ?.takeUnless { it.startsWith("@keychain:", ignoreCase = true) }
 
 val appVersionConfigFile = rootProject.file("iosApp/Configuration/Version.xcconfig")
-val releaseAppVersionName = readXcconfigValue(appVersionConfigFile, "MARKETING_VERSION")
+// -PversionNameOverride / -PversionCodeOverride (from the release pipeline / git tag) win over the
+// xcconfig, so AppVersionConfig.VERSION_NAME matches the released tag — the in-app updater compares
+// against THIS constant, not the Android manifest versionName.
+val releaseAppVersionName = providers.gradleProperty("versionNameOverride").orNull?.takeIf { it.isNotBlank() }
+    ?: readXcconfigValue(appVersionConfigFile, "MARKETING_VERSION")
     ?: error("MARKETING_VERSION is missing from ${appVersionConfigFile.path}")
-val releaseAppVersionCode = readXcconfigValue(appVersionConfigFile, "CURRENT_PROJECT_VERSION")
-    ?.toIntOrNull()
+val releaseAppVersionCode = providers.gradleProperty("versionCodeOverride").orNull?.toIntOrNull()
+    ?: readXcconfigValue(appVersionConfigFile, "CURRENT_PROJECT_VERSION")?.toIntOrNull()
     ?: error("CURRENT_PROJECT_VERSION is missing or invalid in ${appVersionConfigFile.path}")
 val desktopVersionConfigFile = rootProject.file("composeApp/Configuration/DesktopVersion.properties")
 val desktopVersionProps = Properties().apply {
@@ -549,6 +605,35 @@ fun runtimeConfigValue(key: String, fallback: String = ""): String =
         ?: providers.environmentVariable(key).orNull?.trim()?.takeIf { it.isNotBlank() }
         ?: fallback
 
+fun booleanConfigValue(key: String): Boolean? {
+    val rawValue = runtimeLocalProperties.getProperty(key)
+        ?: providers.environmentVariable(key).orNull
+        ?: providers.gradleProperty(key).orNull
+    return rawValue
+        ?.trim()
+        ?.lowercase()
+        ?.let { value ->
+            when (value) {
+                "1", "true", "yes", "y", "debug" -> true
+                "0", "false", "no", "n", "release" -> false
+                else -> null
+            }
+        }
+}
+
+val xcodeConfiguration = providers.environmentVariable("CONFIGURATION").orNull
+    ?.trim()
+    ?.lowercase()
+val kotlinFrameworkBuildType = providers.environmentVariable("KOTLIN_FRAMEWORK_BUILD_TYPE").orNull
+    ?.trim()
+    ?.lowercase()
+val inferredDebugBuild = requestedGradleTasks.any { "debug" in it } ||
+    xcodeConfiguration == "debug" ||
+    kotlinFrameworkBuildType == "debug"
+val isDebugBuild = booleanConfigValue("NUVIO_DEBUG_BUILD")
+    ?: booleanConfigValue("nuvio.debugBuild")
+    ?: inferredDebugBuild
+
 fun runtimeConfigBoolean(key: String, default: Boolean): Boolean =
     when (runtimeConfigValue(key).lowercase()) {
         "1", "true", "yes", "y", "on" -> true
@@ -563,9 +648,16 @@ val generateRuntimeConfigs = tasks.register<GenerateRuntimeConfigsTask>("generat
     appVersionCode.set(releaseAppVersionCode)
     desktopAppVersionName.set(desktopReleaseVersionName)
     desktopAppVersionCode.set(desktopReleaseVersionCode)
-    supabaseUrl.set(runtimeConfigValue("NUVIO_SUPABASE_URL"))
-    supabaseAnonKey.set(runtimeConfigValue("NUVIO_SUPABASE_ANON_KEY"))
-    supabaseFallbackUrl.set(runtimeConfigValue("NUVIO_SUPABASE_FALLBACK_URL"))
+    // Fork: SUPABASE_* = the self-hosted sync backend, NUVIO_* = upstream cloud (kept for
+    // their features); fallback applies to the fork backend when configured.
+    supabaseUrl.set(runtimeConfigValue("SUPABASE_URL"))
+    supabaseAnonKey.set(runtimeConfigValue("SUPABASE_ANON_KEY"))
+    supabaseFallbackUrl.set(runtimeConfigValue("SUPABASE_FALLBACK_URL"))
+    nuvioSupabaseUrl.set(runtimeConfigValue("NUVIO_SUPABASE_URL"))
+    nuvioSupabaseAnonKey.set(runtimeConfigValue("NUVIO_SUPABASE_ANON_KEY"))
+    syncBackendManifestUrl.set(runtimeConfigValue("SYNC_BACKEND_MANIFEST_URL"))
+    tmdbApiKey.set(runtimeConfigValue("TMDB_API_KEY"))
+    debugBuild.set(isDebugBuild)
     sentryDsn.set(runtimeConfigValue("SENTRY_DSN"))
     sentryEnvironment.set(
         when {
@@ -1001,6 +1093,7 @@ kotlin {
         }
         minSdk = libs.versions.android.minSdk.get().toInt()
         androidResources.enable = true
+        // JVM-side run of commonTest (fast local + ubuntu CI; the iOS twin is iosSimulatorArm64Test)
         withHostTest {}
 
         compilerOptions {
@@ -1050,6 +1143,10 @@ kotlin {
             defaultSourceSet.kotlin.srcDir(project.file(iosDistributionSourceDir))
             defaultSourceSet.dependencies {
                 implementation(libs.ktor.client.darwin)
+                // BundledSQLiteDriver: SQLite compiled into the framework, so the match-index
+                // db needs no system libsqlite3 link in the Xcode app (NativeSQLiteDriver's
+                // -lsqlite3 doesn't reliably propagate from a static framework to the app link).
+                implementation(libs.androidx.sqlite.bundled)
                 if (iosDistribution == "full") {
                     implementation(libs.quickjs.kt)
                     implementation(libs.ksoup)
@@ -1088,9 +1185,13 @@ kotlin {
                 implementation(libs.androidx.activity.compose)
                 implementation(libs.androidx.core.splashscreen)
                 implementation(libs.androidx.work.runtime)
+                implementation(libs.posthog.android)
                 implementation(libs.coil.gif)
                 implementation("androidx.recyclerview:recyclerview:1.4.0")
                 implementation("com.squareup.okhttp3:okhttp:4.12.0")
+                // Per-playlist DNS-over-HTTPS for IPTV (P3) — resolves panel hosts over an
+                // encrypted DoH endpoint on Android; iOS ignores the dnsProvider setting.
+                implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")
                 implementation("com.google.code.gson:gson:2.11.0")
                 implementation("io.github.peerless2012:ass-media:0.4.0-beta01")
                 implementation(libs.ktor.client.okhttp)
@@ -1124,6 +1225,8 @@ kotlin {
                 implementation("com.squareup.okhttp3:okhttp:4.12.0")
                 implementation(libs.quickjs.kt)
                 implementation(libs.ksoup)
+                // Fork IPTV/EPG stores (iptv_content/xtream_match/epg_mirror dbs) on the JVM.
+                implementation(libs.androidx.sqlite.bundled)
             }
         }
         commonMain.dependencies {
@@ -1156,6 +1259,10 @@ kotlin {
             implementation(libs.supabase.functions)
             implementation(libs.supabase.realtime)
             implementation(libs.reorderable)
+            // TMDB->Xtream match index: framework artifact resolves to AndroidSQLiteDriver
+            // on Android and NativeSQLiteDriver (system libsqlite3) on iOS — no bundled binary
+            implementation(libs.androidx.sqlite)
+            implementation(libs.androidx.sqlite.framework)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)

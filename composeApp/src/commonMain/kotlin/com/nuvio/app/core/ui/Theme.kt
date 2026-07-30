@@ -25,7 +25,7 @@ import nuvio.composeapp.generated.resources.jetbrains_sans_regular
 import nuvio.composeapp.generated.resources.jetbrains_sans_semibold
 import org.jetbrains.compose.resources.Font
 
-val LocalAppTheme = staticCompositionLocalOf { AppTheme.WHITE }
+val LocalAppTheme = staticCompositionLocalOf { AppTheme.MARIGOLD }
 
 internal val LocalNuvioPlatformDensity = staticCompositionLocalOf<Density> {
     error("Platform density is unavailable outside NuvioTheme")
@@ -209,7 +209,7 @@ internal fun desktopUiScaleForWindow(widthDp: Float, heightDp: Float): Float {
 @Composable
 fun NuvioTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    appTheme: AppTheme = AppTheme.WHITE,
+    appTheme: AppTheme = AppTheme.MARIGOLD,
     amoled: Boolean = false,
     desktopUiScale: Float = NuvioDesktopMinUiScale,
     content: @Composable () -> Unit,

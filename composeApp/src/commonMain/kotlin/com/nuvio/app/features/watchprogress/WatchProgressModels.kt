@@ -3,6 +3,7 @@ package com.nuvio.app.features.watchprogress
 import com.nuvio.app.features.cloud.CloudLibraryContentType
 import com.nuvio.app.features.cloud.cloudLibraryProviderPosterUrl
 import com.nuvio.app.features.details.MetaVideo
+import com.nuvio.app.features.iptv.XtreamItemRegistry
 import com.nuvio.app.features.watching.domain.WatchingContentRef
 import kotlinx.serialization.Serializable
 
@@ -237,7 +238,12 @@ internal fun nextUpDismissKey(
 internal fun WatchProgressEntry.toContinueWatchingItem(): ContinueWatchingItem {
     val normalizedEntry = normalizedCompletion()
     val cloudPosterUrl = normalizedEntry.cloudLibraryPosterFallbackUrl().nonBlankOrNull()
-    val resolvedPoster = normalizedEntry.poster.nonBlankOrNull() ?: cloudPosterUrl
+    // ponytail: an Xtream movie's persisted poster can be null (direct-play never enriched it) —
+    // fall back to the in-memory registry poster so Continue Watching shows art, not an empty frame.
+    val xtreamPoster = if (normalizedEntry.poster.isNullOrBlank()) {
+        XtreamItemRegistry.get(normalizedEntry.videoId)?.let { it.poster ?: it.logo }
+    } else null
+    val resolvedPoster = normalizedEntry.poster.nonBlankOrNull() ?: xtreamPoster.nonBlankOrNull() ?: cloudPosterUrl
     val resolvedBackground = normalizedEntry.background.nonBlankOrNull()
     val resolvedEpisodeThumbnail = normalizedEntry.episodeThumbnail.nonBlankOrNull()
     val explicitResumeProgressFraction = normalizedEntry.normalizedProgressPercent

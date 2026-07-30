@@ -1,6 +1,7 @@
 package com.nuvio.app.features.home
 
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope
@@ -21,6 +22,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.isDesktop
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
+import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.core.network.NetworkCondition
 import com.nuvio.app.core.network.NetworkStatusRepository
 import com.nuvio.app.core.ui.LocalNuvioBottomNavigationOverlayPadding
@@ -41,14 +43,19 @@ import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.details.SeriesPrimaryAction
 import com.nuvio.app.features.details.seriesPrimaryAction
+import com.nuvio.app.features.catalog.CatalogTarget
+import com.nuvio.app.features.home.components.ContinueWatchingLayout
 import com.nuvio.app.features.home.components.HomeCatalogRowSection
 import com.nuvio.app.features.home.components.HomeContinueWatchingSection
+import com.nuvio.app.features.iptv.XtreamItemRegistry
+import com.nuvio.app.features.iptv.XtreamLiveRecents
+import com.nuvio.app.features.iptv.toMetaPreview
 import com.nuvio.app.features.home.components.HomeEmptyStateCard
 import com.nuvio.app.features.home.components.HomeHeroReservedSpace
 import com.nuvio.app.features.home.components.HomeHeroSection
 import com.nuvio.app.features.home.components.HomeSkeletonHero
 import com.nuvio.app.features.home.components.HomeSkeletonRow
-import com.nuvio.app.features.home.components.ContinueWatchingLayout
+import com.nuvio.app.features.home.components.HomeContinueWatchingSectionBottomPadding
 import com.nuvio.app.features.trakt.TraktAuthRepository
 import com.nuvio.app.features.trakt.TRAKT_CONTINUE_WATCHING_DAYS_CAP_ALL
 import com.nuvio.app.features.trakt.TraktSettingsRepository
@@ -65,6 +72,7 @@ import com.nuvio.app.features.watchprogress.CurrentDateProvider
 import com.nuvio.app.features.watchprogress.ContinueWatchingPreferencesRepository
 import com.nuvio.app.features.watchprogress.ContinueWatchingPreferencesUiState
 import com.nuvio.app.features.watchprogress.ContinueWatchingItem
+import com.nuvio.app.features.watchprogress.ContinueWatchingSectionStyle
 import com.nuvio.app.features.watchprogress.ContinueWatchingSortMode
 import com.nuvio.app.features.watchprogress.isMalformedNextUpSeedContentId
 import com.nuvio.app.features.watchprogress.isSeriesTypeForContinueWatching
@@ -87,6 +95,8 @@ import com.nuvio.app.features.watching.domain.WatchingContentRef
 import com.nuvio.app.features.watching.domain.isReleasedBy
 import com.nuvio.app.features.collection.CollectionRepository
 import com.nuvio.app.features.profiles.ProfileRepository
+import com.nuvio.app.features.radar.RadarHomeSection
+import com.nuvio.app.features.radar.RadarRepository
 import com.nuvio.app.features.home.components.HomeCollectionRowSection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -118,6 +128,9 @@ fun HomeScreen(
     onContinueWatchingLongPress: ((ContinueWatchingItem) -> Unit)? = null,
     onFolderClick: ((collectionId: String, folderId: String) -> Unit)? = null,
     onFirstCatalogRendered: (() -> Unit)? = null,
+    onOpenSportsTab: () -> Unit = {},
+    onPlaySportsChannel: (String) -> Unit = {},
+    onAddIptvPlaylist: () -> Unit = {},
 ) {
     LaunchedEffect(Unit) {
         withContext(Dispatchers.Default) {
@@ -129,6 +142,7 @@ fun HomeScreen(
             TraktAuthRepository.ensureLoaded()
             WatchedRepository.ensureLoaded()
             WatchProgressRepository.ensureLoaded()
+            RadarRepository.ensureLoaded()
         }
         val authState = AuthRepository.state.value
         if (authState !is AuthState.Authenticated || authState.isAnonymous) {
@@ -456,6 +470,11 @@ fun HomeScreen(
             cloudLibraryUiState = cloudLibraryUiState,
         )
     }
+    // Live channels don't record watch progress, so recently-watched channels feed the Live TV
+    // row of the split Continue Watching UI.
+    val liveRecentsRaw by XtreamLiveRecents.recents.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { XtreamLiveRecents.ensureLoaded() }
+    val liveRecentPreviews = remember(liveRecentsRaw) { liveRecentsRaw.map { it.toMetaPreview() } }
     val (continueWatchingItems, upcomingItems) = remember(
         allContinueWatchingItems,
         continueWatchingPreferences.sortMode,
@@ -895,24 +914,45 @@ fun HomeScreen(
                 }
             }
 
+            // Sports Centre home presence: featured-event rail (opt-in) + set-up-Radar promo.
+            item(key = "radar-home-section") {
+                RadarHomeSection(
+                    onOpenSportsTab = onOpenSportsTab,
+                    onPlayChannel = onPlaySportsChannel,
+                    onAddPlaylist = onAddIptvPlaylist,
+                    onOpenRecording = { id ->
+                        XtreamItemRegistry.get(id)?.toMetaPreview()?.let { onPosterClick?.invoke(it) }
+                    },
+                )
+            }
+
             when {
                 !hasActiveAddons && !hasRenderableCollectionRows -> {
                     homeContinueWatchingSections(
                         preferences = continueWatchingPreferences,
                         continueWatchingItems = continueWatchingItems,
                         upcomingItems = upcomingItems,
+                        liveRecents = liveRecentPreviews,
                         sectionPadding = homeSectionPadding,
                         layout = continueWatchingLayout,
                         continueWatchingListState = continueWatchingListState,
                         upcomingListState = upcomingListState,
                         onItemClick = onContinueWatchingClick,
                         onItemLongPress = onContinueWatchingLongPress,
+                        onLivePosterClick = { onPosterClick?.invoke(it) },
                     )
                     item {
+                        // Store builds hide the addon system, so point at IPTV setup instead.
                         HomeEmptyStateCard(
                             modifier = Modifier.padding(horizontal = 16.dp),
-                            title = stringResource(Res.string.compose_search_empty_no_active_addons_title),
-                            message = stringResource(Res.string.home_empty_no_active_addons_message),
+                            title = stringResource(
+                                if (AppFeaturePolicy.addonsEnabled) Res.string.compose_search_empty_no_active_addons_title
+                                else Res.string.home_empty_iptv_hint_title
+                            ),
+                            message = stringResource(
+                                if (AppFeaturePolicy.addonsEnabled) Res.string.home_empty_no_active_addons_message
+                                else Res.string.home_empty_iptv_hint_message
+                            ),
                         )
                     }
                 }
@@ -922,12 +962,14 @@ fun HomeScreen(
                         preferences = continueWatchingPreferences,
                         continueWatchingItems = continueWatchingItems,
                         upcomingItems = upcomingItems,
+                        liveRecents = liveRecentPreviews,
                         sectionPadding = homeSectionPadding,
                         layout = continueWatchingLayout,
                         continueWatchingListState = continueWatchingListState,
                         upcomingListState = upcomingListState,
                         onItemClick = onContinueWatchingClick,
                         onItemLongPress = onContinueWatchingLongPress,
+                        onLivePosterClick = { onPosterClick?.invoke(it) },
                     )
                     items(3) {
                         HomeSkeletonRow(
@@ -937,7 +979,7 @@ fun HomeScreen(
                 }
 
                 homeUiState.sections.isEmpty() && homeUiState.heroItems.isEmpty() &&
-                    (!continueWatchingPreferences.isVisible || !hasContinueWatchingRows) &&
+                    (!continueWatchingPreferences.isVisible || (!hasContinueWatchingRows && liveRecentPreviews.isEmpty())) &&
                     !hasRenderableCollectionRows -> {
                     item {
                         if (networkStatusUiState.isOfflineLike) {
@@ -965,12 +1007,14 @@ fun HomeScreen(
                         preferences = continueWatchingPreferences,
                         continueWatchingItems = continueWatchingItems,
                         upcomingItems = upcomingItems,
+                        liveRecents = liveRecentPreviews,
                         sectionPadding = homeSectionPadding,
                         layout = continueWatchingLayout,
                         continueWatchingListState = continueWatchingListState,
                         upcomingListState = upcomingListState,
                         onItemClick = onContinueWatchingClick,
                         onItemLongPress = onContinueWatchingLongPress,
+                        onLivePosterClick = { onPosterClick?.invoke(it) },
                     )
 
                     keyedEnabledHomeItems.forEach { keyedSettingsItem ->
@@ -1021,19 +1065,22 @@ private fun LazyListScope.homeContinueWatchingSections(
     preferences: ContinueWatchingPreferencesUiState,
     continueWatchingItems: List<ContinueWatchingItem>,
     upcomingItems: List<ContinueWatchingItem>,
+    liveRecents: List<MetaPreview>,
     sectionPadding: Dp,
     layout: ContinueWatchingLayout,
     continueWatchingListState: LazyListState,
     upcomingListState: LazyListState,
     onItemClick: ((ContinueWatchingItem) -> Unit)?,
     onItemLongPress: ((ContinueWatchingItem) -> Unit)?,
+    onLivePosterClick: (MetaPreview) -> Unit,
 ) {
     if (!preferences.isVisible) return
 
-    if (continueWatchingItems.isNotEmpty()) {
+    if (continueWatchingItems.isNotEmpty() || liveRecents.isNotEmpty()) {
         item(key = HOME_CONTINUE_WATCHING_SECTION_KEY) {
-            HomeContinueWatchingSection(
+            HomeContinueWatchingSplit(
                 items = continueWatchingItems,
+                liveRecents = liveRecents,
                 style = preferences.style,
                 useEpisodeThumbnails = preferences.useEpisodeThumbnails,
                 blurNextUp = preferences.blurNextUp,
@@ -1043,6 +1090,7 @@ private fun LazyListScope.homeContinueWatchingSections(
                 listState = continueWatchingListState,
                 onItemClick = onItemClick,
                 onItemLongPress = onItemLongPress,
+                onLivePosterClick = onLivePosterClick,
             )
         }
     }
@@ -1926,5 +1974,99 @@ private suspend fun remapTraktProgressEntries(
                 entry
             }
         }
+    }
+}
+
+private suspend fun remapTraktWatchedItems(
+    items: List<WatchedItem>,
+    contentId: String,
+): List<WatchedItem> {
+    return items.map { item ->
+        if (item.id != contentId) {
+            item
+        } else {
+            val mapping = TraktEpisodeMappingService.resolveAddonEpisodeMapping(
+                contentId = item.id,
+                contentType = item.type ?: "series",
+                season = item.season,
+                episode = item.episode,
+            )
+            if (mapping != null) {
+                item.copy(
+                    season = mapping.season,
+                    episode = mapping.episode,
+                )
+            } else {
+                item
+            }
+        }
+    }
+}
+
+/**
+ * Continue Watching split into type-grouped rows: a Live TV row (recently-watched channels, since
+ * live records no resume position), then Movies and Series rows from the real watch-progress items.
+ * Each row hides itself when empty.
+ */
+@Composable
+private fun HomeContinueWatchingSplit(
+    items: List<ContinueWatchingItem>,
+    liveRecents: List<MetaPreview>,
+    style: ContinueWatchingSectionStyle,
+    useEpisodeThumbnails: Boolean,
+    blurNextUp: Boolean,
+    sectionPadding: Dp,
+    layout: ContinueWatchingLayout,
+    onItemClick: ((ContinueWatchingItem) -> Unit)?,
+    onItemLongPress: ((ContinueWatchingItem) -> Unit)?,
+    onLivePosterClick: (MetaPreview) -> Unit,
+    listState: LazyListState = rememberLazyListState(),
+    modifier: Modifier = Modifier,
+) {
+    // Live channels belong only in the Live TV row above — keep any that leaked into watch-progress
+    // (a live id classifies as tv -> series) out of the Movies/Series rows.
+    val nonLive = items.filterNot { XtreamItemRegistry.isLiveId(it.parentMetaId) }
+    val movies = nonLive.filterNot { it.parentMetaType.isSeriesTypeForContinueWatching() }
+    val series = nonLive.filter { it.parentMetaType.isSeriesTypeForContinueWatching() }
+    Column(modifier = modifier.padding(bottom = 12.dp)) {
+        if (liveRecents.isNotEmpty()) {
+            HomeCatalogRowSection(
+                section = HomeCatalogSection(
+                    key = "iptv_live_recents",
+                    title = "Live TV",
+                    subtitle = "",
+                    addonName = "",
+                    target = CatalogTarget.Library(contentType = "tv", sectionType = "xtream_recents"),
+                    items = liveRecents,
+                    availableItemCount = liveRecents.size,
+                    hasMore = false,
+                ),
+                sectionPadding = sectionPadding,
+                onPosterClick = onLivePosterClick,
+            )
+        }
+        HomeContinueWatchingSection(
+            items = movies,
+            style = style,
+            useEpisodeThumbnails = useEpisodeThumbnails,
+            blurNextUp = blurNextUp,
+            sectionPadding = sectionPadding,
+            layout = layout,
+            title = "Movies",
+            listState = listState,
+            onItemClick = onItemClick,
+            onItemLongPress = onItemLongPress,
+        )
+        HomeContinueWatchingSection(
+            items = series,
+            style = style,
+            useEpisodeThumbnails = useEpisodeThumbnails,
+            blurNextUp = blurNextUp,
+            sectionPadding = sectionPadding,
+            layout = layout,
+            title = "Series",
+            onItemClick = onItemClick,
+            onItemLongPress = onItemLongPress,
+        )
     }
 }

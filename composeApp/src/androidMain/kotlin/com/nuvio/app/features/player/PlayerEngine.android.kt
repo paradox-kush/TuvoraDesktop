@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.SystemClock
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.util.AttributeSet
+import android.view.SurfaceHolder
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.Composable
@@ -29,6 +30,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import kotlinx.coroutines.runBlocking
+import java.util.concurrent.Executors
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.getString
 import androidx.lifecycle.LifecycleEventObserver
@@ -128,8 +130,14 @@ actual fun PlatformPlayerSurface(
         useYoutubeChunkedPlayback,
         initialPositionRequestKey.orEmpty(),
     )
+    // Live IPTV is raw continuous MPEG-TS, which ExoPlayer can't sustain (buffers forever) —
+    // force libmpv regardless of the user's engine setting. VOD/series keep their choice.
+    val forceLibmpvForLive = normalizeStreamType(streamType) == "live"
     var activeEngine by remember(playerSourceKey, playerSettings.androidPlaybackEngine) {
-        mutableStateOf(playerSettings.androidPlaybackEngine.initialAndroidEngine())
+        mutableStateOf(
+            if (forceLibmpvForLive) ResolvedAndroidPlaybackEngine.Libmpv
+            else playerSettings.androidPlaybackEngine.initialAndroidEngine()
+        )
     }
 
     when (activeEngine) {
@@ -174,6 +182,7 @@ actual fun PlatformPlayerSurface(
                 sourceAudioUrl = sourceAudioUrl,
                 sourceHeaders = sourceHeaders,
                 externalSubtitles = externalSubtitles,
+                isLiveStream = forceLibmpvForLive,
                 modifier = modifier,
                 playWhenReady = playWhenReady,
                 resizeMode = resizeMode,
@@ -899,6 +908,7 @@ private fun LibmpvPlayerSurface(
     sourceAudioUrl: String?,
     sourceHeaders: Map<String, String>,
     externalSubtitles: List<com.nuvio.app.features.streams.StreamSubtitle>,
+    isLiveStream: Boolean,
     modifier: Modifier,
     playWhenReady: Boolean,
     resizeMode: PlayerResizeMode,
@@ -1112,11 +1122,15 @@ private fun LibmpvPlayerSurface(
         },
         update = { view ->
             playerViewRef = view
+            view.isLiveStream = isLiveStream
+            view.playWhenReadyIntent = playWhenReady
             view.applyResizeMode(resizeMode)
         },
         onRelease = { view ->
             if (playerViewRef === view) playerViewRef = null
-            runCatching { view.destroy() }
+            // Teardown on the control thread: mpv_terminate_destroy joins the demuxer,
+            // which can hang on a dead network read — the BACK-during-stall ANR path.
+            view.release()
         },
     )
 }
@@ -1140,6 +1154,130 @@ private class NuvioLibmpvView(
     private var currentRequestHeaders: Map<String, String> = emptyMap()
     private var currentExternalSubtitles: List<com.nuvio.app.features.streams.StreamSubtitle> = emptyList()
 
+    // Set from the composable. Live streams must rejoin the live edge when the surface returns:
+    // a live stream paused in the background goes stale (the server keeps sending real time and
+    // eventually drops the socket), so unpausing plays out the old buffer, stalls, and lags live.
+    var isLiveStream: Boolean = false
+    var playWhenReadyIntent: Boolean = true
+    private var pendingLiveRejoin = false
+
+    // All mpv control calls (property writes, loadfile, seeks, teardown) run here,
+    // serialized in submission order. mpv_set_property/mpv_command take the same core
+    // lock as reads: with a wedged live demuxer, ON_START's setPaused(false) blocked the
+    // main thread >5s (reproduced ANR: pthread_cond_wait ← mpv_set_property ← setPaused
+    // ← lifecycle onStateChanged). Reads are lock-free via the shadow; writes queue here.
+    private val mpvCtl = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "mpv-ctl")
+    }
+
+    private fun ctl(block: () -> Unit) {
+        // Rejected only after release(); a stale UI callback after teardown is a no-op.
+        runCatching { mpvCtl.execute { runCatching(block) } }
+    }
+
+    fun release() {
+        ctl { runCatching { destroy() } }
+        mpvCtl.shutdown()
+    }
+
+    // Shadow of every property observeProperties() registers, updated from mpv's event
+    // thread. snapshot()/extractLibmpvTracks() read these instead of mpv_get_property:
+    // a synchronous read takes the mpv core lock, which stalls for seconds while a live
+    // demuxer is busy or tearing down — on the main thread that's an ANR (Play vitals:
+    // getPropertyBoolean → pthread_cond_wait while exiting a live stream).
+    @Volatile private var obsPaused = true
+    @Volatile private var obsPausedForCache = false
+    @Volatile private var obsCoreIdle = false
+    @Volatile private var obsEofReached = false
+    @Volatile private var obsSeeking = false
+    @Volatile private var obsCacheBufferingState: Int? = null
+    @Volatile private var obsDurationMs = 0L
+    @Volatile private var obsPositionMs = 0L
+    @Volatile private var obsCachePositionMs = 0L
+    @Volatile private var obsSpeed = 1.0
+    @Volatile private var obsTrackList: MPVNode? = null
+
+    private val propertyShadow = object : MPV.EventObserver {
+        override fun eventProperty(property: String) {
+            // MPV_FORMAT_NONE: property became unavailable — fall back to the same
+            // defaults a failed synchronous read used to produce.
+            when (property) {
+                "pause" -> obsPaused = true
+                "paused-for-cache" -> obsPausedForCache = false
+                "core-idle" -> obsCoreIdle = false
+                "eof-reached" -> obsEofReached = false
+                "seeking" -> obsSeeking = false
+                "cache-buffering-state" -> obsCacheBufferingState = null
+                "duration" -> obsDurationMs = 0L
+                "time-pos" -> obsPositionMs = 0L
+                "demuxer-cache-time" -> obsCachePositionMs = 0L
+                "speed" -> obsSpeed = 1.0
+                "track-list" -> obsTrackList = null
+            }
+        }
+
+        override fun eventProperty(property: String, value: Long) {
+            if (property == "cache-buffering-state") obsCacheBufferingState = value.toInt()
+        }
+
+        override fun eventProperty(property: String, value: Boolean) {
+            when (property) {
+                "pause" -> obsPaused = value
+                "paused-for-cache" -> obsPausedForCache = value
+                "core-idle" -> obsCoreIdle = value
+                "eof-reached" -> obsEofReached = value
+                "seeking" -> obsSeeking = value
+            }
+        }
+
+        override fun eventProperty(property: String, value: Double) {
+            when (property) {
+                "duration" -> obsDurationMs = value.toMillis()
+                "time-pos" -> obsPositionMs = value.toMillis()
+                "demuxer-cache-time" -> obsCachePositionMs = value.toMillis()
+                "speed" -> obsSpeed = value
+            }
+        }
+
+        override fun eventProperty(property: String, value: String) = Unit
+
+        override fun eventProperty(property: String, value: MPVNode) {
+            if (property == "track-list") obsTrackList = value
+        }
+
+        override fun event(eventId: Int, data: MPVNode) = Unit
+    }
+
+    override fun surfaceDestroyed(holder: SurfaceHolder) {
+        // The surface dies exactly when the app leaves the foreground. Flag the rejoin here
+        // rather than in a lifecycle observer: BaseMPVView's vo teardown below can block the
+        // main thread on the mpv core while a live demuxer is stuck, which starves ON_STOP/
+        // ON_START dispatch entirely (seen in ANR traces).
+        if (isLiveStream && currentSourceUrl != null) {
+            pendingLiveRejoin = true
+            // Kill the live demux before super's synchronous vo teardown: "stop" sets
+            // mpv's abort token at enqueue, interrupting a demuxer wedged in a dead-socket
+            // read — the state that kept super's mpv_set_property("vo") waiting on main
+            // for minutes (reproduced trace). A raw thread, not the ctl queue: the queue
+            // itself can be wedged inside a blocked command, and the whole point is to
+            // abort that. The live edge is rejoined via loadfile on surfaceCreated anyway.
+            Thread({ runCatching { mpv.command("stop") } }, "mpv-stop").start()
+        }
+        super.surfaceDestroyed(holder)
+    }
+
+    override fun surfaceCreated(holder: SurfaceHolder) {
+        super.surfaceCreated(holder)
+        if (pendingLiveRejoin) {
+            pendingLiveRejoin = false
+            Log.i(TAG, "Rejoining live edge after background")
+            // On the control thread: loadfile on a core stuck in a dead network read would
+            // otherwise block here (same mpv lock the teardown path hits), and queueing
+            // keeps it ordered against any lifecycle setPaused already in flight.
+            ctl { loadCurrentSource(playWhenReady = playWhenReadyIntent) }
+        }
+    }
+
     override fun initOptions() {
         setVo(videoOutput.mpvValue)
         mpv.setOptionString("profile", "fast")
@@ -1148,6 +1286,9 @@ private class NuvioLibmpvView(
             mpv.setOptionString("vf", "format=yuv420p")
         }
         mpv.setOptionString("msg-level", "all=warn")
+        // Bound blocking network reads (ffmpeg rw_timeout): a half-dead live socket
+        // otherwise wedges the demuxer — and with it any thread waiting on the core.
+        mpv.setOptionString("network-timeout", "15")
         mpv.setOptionString("tls-verify", "yes")
         mpv.setOptionString("tls-ca-file", "${context.filesDir.path}/cacert.pem")
         mpv.setOptionString("demuxer-max-bytes", "${libmpvCacheBytes()}").logIfMpvError("demuxer-max-bytes")
@@ -1161,6 +1302,9 @@ private class NuvioLibmpvView(
     override fun postInitOptions() = Unit
 
     override fun observeProperties() {
+        // Registered before the composable's observer so shadows are current when a
+        // snapshot dispatch fires for the same event.
+        mpv.addObserver(propertyShadow)
         val props = mapOf(
             "pause" to MPV.mpvFormat.MPV_FORMAT_FLAG,
             "paused-for-cache" to MPV.mpvFormat.MPV_FORMAT_FLAG,
@@ -1194,17 +1338,22 @@ private class NuvioLibmpvView(
         currentRequestHeaders = requestHeaders
         currentExternalSubtitles = externalSubtitles
         if (!sameSource) {
-            loadCurrentSource(playWhenReady = playWhenReady)
+            ctl { loadCurrentSource(playWhenReady = playWhenReady) }
         } else {
-            applyRequestHeaders(requestHeaders)
-            setPaused(!playWhenReady)
+            obsPaused = !playWhenReady
+            ctl {
+                applyRequestHeaders(requestHeaders)
+                mpv.setPropertyBoolean("pause", !playWhenReady)
+            }
         }
     }
 
+    // Runs on the mpv-ctl thread only.
     private fun loadCurrentSource(playWhenReady: Boolean) {
         val sourceUrl = currentSourceUrl ?: return
         applyRequestHeaders(currentRequestHeaders)
-        setPaused(!playWhenReady)
+        obsPaused = !playWhenReady
+        mpv.setPropertyBoolean("pause", !playWhenReady)
         mpv.command("loadfile", sourceUrl, "replace")
         currentSourceAudioUrl?.takeIf { it.isNotBlank() }?.let { sourceAudioUrl ->
             mpv.command("audio-add", sourceAudioUrl, "auto")
@@ -1213,38 +1362,39 @@ private class NuvioLibmpvView(
             val flag = if (index == 0) "auto" else "cached"
             mpv.command("sub-add", subtitle.url, flag)
         }
-        setPaused(!playWhenReady)
+        mpv.setPropertyBoolean("pause", !playWhenReady)
     }
 
     fun setPaused(paused: Boolean) {
-        runCatching { mpv.setPropertyBoolean("pause", paused) }
+        // Optimistic shadow echo so a snapshot() issued right after reflects the intent;
+        // mpv's own pause event confirms (or corrects) it moments later.
+        obsPaused = paused
+        ctl { mpv.setPropertyBoolean("pause", paused) }
     }
 
+    // Route through ctl {} (mpv-ctl queue) so seeks never touch mpv on the main thread — see the ANR fix.
     fun seekToMs(positionMs: Long) {
-        runCatching {
-            mpv.command("seek", (positionMs.coerceAtLeast(0L) / 1000.0).toString(), "absolute")
-        }
+        ctl { mpv.command("seek", (positionMs.coerceAtLeast(0L) / 1000.0).toString(), "absolute") }
     }
 
+    // Computed purely from the observed-property shadow — must stay free of mpv calls
+    // (runs on the main thread from the poll loop and event dispatches).
     fun snapshot(): PlayerPlaybackSnapshot {
-        val paused = mpv.getPropertyBoolean("pause") ?: true
-        val pausedForCache = mpv.getPropertyBoolean("paused-for-cache") ?: false
-        val idle = mpv.getPropertyBoolean("core-idle") ?: false
-        val ended = mpv.getPropertyBoolean("eof-reached") ?: false
-        val seeking = mpv.getPropertyBoolean("seeking") ?: false
-        val cacheBufferingState = mpv.getPropertyInt("cache-buffering-state")
-        val durationMs = mpv.getPropertyDouble("duration").toMillis()
-        val positionMs = mpv.getPropertyDouble("time-pos").toMillis()
-        val cachePositionMs = mpv.getPropertyDouble("demuxer-cache-time").toMillis()
+        val paused = obsPaused
+        val pausedForCache = obsPausedForCache
+        val idle = obsCoreIdle
+        val ended = obsEofReached
+        val seeking = obsSeeking
+        val cacheBufferingState = obsCacheBufferingState
+        // Live streams: libmpv reports a finite demuxer-cache extent as "duration", which the
+        // shared controls would draw as a bounded VOD scrubber (capped at the cache window).
+        // Zero it to match ExoPlayer's TIME_UNSET->0 for live, so no finite timeline is built.
+        val durationMs = if (isLiveStream) 0L else obsDurationMs
+        val positionMs = obsPositionMs
+        val cachePositionMs = obsCachePositionMs
         val isCacheBuffering = cacheBufferingState != null && cacheBufferingState in 0 until 100
         val isLoading = pausedForCache ||
             (!paused && !ended && (seeking || isCacheBuffering || (idle && durationMs <= 0L)))
-        val videoWidth = mpv.getPropertyInt("video-out-params/dw")
-            ?: mpv.getPropertyInt("video-params/dw")
-            ?: 0
-        val videoHeight = mpv.getPropertyInt("video-out-params/dh")
-            ?: mpv.getPropertyInt("video-params/dh")
-            ?: 0
         return PlayerPlaybackSnapshot(
             isLoading = isLoading,
             isPlaying = !paused && !isLoading && !idle && !ended,
@@ -1252,9 +1402,11 @@ private class NuvioLibmpvView(
             durationMs = durationMs,
             positionMs = positionMs,
             bufferedPositionMs = maxOf(positionMs, cachePositionMs),
-            playbackSpeed = (mpv.getPropertyDouble("speed") ?: 1.0).toFloat(),
-            videoWidth = videoWidth,
-            videoHeight = videoHeight,
+            playbackSpeed = obsSpeed.toFloat(),
+            // ponytail: videoWidth/videoHeight left at their 0 defaults. Upstream read them via
+            // mpv.getPropertyInt here, but snapshot() runs on the main thread and must stay mpv-free
+            // (the ANR fix). To restore PiP aspect ratio, observe video-params/dw,dh in the property
+            // shadow (obs*) and read them off-main like the other fields.
         )
     }
 
@@ -1263,7 +1415,7 @@ private class NuvioLibmpvView(
         return snapshot.isPlaying || snapshot.isLoading
     }
 
-    fun applyResizeMode(resizeMode: PlayerResizeMode) {
+    fun applyResizeMode(resizeMode: PlayerResizeMode) = ctl {
         when (resizeMode) {
             PlayerResizeMode.Fit,
             PlayerResizeMode.Stretch -> {
@@ -1282,7 +1434,7 @@ private class NuvioLibmpvView(
     }
 
     fun seekByMs(offsetMs: Long) {
-        mpv.command("seek", (offsetMs / 1000.0).toString(), "relative")
+        ctl { mpv.command("seek", (offsetMs / 1000.0).toString(), "relative") }
     }
 
     fun controller(
@@ -1299,11 +1451,11 @@ private class NuvioLibmpvView(
             override fun seekBy(offsetMs: Long) = this@NuvioLibmpvView.seekByMs(offsetMs)
 
             override fun retry() {
-                loadCurrentSource(playWhenReady = true)
+                ctl { loadCurrentSource(playWhenReady = true) }
             }
 
             override fun setPlaybackSpeed(speed: Float) {
-                mpv.setPropertyDouble("speed", speed.coerceIn(0.25f, 4f).toDouble())
+                ctl { mpv.setPropertyDouble("speed", speed.coerceIn(0.25f, 4f).toDouble()) }
             }
 
             override fun updateNowPlayingMetadata(info: PlayerNowPlayingInfo) {
@@ -1315,7 +1467,7 @@ private class NuvioLibmpvView(
             }
 
             override fun setMuted(muted: Boolean) {
-                mpv.setPropertyBoolean("mute", muted)
+                ctl { mpv.setPropertyBoolean("mute", muted) }
             }
 
             override fun getAudioTracks(): List<AudioTrack> =
@@ -1343,37 +1495,37 @@ private class NuvioLibmpvView(
 
             override fun selectAudioTrack(index: Int) {
                 if (index < 0) {
-                    mpv.setPropertyString("aid", "no")
+                    ctl { mpv.setPropertyString("aid", "no") }
                 } else {
                     extractLibmpvTracks(context, type = "audio").getOrNull(index)?.let { track ->
-                        mpv.setPropertyInt("aid", track.id)
+                        ctl { mpv.setPropertyInt("aid", track.id) }
                     }
                 }
             }
 
             override fun selectSubtitleTrack(index: Int) {
                 if (index < 0) {
-                    mpv.setPropertyString("sid", "no")
+                    ctl { mpv.setPropertyString("sid", "no") }
                 } else {
                     extractLibmpvTracks(context, type = "sub").getOrNull(index)?.let { track ->
-                        mpv.setPropertyInt("sid", track.id)
+                        ctl { mpv.setPropertyInt("sid", track.id) }
                     }
                 }
             }
 
             override fun setSubtitleUri(url: String) {
-                mpv.command("sub-add", url, "select")
+                ctl { mpv.command("sub-add", url, "select") }
             }
 
             override fun clearExternalSubtitle() {
-                mpv.setPropertyString("sid", "no")
+                ctl { mpv.setPropertyString("sid", "no") }
             }
 
             override fun clearExternalSubtitleAndSelect(trackIndex: Int) {
                 selectSubtitleTrack(trackIndex)
             }
 
-            override fun applySubtitleStyle(style: SubtitleStyleState) {
+            override fun applySubtitleStyle(style: SubtitleStyleState) = ctl {
                 mpv.setPropertyString("sub-ass-override", "no")
                 mpv.setPropertyString("sub-color", style.textColor.toMpvColor())
                 mpv.setPropertyString("sub-back-color", style.backgroundColor.toMpvColor())
@@ -1388,10 +1540,12 @@ private class NuvioLibmpvView(
             }
 
             override fun setSubtitleDelayMs(delayMs: Int) {
-                mpv.setPropertyDouble(
-                    "sub-delay",
-                    delayMs.coerceIn(SUBTITLE_DELAY_MIN_MS, SUBTITLE_DELAY_MAX_MS) / 1000.0,
-                )
+                ctl {
+                    mpv.setPropertyDouble(
+                        "sub-delay",
+                        delayMs.coerceIn(SUBTITLE_DELAY_MIN_MS, SUBTITLE_DELAY_MAX_MS) / 1000.0,
+                    )
+                }
             }
         }
 
@@ -1408,7 +1562,7 @@ private class NuvioLibmpvView(
     }
 
     private fun extractLibmpvTracks(context: Context, type: String): List<LibmpvTrack> {
-        val nodes = mpv.getPropertyNode("track-list")?.asArray()?.toList().orEmpty()
+        val nodes = obsTrackList?.asArray()?.toList().orEmpty()
         return nodes
             .filter { node -> node.nodeString("type") == type }
             .mapIndexedNotNull { index, node ->

@@ -15,6 +15,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.ResponseBody
+import okio.GzipSource
+import okio.buffer
 import org.jetbrains.compose.resources.getString
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
@@ -54,7 +56,9 @@ private val desktopHttpClient = OkHttpClient.Builder()
 
 private const val truncationSuffix = "\n...[truncated]"
 
-actual suspend fun httpGetText(url: String): String =
+// dnsProvider (DoH for ISP-blocked IPTV playlists) is not wired on desktop yet — the
+// system resolver is used regardless; port PlaylistDns + okhttp-dnsoverhttps to enable.
+actual suspend fun httpGetText(url: String, dnsProvider: String?): String =
     executeTextRequest(
         method = "GET",
         url = url,
@@ -237,5 +241,42 @@ private fun readResponseBody(body: ResponseBody?): String {
         String(bytes, charset)
     }.getOrElse {
         String(bytes, Charsets.UTF_8)
+    }
+}
+
+actual suspend fun httpStreamLines(
+    url: String,
+    userAgent: String?,
+    dnsProvider: String?,
+    onLine: (String) -> Unit,
+): Unit = withContext(Dispatchers.IO) {
+    val builder = Request.Builder().url(url).get()
+    if (!userAgent.isNullOrBlank()) builder.header("User-Agent", userAgent)
+    // OkHttp transparently gunzips a `Content-Encoding: gzip` response when we don't set
+    // Accept-Encoding ourselves — so leave it unset. For a URL that returns a raw .gz body
+    // (no Content-Encoding header), we sniff the gzip magic bytes and wrap manually.
+    // dnsProvider (per-playlist DoH) is not wired on desktop — system resolver only.
+    val request = builder.build()
+    desktopHttpClient.newCall(request).execute().use { response ->
+        if (!response.isSuccessful) {
+            error("Request failed with HTTP ${response.code}")
+        }
+        val body = response.body ?: return@use
+        val rawSource = body.source()
+        val encoding = response.header("Content-Encoding")?.lowercase()
+        val looksGzipped = encoding == null && runCatching {
+            rawSource.request(2)
+            rawSource.buffer.size >= 2 &&
+                rawSource.buffer[0] == 0x1f.toByte() && rawSource.buffer[1] == 0x8b.toByte()
+        }.getOrDefault(false)
+        val source: okio.BufferedSource = if (looksGzipped) {
+            GzipSource(rawSource).buffer()
+        } else {
+            rawSource
+        }
+        while (true) {
+            val line = source.readUtf8Line() ?: break
+            onLine(line)
+        }
     }
 }

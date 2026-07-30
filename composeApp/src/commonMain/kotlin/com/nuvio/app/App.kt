@@ -42,9 +42,20 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
+import com.nuvio.app.features.iptv.IptvPlaybackGate
+import com.nuvio.app.features.iptv.IptvRefreshScheduler
+import com.nuvio.app.features.iptv.XtreamHubScreen
+import com.nuvio.app.features.radar.SportsHubScreen
+import com.nuvio.app.features.iptv.XtreamItemRegistry
+import com.nuvio.app.features.iptv.XtreamLiveRecents
+import com.nuvio.app.features.iptv.XtreamRepository
+import com.nuvio.app.features.iptv.resolveLivePlaybackUrl
+import com.nuvio.app.features.iptv.toMetaPreview
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -170,6 +181,7 @@ import com.nuvio.app.features.details.PersonDetailScreen
 import com.nuvio.app.features.details.TmdbEntityBrowseScreen
 import com.nuvio.app.features.tmdb.TmdbEntityKind
 import com.nuvio.app.features.home.HomeCatalogSection
+import com.nuvio.app.features.home.PosterShape
 import com.nuvio.app.features.home.HomeScreen
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.library.LibraryItem
@@ -185,6 +197,7 @@ import com.nuvio.app.features.p2p.P2pConsentDialog
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.player.PlayerLaunch
 import com.nuvio.app.features.player.PlayerLaunchStore
+import com.nuvio.app.features.livetv.LiveTvScreen
 import com.nuvio.app.features.player.PlayerScreen
 import com.nuvio.app.features.player.PlayerPlaybackSnapshot
 import com.nuvio.app.features.player.ExternalPlayerIntentResult
@@ -280,6 +293,7 @@ import nuvio.composeapp.generated.resources.compose_nav_profile
 import nuvio.composeapp.generated.resources.compose_nav_search
 import nuvio.composeapp.generated.resources.sidebar_library
 import nuvio.composeapp.generated.resources.sidebar_search
+import nuvio.composeapp.generated.resources.sidebar_sports
 import org.jetbrains.compose.resources.DrawableResource
 import org.jetbrains.compose.resources.getString
 import org.jetbrains.compose.resources.painterResource
@@ -310,6 +324,7 @@ private val navigationSavedStateConfiguration = SavedStateConfiguration {
             subclass(StreamRoute::class, StreamRoute.serializer())
             subclass(CatalogRoute::class, CatalogRoute.serializer())
             subclass(PlayerRoute::class, PlayerRoute.serializer())
+            subclass(LiveTvRoute::class, LiveTvRoute.serializer())
         }
     }
 }
@@ -359,6 +374,10 @@ fun disposeRoute(route: AppRoute) {
             PlayerLaunchStore.remove(route.launchId)
         }
 
+        is LiveTvRoute -> {
+            PlayerLaunchStore.remove(route.launchId)
+        }
+
         is CatalogRoute -> {
             CatalogRepository.clear()
             CatalogLaunchStore.remove(route.launchId)
@@ -385,6 +404,8 @@ enum class AppScreenTab {
     Home,
     Search,
     Library,
+    Iptv,
+    Sports,
     Settings,
     ;
 
@@ -405,17 +426,21 @@ private val DesktopSidebarProfileStackRowGap = 4.dp
 private val DesktopSidebarProfileStackTopGap = 6.dp
 private val DesktopSidebarProfileStackNavGap = 12.dp
 
-private fun AppScreenTab.toNativeNavigationTab(): NativeNavigationTab = when (this) {
+private fun AppScreenTab.toNativeNavigationTab(): NativeNavigationTab? = when (this) {
     AppScreenTab.Home -> NativeNavigationTab.Home
     AppScreenTab.Search -> NativeNavigationTab.Search
     AppScreenTab.Library -> NativeNavigationTab.Library
     AppScreenTab.Settings -> NativeNavigationTab.Settings
+    AppScreenTab.Iptv -> NativeNavigationTab.Iptv
+    AppScreenTab.Sports -> NativeNavigationTab.Sports
 }
 
 private fun NativeNavigationTab.toAppScreenTab(): AppScreenTab = when (this) {
     NativeNavigationTab.Home -> AppScreenTab.Home
     NativeNavigationTab.Search -> AppScreenTab.Search
     NativeNavigationTab.Library -> AppScreenTab.Library
+    NativeNavigationTab.Iptv -> AppScreenTab.Iptv
+    NativeNavigationTab.Sports -> AppScreenTab.Sports
     NativeNavigationTab.Settings -> AppScreenTab.Settings
 }
 
@@ -462,6 +487,9 @@ private suspend fun warmProfileBoundRepositories() {
         WatchProgressRepository.ensureLoaded()
         CollectionSyncService.startObserving()
         ProfileSettingsSync.startObserving()
+        // Warm the IPTV catalog indexes off the critical path so the first
+        // play/search doesn't pay the full-catalog download on demand.
+        XtreamRepository.warmUpMatchIndexes(startDelayMs = 10_000)
     }
 }
 
@@ -489,7 +517,7 @@ fun App(
     onReplace: ((AppRoute) -> Unit)? = null,
     onActivate: ((AppScreenTab) -> Unit)? = null,
     onAppReady: ((Boolean) -> Unit)? = null,
-    onTabTitles: ((home: String, search: String, library: String, profile: String, switchProfile: String, addProfile: String) -> Unit)? = null,
+    onTabTitles: ((home: String, search: String, library: String, iptv: String, sports: String, profile: String, switchProfile: String, addProfile: String) -> Unit)? = null,
     nativeProfileSwitcherController: NativeProfileSwitcherController? = null,
 ) {
     setSingletonImageLoaderFactory { context ->
@@ -586,6 +614,15 @@ fun App(
         var isNewProfile by remember { mutableStateOf(false) }
         var autoSkipProfileSelection by rememberSaveable { mutableStateOf(false) }
         var pendingProfileSwitch by remember { mutableStateOf<PendingProfileSwitch?>(null) }
+
+        // Settings "Sign In" button (signed-out users stay in the app via cached profiles,
+        // so nothing else ever routes back to the auth screen).
+        val signInRequests by AuthRepository.signInRequests.collectAsStateWithLifecycle()
+        LaunchedEffect(signInRequests) {
+            if (signInRequests > 0 && authState !is AuthState.Authenticated) {
+                gateScreen = AppGateScreen.Auth.name
+            }
+        }
 
         LaunchedEffect(gateScreen, onAppReady) {
             if (gateScreen != AppGateScreen.Main.name) {
@@ -847,7 +884,7 @@ private fun MainAppContent(
     onGoBack: (() -> Unit)? = null,
     onReplace: ((AppRoute) -> Unit)? = null,
     onActivate: ((AppScreenTab) -> Unit)? = null,
-    onTabTitles: ((home: String, search: String, library: String, profile: String, switchProfile: String, addProfile: String) -> Unit)? = null,
+    onTabTitles: ((home: String, search: String, library: String, iptv: String, sports: String, profile: String, switchProfile: String, addProfile: String) -> Unit)? = null,
     nativeProfileSwitcherController: NativeProfileSwitcherController? = null,
     onRootContentReady: ((Boolean) -> Unit)? = null,
     onSwitchProfile: () -> Unit = {},
@@ -952,6 +989,8 @@ private fun MainAppContent(
     val nativeTabHomeTitle = stringResource(Res.string.compose_nav_home)
     val nativeTabSearchTitle = stringResource(Res.string.compose_nav_search)
     val nativeTabLibraryTitle = stringResource(Res.string.compose_nav_library)
+    val nativeTabIptvTitle = "IPTV"
+    val nativeTabSportsTitle = "Sports"
     val nativeTabProfileTitle = stringResource(Res.string.compose_nav_profile)
     val nativeSwitchProfileTitle = stringResource(Res.string.compose_settings_root_switch_profile_title)
     val nativeAddProfileTitle = stringResource(Res.string.compose_profile_add_profile)
@@ -998,6 +1037,8 @@ private fun MainAppContent(
                 searchScrollToTopRequests.tryEmit(Unit)
             }
             AppScreenTab.Library -> libraryScrollToTopRequests.tryEmit(Unit)
+            AppScreenTab.Iptv -> {}
+            AppScreenTab.Sports -> {}
             AppScreenTab.Settings -> settingsRootActionRequests.tryEmit(Unit)
         }
     }
@@ -1031,6 +1072,8 @@ private fun MainAppContent(
         nativeTabHomeTitle,
         nativeTabSearchTitle,
         nativeTabLibraryTitle,
+        nativeTabIptvTitle,
+        nativeTabSportsTitle,
         nativeTabProfileTitle,
         nativeSwitchProfileTitle,
         nativeAddProfileTitle,
@@ -1040,12 +1083,16 @@ private fun MainAppContent(
             home = nativeTabHomeTitle,
             search = nativeTabSearchTitle,
             library = nativeTabLibraryTitle,
+            iptv = nativeTabIptvTitle,
+            sports = nativeTabSportsTitle,
             profile = nativeTabProfileTitle,
         )
         onTabTitles?.invoke(
             nativeTabHomeTitle,
             nativeTabSearchTitle,
             nativeTabLibraryTitle,
+            nativeTabIptvTitle,
+            nativeTabSportsTitle,
             nativeTabProfileTitle,
             nativeSwitchProfileTitle,
             nativeAddProfileTitle,
@@ -1053,7 +1100,7 @@ private fun MainAppContent(
     }
 
     LaunchedEffect(selectedTab) {
-        NativeTabBridge.publishSelectedTab(selectedTab.toNativeNavigationTab())
+        selectedTab.toNativeNavigationTab()?.let { NativeTabBridge.publishSelectedTab(it) }
         if (selectedTab != AppScreenTab.Search) {
             searchFocusRequestCount = 0
         }
@@ -1254,6 +1301,15 @@ private fun MainAppContent(
         }
     }
 
+    // iOS auto-refresh (P3-B): iOS has no WorkManager, so overdue IPTV playlists are refreshed
+    // foreground-on-launch (best-effort, off the main thread). Android schedules a periodic
+    // WorkManager worker from MainActivity instead, so this stays iOS-only to avoid double work.
+    LaunchedEffect(Unit) {
+        if (isIos) {
+            runCatching { IptvRefreshScheduler.refreshDuePlaylists() }
+        }
+    }
+
     LaunchedEffect(authState, profileState.activeProfile?.profileIndex) {
         if (!ownsAppRuntime) return@LaunchedEffect
         if (!RealtimeSyncConfig.ENABLED) {
@@ -1313,6 +1369,52 @@ private fun MainAppContent(
     var resumePromptItem by remember { mutableStateOf<ContinueWatchingItem?>(null) }
     var lastExternalPlayerLaunch by remember { mutableStateOf<PlayerLaunch?>(null) }
     val activePlaybackProfileId = profileState.activeProfile?.profileIndex ?: ProfileRepository.activeProfileId
+
+    // Shared launch for an IPTV LIVE channel (from the hub or the Library) — forces libmpv via
+    // streamType="live". The URL is rebuilt from the id when the caller doesn't have one (e.g. a
+    // favorite opened from the Library after a fresh launch, when the registry is empty). For M3U
+    // channels the URL isn't rebuildable from creds, so it's resolved from the content DB async.
+    //
+    // P3: when the playlist has a non-system DNS provider, the plain-http live URL is DoH-resolved +
+    // IP-rewritten (with a Host header) on Android before it reaches mpv; iOS/https are a no-op. Any
+    // failure falls back to the original URL, so playback never breaks. The DoH step is a network call,
+    // so the whole launch runs on a coroutine (both call sites already tolerate async).
+    fun launchLiveChannel(contentId: String, name: String, logo: String?, resolvedUrl: String) {
+        // The new docked Live TV screen resolves + switches channels itself, so it only needs the
+        // channel identity. The URL is still resolved here so a placeholder payload is well-formed
+        // and the LiveTvScreen's own resolve step is warm.
+        val liveLaunch = PlayerLaunch(
+            profileId = activePlaybackProfileId,
+            title = name,
+            sourceUrl = resolvedUrl,
+            streamTitle = name,
+            streamType = "live",
+            providerName = XtreamItemRegistry.accountNameFor(contentId) ?: "IPTV",
+            providerAddonId = "xtream",
+            logo = logo,
+            contentType = "live",
+            videoId = contentId,
+            parentMetaId = contentId,
+            parentMetaType = "tv",
+        )
+        navController.navigate(LiveTvRoute(launchId = PlayerLaunchStore.put(liveLaunch)))
+    }
+
+    fun playLiveXtreamChannel(contentId: String, name: String, logo: String?, url: String?) {
+        // A BLANK url is a placeholder, not a real stream: M3U keeps the URL only in the content DB,
+        // and Stalker resolves a fresh single-use create_link at play time. Both must fall through to
+        // the async resolve — treating "" as present would hand mpv an empty URL.
+        val immediate = url?.takeIf { it.isNotBlank() } ?: XtreamItemRegistry.liveStreamUrlFor(contentId)
+        if (immediate != null) {
+            launchLiveChannel(contentId, name, logo, immediate)
+            return
+        }
+        coroutineScope.launch {
+            val resolved = XtreamItemRegistry.liveStreamUrlForAsync(contentId) ?: return@launch
+            launchLiveChannel(contentId, name, logo, resolved)
+        }
+    }
+
     val launchExternalPlayer = rememberExternalPlayerLauncher { result ->
         if (result != null && result.positionMs > 0L) {
             coroutineScope.launch {
@@ -2008,6 +2110,18 @@ private fun MainAppContent(
                                             contentDescription = stringResource(Res.string.compose_nav_library),
                                         )
                                         NavItem(
+                                            selected = selectedTab == AppScreenTab.Iptv,
+                                            onClick = { handleRootTabClick(AppScreenTab.Iptv) },
+                                            icon = Icons.Filled.LiveTv,
+                                            contentDescription = "IPTV",
+                                        )
+                                        NavItem(
+                                            selected = selectedTab == AppScreenTab.Sports,
+                                            onClick = { handleRootTabClick(AppScreenTab.Sports) },
+                                            icon = Res.drawable.sidebar_sports,
+                                            contentDescription = "Sports",
+                                        )
+                                        NavItem(
                                             selected = selectedTab == AppScreenTab.Settings,
                                             onClick = { handleRootTabClick(AppScreenTab.Settings) },
                                         ) {
@@ -2044,13 +2158,65 @@ private fun MainAppContent(
                                         settingsRootActionRequests = settingsRootActionRequests,
                                         onCatalogClick = onCatalogClick,
                                         onPosterClick = { meta ->
-                                            navController.navigate(DetailRoute(type = meta.type, id = meta.id, title = meta.name))
+                                            // A live channel (e.g. from Search) has no detail — play it directly.
+                                            if (XtreamItemRegistry.isLiveId(meta.id)) {
+                                                playLiveXtreamChannel(
+                                                    contentId = meta.id,
+                                                    name = meta.name,
+                                                    logo = meta.logo ?: meta.poster,
+                                                    url = XtreamItemRegistry.get(meta.id)?.streamUrl,
+                                                )
+                                            } else {
+                                                navController.navigate(DetailRoute(type = meta.type, id = meta.id, title = meta.name))
+                                            }
                                         },
                                         onPosterLongClick = { meta ->
                                             openPosterActions(PosterActionTarget(preview = meta))
                                         },
+                                        onIptvAddProvider = {
+                                            requestedSettingsPageName = "Iptv"
+                                            selectedTab = AppScreenTab.Settings
+                                        },
+                                        onOpenSportsTab = { selectedTab = AppScreenTab.Sports },
+                                        onPlayLiveChannel = { contentId ->
+                                            val item = XtreamItemRegistry.get(contentId)
+                                            playLiveXtreamChannel(
+                                                contentId = contentId,
+                                                name = item?.name ?: "Live TV",
+                                                logo = item?.logo ?: item?.poster,
+                                                url = item?.streamUrl,
+                                            )
+                                        },
+                                        onIptvFavoriteChannel = { contentId ->
+                                            XtreamItemRegistry.get(contentId)?.let { item ->
+                                                LibraryRepository.toggleSaved(
+                                                    LibraryItem(
+                                                        id = contentId,
+                                                        type = "tv",
+                                                        name = item.name,
+                                                        poster = item.logo ?: item.poster,
+                                                        logo = item.logo,
+                                                        posterShape = PosterShape.Landscape,
+                                                        savedAtEpochMs = 0L, // set by LibraryRepository.save()
+                                                    )
+                                                )
+                                                NuvioToastController.show(
+                                                    if (LibraryRepository.isSaved(contentId, "tv")) "Added to Library" else "Removed from Library"
+                                                )
+                                            }
+                                        },
                                         onLibraryPosterClick = { item ->
-                                            navController.navigate(DetailRoute(type = item.type, id = item.id, title = item.name))
+                                            if (XtreamItemRegistry.isLiveId(item.id)) {
+                                                // Live channels have no detail screen — play directly (mpv).
+                                                playLiveXtreamChannel(
+                                                    contentId = item.id,
+                                                    name = item.name,
+                                                    logo = item.logo ?: item.poster,
+                                                    url = XtreamItemRegistry.get(item.id)?.streamUrl,
+                                                )
+                                            } else {
+                                                navController.navigate(DetailRoute(type = item.type, id = item.id, title = item.name))
+                                            }
                                         },
                                         onLibraryPosterLongClick = { item, section ->
                                             openPosterActions(
@@ -2213,6 +2379,20 @@ private fun MainAppContent(
                                             icon = Res.drawable.sidebar_library,
                                             contentDescription = stringResource(Res.string.compose_nav_library),
                                             label = stringResource(Res.string.compose_nav_library),
+                                        )
+                                        NavItem(
+                                            selected = selectedTab == AppScreenTab.Iptv,
+                                            onClick = { handleRootTabClick(AppScreenTab.Iptv) },
+                                            icon = Icons.Filled.LiveTv,
+                                            contentDescription = "IPTV",
+                                            label = "IPTV",
+                                        )
+                                        NavItem(
+                                            selected = selectedTab == AppScreenTab.Sports,
+                                            onClick = { handleRootTabClick(AppScreenTab.Sports) },
+                                            icon = Res.drawable.sidebar_sports,
+                                            contentDescription = "Sports",
+                                            label = "Sports",
                                         )
                                         NavItem(
                                             selected = selectedTab == AppScreenTab.Settings,
@@ -3035,6 +3215,12 @@ private fun MainAppContent(
                     LaunchedEffect(launch.videoId) {
                         launch.videoId?.let { ResumePromptRepository.markPlayerEntered(it) }
                     }
+                    // Tell the IPTV auto-refresh worker a player is on screen so a heavy M3U re-ingest
+                    // defers instead of firing mid-playback (P3-B skip-while-playing).
+                    DisposableEffect(Unit) {
+                        IptvPlaybackGate.setPlaybackActive(true)
+                        onDispose { IptvPlaybackGate.setPlaybackActive(false) }
+                    }
                     PlayerScreen(
                         profileId = launch.profileId,
                         title = launch.title,
@@ -3117,6 +3303,38 @@ private fun MainAppContent(
                         onOpenExternalUrl = { url ->
                             openExternalStreamUrl(url)
                         },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                entry<LiveTvRoute>(
+                    metadata = if (isIos) {
+                        NavDisplay.transitionSpec {
+                            fadeIn(animationSpec = tween(220)) togetherWith
+                                fadeOut(animationSpec = tween(220))
+                        } + NavDisplay.popTransitionSpec {
+                            fadeIn(animationSpec = tween(220)) togetherWith
+                                fadeOut(animationSpec = tween(220))
+                        }
+                    } else {
+                        emptyMap()
+                    },
+                ) { route ->
+                    val onBack = rememberGuardedPopBackStack(navController, route)
+                    val launch = remember(route.launchId) { PlayerLaunchStore.get(route.launchId) }
+                    if (launch?.videoId == null) {
+                        LaunchedEffect(route.launchId) { onBack() }
+                        Box(modifier = Modifier.fillMaxSize())
+                        return@entry
+                    }
+                    DisposableEffect(Unit) {
+                        IptvPlaybackGate.setPlaybackActive(true)
+                        onDispose { IptvPlaybackGate.setPlaybackActive(false) }
+                    }
+                    LiveTvScreen(
+                        initialContentId = launch.videoId,
+                        initialTitle = launch.title,
+                        initialLogo = launch.logo,
+                        onBack = onBack,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -3726,6 +3944,10 @@ private fun AppTabHost(
     onCatalogClick: ((HomeCatalogSection) -> Unit)? = null,
     onPosterClick: ((MetaPreview) -> Unit)? = null,
     onPosterLongClick: ((MetaPreview) -> Unit)? = null,
+    onIptvAddProvider: () -> Unit = {},
+    onPlayLiveChannel: (String) -> Unit = {},
+    onIptvFavoriteChannel: (String) -> Unit = {},
+    onOpenSportsTab: () -> Unit = {},
     onLibraryPosterClick: ((LibraryItem) -> Unit)? = null,
     onLibraryPosterLongClick: ((LibraryItem, LibrarySection) -> Unit)? = null,
     onLibrarySectionViewAllClick: ((LibrarySection, LibrarySortOption) -> Unit)? = null,
@@ -3771,6 +3993,9 @@ private fun AppTabHost(
                 onContinueWatchingLongPress = onContinueWatchingLongPress,
                 onFolderClick = onFolderClick,
                 onInitialHomeContentRendered = onInitialHomeContentRendered,
+                onOpenSportsTab = onOpenSportsTab,
+                onPlaySportsChannel = onPlayLiveChannel,
+                onAddIptvPlaylist = onIptvAddProvider,
             )
         }
 
@@ -3803,6 +4028,30 @@ private fun AppTabHost(
                                 onSectionViewAllClick = onLibrarySectionViewAllClick,
                                 onCloudFilePlay = onCloudFilePlay,
                                 onConnectCloudClick = onConnectCloudClick,
+                            )
+                        }
+
+                        AppScreenTab.Iptv -> {
+                            XtreamHubScreen(
+                                modifier = Modifier.fillMaxSize(),
+                                onPosterClick = { meta -> onPosterClick?.invoke(meta) },
+                                onPlayLiveChannel = onPlayLiveChannel,
+                                onFavoriteLiveChannel = onIptvFavoriteChannel,
+                                onAddProvider = onIptvAddProvider,
+                            )
+                        }
+
+                        AppScreenTab.Sports -> {
+                            SportsHubScreen(
+                                modifier = Modifier.fillMaxSize(),
+                                // Matched channels are registry-registered live ids — same play route
+                                // as the IPTV hub; the no-playlist CTA deep-links to IPTV settings.
+                                onPlayChannel = onPlayLiveChannel,
+                                onAddPlaylist = onIptvAddProvider,
+                                // Recordings are registry-registered VOD ids — native detail pipeline.
+                                onOpenRecording = { id ->
+                                    XtreamItemRegistry.get(id)?.toMetaPreview()?.let { onPosterClick?.invoke(it) }
+                                },
                             )
                         }
 
@@ -3847,6 +4096,9 @@ private fun AppHomeTabContent(
     onContinueWatchingLongPress: ((ContinueWatchingItem) -> Unit)?,
     onFolderClick: ((collectionId: String, folderId: String) -> Unit)?,
     onInitialHomeContentRendered: () -> Unit,
+    onOpenSportsTab: () -> Unit = {},
+    onPlaySportsChannel: (String) -> Unit = {},
+    onAddIptvPlaylist: () -> Unit = {},
 ) {
     val animateCollectionGifsProvider = remember(tabsRouteActiveState, homeSelected) {
         { homeSelected && tabsRouteActiveState.value }
@@ -3862,6 +4114,9 @@ private fun AppHomeTabContent(
         onContinueWatchingLongPress = onContinueWatchingLongPress,
         onFolderClick = onFolderClick,
         onFirstCatalogRendered = onInitialHomeContentRendered,
+        onOpenSportsTab = onOpenSportsTab,
+        onPlaySportsChannel = onPlaySportsChannel,
+        onAddIptvPlaylist = onAddIptvPlaylist,
     )
 }
 
@@ -4095,6 +4350,32 @@ private fun DesktopHoverSidebar(
                     )
                 }
                 DesktopSidebarItem(
+                    label = "IPTV",
+                    selected = selectedTab == AppScreenTab.Iptv,
+                    expanded = sidebarExpanded,
+                    onClick = { selectTab(AppScreenTab.Iptv) },
+                ) { color ->
+                    Icon(
+                        imageVector = Icons.Filled.LiveTv,
+                        contentDescription = "IPTV",
+                        modifier = Modifier.size(DesktopSidebarIconSize),
+                        tint = color,
+                    )
+                }
+                DesktopSidebarItem(
+                    label = "Sports",
+                    selected = selectedTab == AppScreenTab.Sports,
+                    expanded = sidebarExpanded,
+                    onClick = { selectTab(AppScreenTab.Sports) },
+                ) { color ->
+                    Icon(
+                        painter = painterResource(Res.drawable.sidebar_sports),
+                        contentDescription = "Sports",
+                        modifier = Modifier.size(DesktopSidebarIconSize),
+                        tint = color,
+                    )
+                }
+                DesktopSidebarItem(
                     label = stringResource(Res.string.compose_settings_page_root),
                     selected = selectedTab == AppScreenTab.Settings,
                     expanded = sidebarExpanded,
@@ -4300,6 +4581,40 @@ private fun TabletFloatingTopBar(
                             contentDescription = stringResource(Res.string.compose_nav_library),
                             modifier = Modifier.size(NuvioTokens.Space.s18),
                             tint = if (selectedTab == AppScreenTab.Library) {
+                                tokens.colors.textPrimary
+                            } else {
+                                tokens.colors.textMuted
+                            },
+                        )
+                    },
+                )
+                TabletTopPillItem(
+                    label = "IPTV",
+                    selected = selectedTab == AppScreenTab.Iptv,
+                    onClick = { onTabSelected(AppScreenTab.Iptv) },
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Filled.LiveTv,
+                            contentDescription = "IPTV",
+                            modifier = Modifier.size(NuvioTokens.Space.s18),
+                            tint = if (selectedTab == AppScreenTab.Iptv) {
+                                tokens.colors.textPrimary
+                            } else {
+                                tokens.colors.textMuted
+                            },
+                        )
+                    },
+                )
+                TabletTopPillItem(
+                    label = "Sports",
+                    selected = selectedTab == AppScreenTab.Sports,
+                    onClick = { onTabSelected(AppScreenTab.Sports) },
+                    icon = {
+                        Icon(
+                            painter = painterResource(Res.drawable.sidebar_sports),
+                            contentDescription = "Sports",
+                            modifier = Modifier.size(NuvioTokens.Space.s18),
+                            tint = if (selectedTab == AppScreenTab.Sports) {
                                 tokens.colors.textPrimary
                             } else {
                                 tokens.colors.textMuted

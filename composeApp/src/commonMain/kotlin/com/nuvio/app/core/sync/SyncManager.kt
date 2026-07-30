@@ -7,10 +7,12 @@ import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.collection.CollectionSyncService
 import com.nuvio.app.features.home.HomeCatalogSettingsSyncService
+import com.nuvio.app.features.iptv.XtreamAccountSyncService
 import com.nuvio.app.features.library.LibrarySourceMode
 import com.nuvio.app.features.library.LibraryRepository
 import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.profiles.ProfileRepository
+import com.nuvio.app.features.radar.RadarSyncService
 import com.nuvio.app.features.trakt.TraktAuthRepository
 import com.nuvio.app.features.trakt.TraktPlatformClock
 import com.nuvio.app.features.trakt.TraktSettingsRepository
@@ -390,6 +392,16 @@ object SyncManager {
                     "Full profile sync incomplete profile=$profileId reason=$reason " +
                         "failedSteps=${syncResult.failedSteps}"
                 }
+            }
+            // Fork surfaces (IPTV accounts + Radar follows) ride alongside the ordered
+            // pipeline — upstream's ProfileSyncOperations doesn't know about them.
+            accountScopeSnapshot().launch {
+                runCatching { XtreamAccountSyncService.pullFromServer(profileId) }
+                    .onFailure { log.e(it) { "Xtream accounts pull failed" } }
+            }
+            accountScopeSnapshot().launch {
+                runCatching { RadarSyncService.pullFromServer(profileId) }
+                    .onFailure { log.e(it) { "Radar follows pull failed" } }
             }
             log.i { "Full profile sync completed profile=$profileId reason=$reason" }
         }

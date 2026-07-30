@@ -368,6 +368,26 @@ object LibraryRepository {
         }
     }
 
+    /**
+     * IPTV playlist edit: rewrites every saved item under an old `xtream:{accountId}:` id
+     * prefix to the new one, or drops them when newPrefix is null (different playlist).
+     */
+    fun migrateIdPrefix(oldPrefix: String, newPrefix: String?) {
+        ensureLoaded()
+        val affected = localState.snapshot().items.filter { it.id.startsWith(oldPrefix) }
+        if (affected.isEmpty()) return
+        var snapshot = localState.snapshot()
+        affected.forEach { snapshot = localState.remove(it.id, it.type).snapshot }
+        if (newPrefix != null) {
+            affected.forEach { item ->
+                snapshot = localState.upsert(item.copy(id = newPrefix + item.id.removePrefix(oldPrefix)))
+            }
+        }
+        persist(snapshot)
+        publish()
+        pushToServer(snapshot)
+    }
+
     fun isSaved(id: String, type: String? = null): Boolean {
         ensureLoaded()
 
@@ -622,7 +642,7 @@ object LibraryRepository {
 }
 
 internal const val LOCAL_LIBRARY_LIST_KEY = "local"
-private const val DEFAULT_LOCAL_LIBRARY_TAB_TITLE = "Nuvio Library"
+private const val DEFAULT_LOCAL_LIBRARY_TAB_TITLE = "Tuvora Library"
 private const val DEFAULT_LIBRARY_OTHER_TITLE = "Other"
 
 internal fun localLibraryListTab(): TraktListTab =

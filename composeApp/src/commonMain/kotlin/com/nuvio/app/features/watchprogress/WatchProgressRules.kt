@@ -1,5 +1,6 @@
 package com.nuvio.app.features.watchprogress
 
+import com.nuvio.app.features.iptv.XtreamItemRegistry
 import com.nuvio.app.features.watching.domain.DefaultContinueWatchingLimit
 import com.nuvio.app.features.watching.domain.WatchingContentRef
 import com.nuvio.app.features.watching.domain.WatchingProgressRecord
@@ -134,6 +135,10 @@ internal fun List<WatchProgressEntry>.continueWatchingEntries(
 }
 
 internal fun WatchProgressEntry.shouldTreatAsInProgressForContinueWatching(): Boolean {
+    // Live channels have no meaningful resume position — never show them as CW cards.
+    if (isLiveChannelProgress()) return false
+    // Xtream ids whose account is gone from this device can't resolve meta or play.
+    if (XtreamItemRegistry.isOrphaned(parentMetaId)) return false
     val entry = normalizedCompletion()
     if (entry.isEffectivelyCompleted) return false
 
@@ -144,6 +149,11 @@ internal fun WatchProgressEntry.shouldTreatAsInProgressForContinueWatching(): Bo
     return entry.source != WatchProgressSourceTraktHistory &&
         entry.source != WatchProgressSourceTraktShowProgress
 }
+
+internal fun WatchProgressEntry.isLiveChannelProgress(): Boolean =
+    contentType.equals("live", ignoreCase = true) ||
+        XtreamItemRegistry.isLiveId(parentMetaId) ||
+        XtreamItemRegistry.isLiveId(videoId)
 
 internal fun WatchProgressEntry.shouldUseAsCompletedSeedForContinueWatching(): Boolean {
     val entry = normalizedCompletion()

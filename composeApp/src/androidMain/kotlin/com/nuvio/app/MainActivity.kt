@@ -79,6 +79,11 @@ class MainActivity : AppCompatActivity() {
         pipRemoteActionReceiver = PipRemoteActionReceiver.register(this)
         SyncClientIdentityStorage.initialize(applicationContext)
         AddonStorage.initialize(applicationContext)
+        com.nuvio.app.features.iptv.XtreamAccountStorage.initialize(applicationContext)
+        com.nuvio.app.features.iptv.M3UFilePicker.initialize(applicationContext)
+        com.nuvio.app.features.iptv.match.MatchDbDriver.initialize(applicationContext)
+        com.nuvio.app.features.iptv.content.IptvContentDbDriver.initialize(applicationContext)
+        com.nuvio.app.features.epg.EpgMirrorDbDriver.initialize(applicationContext)
         AuthStorage.initialize(applicationContext)
         LibraryStorage.initialize(applicationContext)
         WatchedStorage.initialize(applicationContext)
@@ -123,6 +128,11 @@ class MainActivity : AppCompatActivity() {
         PlatformLocalAccountDataCleaner.initialize(applicationContext)
         EpisodeReleaseNotificationPlatform.initialize(applicationContext)
         EpisodeReleaseNotificationPlatform.bindActivity(this)
+        // Register the ACTION_OPEN_DOCUMENT launcher for the IPTV M3U-file picker (must happen before
+        // the activity is STARTED, i.e. here in onCreate).
+        com.nuvio.app.features.iptv.M3UFilePicker.bindActivity(this)
+        // P3: periodic background refresh of overdue IPTV playlists (idempotent — KEEP).
+        com.nuvio.app.features.iptv.IptvRefreshWorker.schedule(applicationContext)
         handleIncomingAppIntent(intent)
 
         setContent {

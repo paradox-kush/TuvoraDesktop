@@ -640,6 +640,44 @@ object WatchedRepository {
         }
     }
 
+    /**
+     * IPTV playlist edit: rewrites every watched mark under an old `xtream:{accountId}:` id
+     * prefix to the new one, or drops them when newPrefix is null (different playlist).
+     * Old remote marks are deleted so delta pulls don't resurrect them.
+     */
+    fun migrateIdPrefix(oldPrefix: String, newPrefix: String?) {
+        ensureLoaded()
+        // IPTV marks only ever live in the Nuvio-sync source — Trakt can't hold xtream ids.
+        val source = WatchProgressSource.NUVIO_SYNC
+        val targetItems = itemsForSource(source)
+        val affected = targetItems.filterValues { it.id.startsWith(oldPrefix) }
+        val seriesKeys = fullyWatchedSeriesKeysForSource(source)
+        val hadSeriesKeys = seriesKeys.any { it.contains(oldPrefix) }
+        if (affected.isEmpty() && !hadSeriesKeys) return
+        affected.keys.forEach { targetItems.remove(it) }
+        val moved = if (newPrefix == null) emptyList() else affected.values.map { item ->
+            item.copy(id = newPrefix + item.id.removePrefix(oldPrefix))
+        }
+        moved.forEach { targetItems[watchedItemKey(it.type, it.id, it.season, it.episode)] = it }
+        // Fully-watched series keys embed the content id — rewrite/drop by substring.
+        setFullyWatchedSeriesKeysForSource(
+            source,
+            seriesKeys.mapNotNull { key ->
+                when {
+                    !key.contains(oldPrefix) -> key
+                    newPrefix == null -> null
+                    else -> key.replace(oldPrefix, newPrefix)
+                }
+            }.toSet(),
+        )
+        publish()
+        persistNuvio()
+        pushDeleteToServer(items = affected.values.toList(), source = source)
+        if (moved.isNotEmpty()) {
+            pushMarksToServer(moved, WatchedTraktHistorySync.Skip, source = source)
+        }
+    }
+
     fun markWatched(item: WatchedItem) {
         markWatched(listOf(item))
     }

@@ -79,6 +79,7 @@ internal data class SettingsSearchEntry(
 
 @Composable
 internal fun settingsSearchEntries(
+    addonsEnabled: Boolean,
     pluginsEnabled: Boolean,
     downloadsEnabled: Boolean,
     notificationsEnabled: Boolean,
@@ -225,13 +226,15 @@ internal fun settingsSearchEntries(
         category = advancedCategory,
         icon = Icons.Rounded.Tune,
     )
-    addPage(
-        page = SettingsPage.ContentDiscovery,
-        key = "content-discovery",
-        title = contentDiscoveryPage,
-        description = stringResource(Res.string.compose_settings_root_content_discovery_description),
-        icon = Icons.Rounded.Extension,
-    )
+    if (addonsEnabled || pluginsEnabled) {
+        addPage(
+            page = SettingsPage.ContentDiscovery,
+            key = "content-discovery",
+            title = contentDiscoveryPage,
+            description = stringResource(Res.string.compose_settings_root_content_discovery_description),
+            icon = Icons.Rounded.Extension,
+        )
+    }
     if (downloadsEnabled) {
         add(
             key = "downloads",
@@ -451,19 +454,21 @@ internal fun settingsSearchEntries(
         icon = Icons.Rounded.Tune,
     )
 
-    addPage(
-        page = SettingsPage.Addons,
-        key = "addons",
-        title = addonsPage,
-        description = stringResource(
-            if (personalMediaAddonCopyEnabled) {
-                Res.string.settings_content_discovery_addons_description_appstore
-            } else {
-                Res.string.settings_content_discovery_addons_description
-            },
-        ),
-        icon = Icons.Rounded.Extension,
-    )
+    if (addonsEnabled) {
+        addPage(
+            page = SettingsPage.Addons,
+            key = "addons",
+            title = addonsPage,
+            description = stringResource(
+                if (personalMediaAddonCopyEnabled) {
+                    Res.string.settings_content_discovery_addons_description_appstore
+                } else {
+                    Res.string.settings_content_discovery_addons_description
+                },
+            ),
+            icon = Icons.Rounded.Extension,
+        )
+    }
     if (pluginsEnabled) {
         addPage(
             page = SettingsPage.Plugins,

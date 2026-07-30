@@ -11,6 +11,9 @@ import com.nuvio.app.features.debrid.DebridSettingsRepository
 import com.nuvio.app.features.debrid.DebridStreamPresentation
 import com.nuvio.app.features.debrid.LocalDebridAvailabilityService
 import com.nuvio.app.features.details.MetaDetailsRepository
+import com.nuvio.app.features.iptv.XtreamItemRegistry
+import com.nuvio.app.features.iptv.XtreamRepository
+import com.nuvio.app.features.iptv.match.XtreamStreamSource
 import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.plugins.pluginContentId
@@ -154,6 +157,69 @@ object StreamsRepository {
             return
         }
 
+        // Xtream IPTV: a namespaced id resolves to one direct stream — no addons/debrid.
+        // (Series episodes are already handled by embedded streams above; this covers VOD
+        // movies, which have no videos, and any registered live channel.)
+        if (XtreamItemRegistry.isXtreamId(videoId)) {
+            val xtreamStream = XtreamItemRegistry.streamItemFor(videoId)
+            if (xtreamStream != null) {
+                val group = AddonStreamGroup(
+                    addonName = xtreamStream.addonName,
+                    addonId = "xtream",
+                    streams = listOf(xtreamStream),
+                    isLoading = false,
+                )
+                val presentedGroup = StreamBadgePresentation.apply(
+                    groups = listOf(group),
+                    rules = streamBadgeRules,
+                ).firstOrNull() ?: group
+                _uiState.value = StreamsUiState(
+                    requestToken = requestToken,
+                    groups = listOf(presentedGroup),
+                    activeAddonIds = setOf("xtream"),
+                    isAnyLoading = false,
+                )
+            } else {
+                // Registry miss: a persisted id (Continue Watching / Library) wasn't browsed this
+                // session. Rebuild + re-register it via MetaDetailsRepository (which fetches vodInfo
+                // for the correct container extension), then retry, before giving up.
+                _uiState.value = StreamsUiState(requestToken = requestToken, isAnyLoading = true)
+                activeJob?.cancel()
+                activeJob = scope.launch {
+                    val rebuilt = runCatchingUnlessCancelled {
+                        MetaDetailsRepository.ensureXtreamStreamRegistered(videoId)
+                    }.getOrDefault(false)
+                    val retried = if (rebuilt) XtreamItemRegistry.streamItemFor(videoId) else null
+                    if (retried != null) {
+                        val group = AddonStreamGroup(
+                            addonName = retried.addonName,
+                            addonId = "xtream",
+                            streams = listOf(retried),
+                            isLoading = false,
+                        )
+                        val presentedGroup = StreamBadgePresentation.apply(
+                            groups = listOf(group),
+                            rules = streamBadgeRules,
+                        ).firstOrNull() ?: group
+                        _uiState.value = StreamsUiState(
+                            requestToken = requestToken,
+                            groups = listOf(presentedGroup),
+                            activeAddonIds = setOf("xtream"),
+                            isAnyLoading = false,
+                        )
+                    } else {
+                        log.w { "Xtream stream short-circuit: no registered item for id=$videoId" }
+                        _uiState.value = StreamsUiState(
+                            requestToken = requestToken,
+                            isAnyLoading = false,
+                            emptyStateReason = StreamsEmptyStateReason.NoStreamsFound,
+                        )
+                    }
+                }
+            }
+            return
+        }
+
         val installedAddons = AddonRepository.uiState.value.addons.enabledAddons()
         val pluginScrapers = if (AppFeaturePolicy.pluginsEnabled) {
             PluginRepository.getEnabledScrapersForType(type)
@@ -165,7 +231,24 @@ object StreamsRepository {
             groupByRepository = pluginUiState.groupStreamsByRepository,
         )
 
-        if (installedAddons.isEmpty() && pluginProviderGroups.isEmpty()) {
+        // Xtream IPTV as a stream source for TMDB content: each enabled account gets a
+        // group; the TMDB->stream match runs per account (index + verify + cache).
+        // Xtream + Stalker. The match index builds from player_api bulk lists that only real Xtream
+        // panels have, so M3U must stay out (it'd just fail into backoff) — but Stalker takes a
+        // different route inside XtreamStreamSource: the portal's own search endpoint. M3U content
+        // still plays via its own namespaced hybrid lane (registry ids).
+        val xtreamTargets = if (type == "movie" || type == "series") {
+            XtreamRepository.ensureLoaded()
+            XtreamRepository.uiState.value.accounts.filter {
+                it.enabled && (it.sourceType == com.nuvio.app.features.iptv.SOURCE_TYPE_XTREAM ||
+                    it.sourceType == com.nuvio.app.features.iptv.SOURCE_TYPE_STALKER)
+            }
+        } else {
+            emptyList()
+        }
+        log.d { "Xtream match targets: ${xtreamTargets.size} (accounts=${XtreamRepository.uiState.value.accounts.size}) type=$type" }
+
+        if (installedAddons.isEmpty() && pluginProviderGroups.isEmpty() && xtreamTargets.isEmpty()) {
             _uiState.value = StreamsUiState(
                 requestToken = requestToken,
                 isAnyLoading = false,
@@ -194,7 +277,7 @@ object StreamsRepository {
 
         log.d { "Found ${streamAddons.size} addons for stream type=$type id=$videoId" }
 
-        if (streamAddons.isEmpty() && pluginProviderGroups.isEmpty()) {
+        if (streamAddons.isEmpty() && pluginProviderGroups.isEmpty() && xtreamTargets.isEmpty()) {
             _uiState.value = StreamsUiState(
                 requestToken = requestToken,
                 isAnyLoading = false,
@@ -219,6 +302,13 @@ object StreamsRepository {
                 streams = emptyList(),
                 isLoading = true,
             )
+        } + xtreamTargets.map { acc ->
+            AddonStreamGroup(
+                addonName = acc.name,
+                addonId = XtreamStreamSource.groupId(acc),
+                streams = emptyList(),
+                isLoading = true,
+            )
         }, installedAddonOrder)
         val isInitiallyLoading = initialGroups.any { it.isLoading }
         _uiState.value = StreamsUiState(
@@ -238,7 +328,8 @@ object StreamsRepository {
                 .toMutableMap()
             val pluginFirstErrorByAddonId = mutableMapOf<String, String>()
             val totalTasks = streamAddons.size +
-                pluginProviderGroups.sumOf { it.scrapers.size }
+                pluginProviderGroups.sumOf { it.scrapers.size } +
+                xtreamTargets.size
 
             val installedAddonNames = installedAddonOrder.toSet()
             val installedAddonIds = streamAddons.map { it.addonId }.toSet()
@@ -462,6 +553,35 @@ object StreamsRepository {
                             AddonStreamGroup(
                                 addonName = displayName,
                                 addonId = addon.addonId,
+                                streams = emptyList(),
+                                isLoading = false,
+                                error = err.message,
+                            )
+                        },
+                    )
+                    publishCompletion(StreamLoadCompletion.Addon(group))
+                }
+            }
+
+            xtreamTargets.forEach { acc ->
+                launch {
+                    val group = runCatchingUnlessCancelled {
+                        XtreamStreamSource.streamsFor(acc, type, videoId, season, episode)
+                    }.fold(
+                        onSuccess = { streams ->
+                            log.d { "Xtream match: ${streams.size} streams from ${acc.name} for $videoId" }
+                            AddonStreamGroup(
+                                addonName = acc.name,
+                                addonId = XtreamStreamSource.groupId(acc),
+                                streams = streams,
+                                isLoading = false,
+                            )
+                        },
+                        onFailure = { err ->
+                            log.w(err) { "Xtream match failed for ${acc.name}" }
+                            AddonStreamGroup(
+                                addonName = acc.name,
+                                addonId = XtreamStreamSource.groupId(acc),
                                 streams = emptyList(),
                                 isLoading = false,
                                 error = err.message,

@@ -4,6 +4,8 @@ actual object AppFeaturePolicy {
     actual val pluginsEnabled: Boolean = false
     actual val downloadsEnabled: Boolean = true
     actual val notificationsEnabled: Boolean = true
+    // Store builds hide the addon system: pure BYO-IPTV player posture.
+    actual val addonsEnabled: Boolean = false
     actual val supportersContributorsPageEnabled: Boolean = false
     actual val accountDeletionEnabled: Boolean = true
     actual val personalMediaAddonCopyEnabled: Boolean = true
@@ -14,4 +16,5 @@ actual object AppFeaturePolicy {
     actual val inAppUpdaterEnabled: Boolean = false
     actual val imdbRatingLogoEnabled: Boolean = false
     actual val mediaPlaybackForegroundServiceEnabled: Boolean = false
+    actual val debugBackendSwitcherEnabled: Boolean = AppBuildConfig.IS_DEBUG_BUILD
 }
