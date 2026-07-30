@@ -1183,6 +1183,7 @@ kotlin {
 
             dependencies {
                 implementation(libs.compose.uiToolingPreview)
+                implementation(libs.androidx.sqlite.framework)
                 implementation(libs.androidx.appcompat)
                 implementation(libs.androidx.activity.compose)
                 implementation(libs.androidx.core.splashscreen)
@@ -1261,10 +1262,9 @@ kotlin {
             implementation(libs.supabase.functions)
             implementation(libs.supabase.realtime)
             implementation(libs.reorderable)
-            // TMDB->Xtream match index: framework artifact resolves to AndroidSQLiteDriver
-            // on Android and NativeSQLiteDriver (system libsqlite3) on iOS — no bundled binary
+            // TMDB->Xtream match index db API. The DRIVER is per-target: sqlite-framework on
+            // Android/iOS (system sqlite, no bundled binary), sqlite-bundled on desktop JVM.
             implementation(libs.androidx.sqlite)
-            implementation(libs.androidx.sqlite.framework)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
@@ -1482,6 +1482,7 @@ if (isMacHost) {
 }
 configurations.matching { it.name == "iosMainImplementation" }.configureEach {
     project.dependencies.add(name, libs.ktor.client.darwin)
+    project.dependencies.add(name, libs.androidx.sqlite.framework)
 }
 
 configurations.all {

@@ -30,7 +30,7 @@ import java.awt.Color as AwtColor
 import javax.swing.JComponent
 
 private val NuvioDesktopNativeBackground = AwtColor(0x0D, 0x0D, 0x0D)
-private const val NuvioDesktopIconPath = "icons/nuvio-app-icon.png"
+private const val NuvioDesktopIconPath = "icons/tuvora-app-icon.png"
 private const val MacosDarkAquaAppearance = "NSAppearanceNameDarkAqua"
 
 fun main(args: Array<String>) {
