@@ -67,7 +67,7 @@ fun main(args: Array<String>) {
                 P2pStreamingEngine.shutdown()
                 exitApplication()
             },
-            title = if (smokePlayerUrl == null) "Nuvio" else "Nuvio Player Smoke",
+            title = if (smokePlayerUrl == null) "Tuvora" else "Tuvora Player Smoke",
             state = windowState,
             icon = painterResource(NuvioDesktopIconPath),
         ) {

@@ -38,11 +38,11 @@ actual object AppUpdaterPlatform {
     actual val isSupported: Boolean = currentOs != DesktopUpdaterOs.UNKNOWN
 
     actual val releaseSource: AppUpdateReleaseSource = AppUpdateReleaseSource(
-        owner = "NuvioMedia",
-        repo = "NuvioDesktop",
+        owner = "paradox-kush",
+        repo = "TuvoraDesktop",
         channelBranch = null,
         includePrereleases = true,
-        userAgent = "NuvioDesktop",
+        userAgent = "TuvoraDesktop",
     )
 
     actual val assetSelector: AppUpdateAssetSelector

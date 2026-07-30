@@ -537,7 +537,9 @@ val desktopReleaseVersionCode = (
     ?.toIntOrNull()
     ?: 1
 val desktopReleasePackageVersion = jpackageCompatibleVersion(desktopReleaseVersionName)
-val windowsMsiUpgradeUuid = "395990ee-9b8a-3548-922c-e7a23a495b8d"
+// Fresh UUID for the Tuvora fork — MUST differ from upstream Nuvio so MSI upgrade
+// chains never cross between the two apps.
+val windowsMsiUpgradeUuid = "7038e56d-ca2c-475c-a0c3-41f90e6ac5f4"
 val iosDistribution = (
     providers.gradleProperty("nuvio.ios.distribution").orNull
         ?: System.getenv("NUVIO_IOS_DISTRIBUTION")
@@ -1286,9 +1288,9 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-            packageName = "Nuvio"
+            packageName = "Tuvora"
             packageVersion = desktopReleasePackageVersion
-            vendor = "Nuvio Media"
+            vendor = "Tuvora"
             if (isMacHost) {
                 appResourcesRootDir.set(macosPlayerAppResourcesRoot)
             }
@@ -1300,18 +1302,18 @@ compose.desktop {
                 "jdk.unsupported",
             )
             macOS {
-                bundleID = "com.nuvio.media.desktop"
-                iconFile.set(project.file("src/desktopMain/resources/icons/nuvio-app-icon.icns"))
+                bundleID = "com.tuvora.desktop"
+                iconFile.set(project.file("src/desktopMain/resources/icons/tuvora-app-icon.icns"))
                 infoPlist {
                     extraKeysRawXml = """
                         <key>CFBundleURLTypes</key>
                         <array>
                             <dict>
                                 <key>CFBundleURLName</key>
-                                <string>com.nuvio.media.desktop</string>
+                                <string>com.tuvora.desktop</string>
                                 <key>CFBundleURLSchemes</key>
                                 <array>
-                                    <string>nuvio</string>
+                                    <string>tuvora</string>
                                     <string>stremio</string>
                                 </array>
                             </dict>
@@ -1337,14 +1339,14 @@ compose.desktop {
                 }
             }
             windows {
-                iconFile.set(project.file("src/desktopMain/resources/icons/nuvio-app-icon.ico"))
+                iconFile.set(project.file("src/desktopMain/resources/icons/tuvora-app-icon.ico"))
                 upgradeUuid = windowsMsiUpgradeUuid
                 shortcut = true
                 menu = true
-                menuGroup = "Nuvio"
+                menuGroup = "Tuvora"
             }
             linux {
-                iconFile.set(project.file("src/desktopMain/resources/icons/nuvio-app-icon.png"))
+                iconFile.set(project.file("src/desktopMain/resources/icons/tuvora-app-icon.png"))
             }
         }
 
@@ -1359,8 +1361,8 @@ fun renameMacosDmgOutput(release: Boolean) {
 
     val distributionName = if (release) "main-release" else "main"
     val outputDir = layout.buildDirectory.dir("compose/binaries/$distributionName/dmg").get().asFile
-    val finalDmg = outputDir.resolve("Nuvio-macOS-$macosDmgArchName-$desktopReleaseVersionName.dmg")
-    val defaultDmg = outputDir.resolve("Nuvio-$desktopReleasePackageVersion.dmg")
+    val finalDmg = outputDir.resolve("Tuvora-macOS-$macosDmgArchName-$desktopReleaseVersionName.dmg")
+    val defaultDmg = outputDir.resolve("Tuvora-$desktopReleasePackageVersion.dmg")
     val sourceDmg = defaultDmg.takeIf { it.exists() }
         ?: finalDmg.takeIf { it.exists() }
         ?: error("Expected macOS DMG output in ${outputDir.absolutePath}")
@@ -1396,8 +1398,8 @@ fun publishWindowsMsiOutput(release: Boolean) {
 
     val distributionName = if (release) "main-release" else "main"
     val outputDir = layout.buildDirectory.dir("compose/binaries/$distributionName/msi").get().asFile
-    val finalMsi = outputDir.resolve("Nuvio-Windows-$windowsPlayerBridgeArch-$desktopReleaseVersionName.msi")
-    val defaultMsi = outputDir.resolve("Nuvio-$desktopReleasePackageVersion.msi")
+    val finalMsi = outputDir.resolve("Tuvora-Windows-$windowsPlayerBridgeArch-$desktopReleaseVersionName.msi")
+    val defaultMsi = outputDir.resolve("Tuvora-$desktopReleasePackageVersion.msi")
     val sourceMsi = defaultMsi.takeIf { it.exists() }
         ?: finalMsi.takeIf { it.exists() }
         ?: error("Expected Windows MSI output in ${outputDir.absolutePath}")
@@ -1471,8 +1473,8 @@ if (isMacHost) {
         dependsOn("packageReleaseDmg")
         dmgDir.set(layout.buildDirectory.dir("compose/binaries/main-release/dmg"))
         artifactDir.set(layout.buildDirectory.dir("compose/release-dmgs"))
-        finalDmgName.set("Nuvio-macOS-$macosDmgArchName-$desktopReleaseVersionName.dmg")
-        defaultDmgName.set("Nuvio-$desktopReleasePackageVersion.dmg")
+        finalDmgName.set("Tuvora-macOS-$macosDmgArchName-$desktopReleaseVersionName.dmg")
+        defaultDmgName.set("Tuvora-$desktopReleasePackageVersion.dmg")
         keychainProfile.set(macosNotaryKeychainProfile.orEmpty())
         keychainPath.set(macosNotaryKeychainPath.orEmpty())
         signingIdentity.set(macosSigningIdentity.orEmpty())

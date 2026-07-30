@@ -40,14 +40,14 @@ internal object DesktopStorage {
         val osName = System.getProperty("os.name").orEmpty().lowercase(Locale.ROOT)
         val userHome = Paths.get(System.getProperty("user.home").orEmpty())
         return when {
-            osName.contains("mac") -> userHome.resolve("Library/Application Support/Nuvio")
+            osName.contains("mac") -> userHome.resolve("Library/Application Support/Tuvora")
             osName.contains("win") -> {
                 val appData = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
-                (appData?.let(Paths::get) ?: userHome.resolve("AppData/Roaming")).resolve("Nuvio")
+                (appData?.let(Paths::get) ?: userHome.resolve("AppData/Roaming")).resolve("Tuvora")
             }
             else -> {
                 val xdgConfig = System.getenv("XDG_CONFIG_HOME")?.takeIf { it.isNotBlank() }
-                (xdgConfig?.let(Paths::get) ?: userHome.resolve(".config")).resolve("nuvio")
+                (xdgConfig?.let(Paths::get) ?: userHome.resolve(".config")).resolve("tuvora")
             }
         }
     }
@@ -141,7 +141,7 @@ internal object DesktopStorage {
         private fun persist() {
             Files.createDirectories(file.parent)
             Files.newOutputStream(file).use { output ->
-                properties.store(output, "Nuvio desktop preferences")
+                properties.store(output, "Tuvora desktop preferences")
             }
         }
     }
