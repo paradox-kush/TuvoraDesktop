@@ -34,6 +34,14 @@ Download the latest build from [GitHub Releases](https://github.com/paradox-kush
 - macOS: DMG (arm64 + Intel)
 - Linux: DEB package, when available
 
+### Windows note
+
+Builds are not code-signed, so Windows SmartScreen shows a blue **"Windows protected your PC"**
+box the first time you run the installer, and Microsoft Defender may report it as unrecognised.
+This is a reputation warning about an unknown publisher, not a detected threat.
+
+To install: click **More info**, then **Run anyway**.
+
 ### macOS note
 
 Builds may be unsigned. If macOS blocks the app or reports it as damaged, move the app to `Applications` and run:

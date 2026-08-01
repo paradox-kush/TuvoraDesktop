@@ -2102,4 +2102,5 @@
     <string name="theme_marigold">Marigold</string>
     <string name="home_empty_iptv_hint_title">No content yet</string>
     <string name="home_empty_iptv_hint_message">Add your IPTV playlist in Settings to see your channels, movies, and series here.</string>
+    <string name="settings_donate_description">Support the development of Tuvora</string>
 </resources>

@@ -62,10 +62,12 @@ import nuvio.composeapp.generated.resources.settings_playback_subtitle
 import nuvio.composeapp.generated.resources.updates_debug_test_description
 import nuvio.composeapp.generated.resources.updates_debug_test_title
 import nuvio.composeapp.generated.resources.about_supporters_contributors_subtitle
+import nuvio.composeapp.generated.resources.action_donate
+import nuvio.composeapp.generated.resources.settings_donate_description
 import nuvio.composeapp.generated.resources.about_licenses_attributions_subtitle
 import org.jetbrains.compose.resources.stringResource
 
-private const val PRIVACY_POLICY_URL = "https://nuvio.tv/privacy-policy"
+private const val PRIVACY_POLICY_URL = "https://tuvora.co/privacy"
 
 internal fun LazyListScope.settingsRootContent(
     isTablet: Boolean,
@@ -200,6 +202,10 @@ internal fun LazyListScope.settingsRootContent(
                 isTablet = isTablet,
             ) {
                 SettingsGroup(isTablet = isTablet) {
+                    // Upstream's Supporters & Contributors page fetches THEIR ko-fi/GitHub feeds
+                    // (CONTRIBUTIONS_URL / DONATIONS_BASE_URL), which this fork doesn't set - it
+                    // could only ever render an error. Replaced by a plain Donate row, shown once
+                    // DONATIONS_DONATE_URL is configured.
                     if (showSupportersContributorsPage) {
                         SettingsNavigationRow(
                             title = stringResource(Res.string.compose_settings_page_supporters_contributors),
@@ -207,6 +213,17 @@ internal fun LazyListScope.settingsRootContent(
                             icon = Icons.Rounded.Favorite,
                             isTablet = isTablet,
                             onClick = onSupportersContributorsClick,
+                        )
+                        SettingsGroupDivider(isTablet = isTablet)
+                    }
+                    val donateUrl = CommunityConfig.DONATIONS_DONATE_URL.trim()
+                    if (donateUrl.isNotBlank()) {
+                        SettingsNavigationRow(
+                            title = stringResource(Res.string.action_donate),
+                            description = stringResource(Res.string.settings_donate_description),
+                            icon = Icons.Rounded.Favorite,
+                            isTablet = isTablet,
+                            onClick = { uriHandler.openUri(donateUrl) },
                         )
                         SettingsGroupDivider(isTablet = isTablet)
                     }

@@ -6,7 +6,7 @@ actual object AppFeaturePolicy {
     actual val notificationsEnabled: Boolean = false
     // Desktop is a sideload distribution — full addon system stays on.
     actual val addonsEnabled: Boolean = true
-    actual val supportersContributorsPageEnabled: Boolean = true
+    actual val supportersContributorsPageEnabled: Boolean = false
     actual val accountDeletionEnabled: Boolean = false
     actual val personalMediaAddonCopyEnabled: Boolean = false
     actual val p2pEnabled: Boolean = true

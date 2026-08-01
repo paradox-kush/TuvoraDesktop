@@ -260,7 +260,12 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --title "Tuvora Desktop ${VERSION}" \
             --generate-notes \
-            --notes "macOS note: builds are unsigned — if macOS reports the app as damaged, run:
+            --notes "**Windows note:** builds are not code-signed, so SmartScreen shows a blue
+          \"Windows protected your PC\" box the first time you run the installer, and Defender may
+          call it unrecognised. That is a warning about an unknown publisher, not a detected threat.
+          Click **More info**, then **Run anyway**.
+
+          **macOS note:** builds are unsigned — if macOS reports the app as damaged, run:
           \`\`\`
           xattr -dr com.apple.quarantine \"/Applications/Tuvora.app\"
           codesign --force --deep --sign - \"/Applications/Tuvora.app\"
