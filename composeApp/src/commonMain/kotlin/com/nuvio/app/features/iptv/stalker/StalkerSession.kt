@@ -1,5 +1,6 @@
 package com.nuvio.app.features.iptv.stalker
 
+import com.nuvio.app.features.addons.EmptyResponseBodyException
 import com.nuvio.app.features.addons.httpGetTextWithHeaders
 import com.nuvio.app.features.iptv.XtreamAccount
 import io.ktor.http.encodeURLParameter
@@ -39,6 +40,8 @@ internal class StalkerSession(
 ) {
     private var token: String? = null
     private var resolvedEndpoint: String? = null   // e.g. "/portal.php"
+    /** When a re-auth ran and the retry STILL came back empty (another device holds the MAC). */
+    private var lastFailedReauthAtMs: Long = 0L
 
     private val authMutex = Mutex()
 
@@ -75,12 +78,37 @@ internal class StalkerSession(
             rawRequest(params).jsOrNull()
         } catch (e: StalkerAuthException) {
             null   // fall through to the single re-auth + retry below
+        } catch (e: EmptyResponseBodyException) {
+            // A portal that has handed our MAC's session to another device answers 200 with an
+            // EMPTY BODY — no 401, no "Authorization failed.". That is the eviction signal, and it
+            // used to escape this catch entirely (it isn't a StalkerAuthException), so the re-auth
+            // below never ran and callers just saw "no results".
+            null
         }
-        if (first != null) return first
-        // Stale token (empty `js` / "Authorization failed.") -> one fresh handshake, then retry once.
+        if (first != null) {
+            lastFailedReauthAtMs = 0L   // healthy again
+            return first
+        }
+        // Stale token (empty body / empty `js` / "Authorization failed.") -> one handshake, retry once.
+        // Cooldown: when two devices share a MAC each re-auth evicts the other, so a failed recovery
+        // must not have every following request handshake again — that is the stampede that gets a
+        // portal to ban the IP. Fail fast for a short window instead; the next user action retries.
+        val now = com.nuvio.app.features.streams.epochMs()
+        if (lastFailedReauthAtMs != 0L && now - lastFailedReauthAtMs < REAUTH_COOLDOWN_MS) {
+            error("Stalker session for ${account.name} is held by another device — cooling down")
+        }
         reauthenticate(staleToken)
-        return rawRequest(params).jsOrNull()
-            ?: error("Stalker portal returned no data for ${params["action"]}")
+        val retried = try {
+            rawRequest(params).jsOrNull()
+        } catch (e: EmptyResponseBodyException) {
+            null
+        }
+        if (retried == null) {
+            lastFailedReauthAtMs = now
+            error("Stalker portal returned no data for ${params["action"]} — the session is in use elsewhere")
+        }
+        lastFailedReauthAtMs = 0L
+        return retried
     }
 
     /** Force re-auth on the next call (used when a create_link/browse hits a hard failure). */
@@ -225,6 +253,12 @@ internal class StalkerSession(
     companion object {
         // The reference server's rejection sentinel: `echo 'Authorization failed.'; exit;`
         private const val AUTH_FAILED_MARKER = "Authorization failed"
+        /**
+         * How long to stop re-handshaking after a re-auth failed to recover. Two devices sharing a
+         * MAC evict each other on every handshake, so without this each request would handshake
+         * again and the pair would spin — a self-inflicted request storm, and portals ban for that.
+         */
+        private const val REAUTH_COOLDOWN_MS = 30_000L
         // ponytail: fixed ceiling, no adaptive backoff. Raise only with evidence a portal tolerates
         // more; add backoff only if we start seeing 429s at this level.
         private const val MAX_CONCURRENT_REQUESTS = 4

@@ -63,6 +63,15 @@ object StreamLinkCacheRepository {
             remove(contentKey)
             return
         }
+        // An IPTV link is only valid for as long as the provider's catalog stands still, and it
+        // does not: a panel can renumber its whole VOD catalog overnight (observed live —
+        // "synced movie index: +6249 -6253"), after which the cached stream id is gone and the
+        // panel answers the replayed URL with 401. Stalker links are worse still: single-use.
+        // Re-resolving costs one catalog lookup the matcher performs anyway, so never cache these.
+        if (isIptvAddon(addonId)) {
+            remove(contentKey)
+            return
+        }
 
         val entry = CachedStreamLink(
             url = url,
@@ -107,11 +116,27 @@ object StreamLinkCacheRepository {
             StreamLinkCacheStorage.removeEntry(hashedKey(contentKey))
             return null
         }
+        // Also drop IPTV entries written by an earlier build, so an upgrade doesn't keep replaying
+        // a link whose stream id the provider has since renumbered away.
+        if (isIptvAddon(entry.addonId)) {
+            StreamLinkCacheStorage.removeEntry(hashedKey(contentKey))
+            return null
+        }
         if (entry.url.isBlank() && entry.infoHash.isNullOrBlank()) {
             StreamLinkCacheStorage.removeEntry(hashedKey(contentKey))
             return null
         }
         return entry
+    }
+
+    /**
+     * True for a stream produced by an IPTV account rather than an addon/debrid provider: the
+     * direct hybrid lane ("xtream") and the TMDB-matched lane ("xtream-match:<accountId>").
+     */
+    internal fun isIptvAddon(addonId: String?): Boolean {
+        if (addonId.isNullOrBlank()) return false
+        return addonId == "xtream" ||
+            addonId.startsWith(com.nuvio.app.features.iptv.match.XtreamStreamSource.GROUP_ID_PREFIX)
     }
 
     private fun hashedKey(contentKey: String): String {

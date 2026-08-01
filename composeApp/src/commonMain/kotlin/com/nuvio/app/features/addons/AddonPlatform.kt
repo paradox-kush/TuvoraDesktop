@@ -19,6 +19,18 @@ data class RawHttpResponse(
 internal const val DefaultRawHttpResponseMaxBytes = 1024 * 1024
 
 /**
+ * The server answered 2xx with an empty body.
+ *
+ * Distinct from the generic failure so callers can tell "the server said nothing" apart from a
+ * transport error or a 4xx/5xx. A Stalker portal uses exactly this to say "your session was taken
+ * over" — it replies 200 with no body rather than 401 — and that must trigger a re-handshake,
+ * whereas a 429/5xx must NOT (re-authing on those is how a portal gets hammered into banning us).
+ *
+ * Stays an [IllegalStateException] so existing `runCatching`/catch sites behave exactly as before.
+ */
+class EmptyResponseBodyException(message: String) : IllegalStateException(message)
+
+/**
  * GETs [url] as text. [dnsProvider] (P3) selects a per-playlist DNS-over-HTTPS resolver on Android
  * (values: system|cloudflare|google|mullvad|quad9|dnssb; null/"system" = the platform resolver).
  * iOS ignores it — there is no per-app DNS hook on URLSession/Ktor Darwin, so it's a no-op there.

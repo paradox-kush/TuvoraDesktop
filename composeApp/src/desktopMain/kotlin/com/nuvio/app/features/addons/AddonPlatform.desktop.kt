@@ -147,7 +147,7 @@ private suspend fun executeTextRequest(
             error(runBlocking { getString(Res.string.network_request_failed_http, response.code) })
         }
         if (payload.isBlank()) {
-            throw IllegalStateException(runBlocking { getString(Res.string.network_empty_response_body) })
+            throw EmptyResponseBodyException(runBlocking { getString(Res.string.network_empty_response_body) })
         }
         payload
     }
