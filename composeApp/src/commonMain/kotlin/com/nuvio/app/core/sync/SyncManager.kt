@@ -236,6 +236,7 @@ object SyncManager {
     }
 
     internal fun cancelAccountSync() {
+        SyncDeviceReporter.clearAccountState()
         fullSyncRequestGate.cancel()
         val previousAccountJob = synchronized(accountScopeLock) {
             accountScopeJob.also {
@@ -358,6 +359,9 @@ object SyncManager {
         val authState = AuthRepository.state.value
         if (authState !is AuthState.Authenticated || authState.isAnonymous) return
         if (ProfileRepository.activeProfileId != profileId) return
+
+        // Piggy-backs on the sync we were going to do anyway; it is a no-op after the first call.
+        SyncDeviceReporter.reportOnce()
 
         val result = fullSyncRequestGate.launch(
             scope = accountScopeSnapshot(),
