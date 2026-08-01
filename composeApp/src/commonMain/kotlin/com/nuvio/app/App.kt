@@ -202,6 +202,7 @@ import com.nuvio.app.features.player.PlayerScreen
 import com.nuvio.app.features.player.PlayerPlaybackSnapshot
 import com.nuvio.app.features.player.ExternalPlayerIntentResult
 import com.nuvio.app.features.player.ExternalPlayerPlatform
+import com.nuvio.app.features.player.resolveAvailableExternalPlayerId
 import com.nuvio.app.features.player.ExternalPlayerPlaybackRequest
 import com.nuvio.app.features.player.rememberExternalPlayerLauncher
 import com.nuvio.app.features.player.prepareExternalPlayerLaunch
@@ -979,6 +980,13 @@ private fun MainAppContent(
         NetworkStatusRepository.uiState
     }.collectAsStateWithLifecycle()
     val downloadedProviderLabel = stringResource(Res.string.provider_downloaded)
+    val resolvedExternalPlayerId = remember(playerSettingsUiState.externalPlayerId) {
+        resolveAvailableExternalPlayerId(playerSettingsUiState.externalPlayerId)
+    }
+    // Only route playback to an external player when this device has one it can hand off to.
+    val externalPlaybackReady = externalPlayerSupported &&
+        playerSettingsUiState.externalPlayerEnabled &&
+        resolvedExternalPlayerId != null
     val externalPlayerNotConfiguredText = stringResource(Res.string.external_player_not_configured)
     val externalPlayerUnavailableText = stringResource(Res.string.external_player_unavailable)
     val externalPlayerFailedText = stringResource(Res.string.external_player_failed)
@@ -1562,6 +1570,14 @@ private fun MainAppContent(
 
         suspend fun openExternalPlayback(launch: PlayerLaunch): Boolean {
             if (!externalPlayerSupported) return false
+            // Nothing on this device can take the handoff. Bail before the subtitle/skip-segment
+            // prep so the caller falls straight through to the internal player; the toast is for
+            // the explicit "open in external player" actions, which are the only callers that can
+            // reach here with no usable player.
+            if (resolvedExternalPlayerId == null) {
+                NuvioToastController.show(externalPlayerNotConfiguredText)
+                return false
+            }
 
             lastExternalPlayerLaunch = launch
 
@@ -1594,7 +1610,7 @@ private fun MainAppContent(
             return when (
                 val intentResult = ExternalPlayerPlatform.buildIntent(
                     request = enrichedRequest,
-                    playerId = playerSettingsUiState.externalPlayerId,
+                    playerId = resolvedExternalPlayerId,
                 )
             ) {
                 is ExternalPlayerIntentResult.Success -> {
@@ -1648,7 +1664,7 @@ private fun MainAppContent(
                 initialPositionMs = resumeEntry?.lastPositionMs?.takeIf { it > 0L } ?: 0L,
                 initialProgressFraction = resumeEntry?.progressFraction?.takeIf { it > 0f },
             )
-            if (playerSettingsUiState.externalPlayerEnabled) {
+            if (externalPlaybackReady) {
                 coroutineScope.launch { openExternalPlayback(playerLaunch) }
                 return
             }
@@ -1699,7 +1715,7 @@ private fun MainAppContent(
                         initialPositionMs = if (startFromBeginning) 0L else (resumePositionMs ?: 0L),
                         initialProgressFraction = if (startFromBeginning) null else resumeProgressFraction,
                     )
-                    if (externalPlayerSupported && playerSettingsUiState.externalPlayerEnabled) {
+                    if (externalPlaybackReady) {
                         openExternalPlayback(playerLaunch)
                         true
                     } else {
@@ -1770,7 +1786,7 @@ private fun MainAppContent(
                         initialPositionMs = targetResumePositionMs,
                         initialProgressFraction = targetResumeProgressFraction,
                     )
-                    if (externalPlayerSupported && playerSettingsUiState.externalPlayerEnabled) {
+                    if (externalPlaybackReady) {
                         coroutineScope.launch { openExternalPlayback(playerLaunch) }
                         return
                     }
@@ -2810,7 +2826,7 @@ private fun MainAppContent(
                                 initialProgressFraction = launch.resumeProgressFraction,
                                 contentLanguage = cached.contentLanguage,
                             )
-                            if (externalPlayerSupported && playerSettings.externalPlayerEnabled) {
+                            if (externalPlaybackReady) {
                                 openExternalPlayback(playerLaunch)
                                 StreamsRepository.setOverlayVisible(false)
                                 reuseNavigated = true
@@ -2946,7 +2962,7 @@ private fun MainAppContent(
                             initialPositionMs = launch.resumePositionMs ?: 0L,
                             initialProgressFraction = launch.resumeProgressFraction,
                         )
-                        if (externalPlayerSupported && playerSettings.externalPlayerEnabled) {
+                        if (externalPlaybackReady) {
                             openExternalPlayback(playerLaunch)
                             StreamsRepository.consumeAutoPlay()
                             StreamsRepository.cancelLoading()
@@ -3082,7 +3098,7 @@ private fun MainAppContent(
                             initialProgressFraction = resolvedResumeProgressFraction,
                         )
 
-                        if (!forceInternal && externalPlayerSupported && (forceExternal || playerSettings.externalPlayerEnabled)) {
+                        if (!forceInternal && externalPlayerSupported && (forceExternal || externalPlaybackReady)) {
                             streamRouteScope.launch {
                                 openExternalPlayback(playerLaunch)
                                 StreamsRepository.cancelLoading()
@@ -3255,7 +3271,7 @@ private fun MainAppContent(
                         initialProgressFraction = launch.initialProgressFraction,
                         contentLanguage = launch.contentLanguage,
                         onBack = onBack,
-                        onOpenInExternalPlayer = if (externalPlayerSupported) { { request ->
+                        onOpenInExternalPlayer = if (externalPlayerSupported && resolvedExternalPlayerId != null) { { request ->
                             val playerLaunch = PlayerLaunch(
                                 profileId = launch.profileId,
                                 title = launch.title,
@@ -3283,7 +3299,7 @@ private fun MainAppContent(
                             lastExternalPlayerLaunch = playerLaunch
                             val intentResult = ExternalPlayerPlatform.buildIntent(
                                 request = request,
-                                playerId = playerSettingsUiState.externalPlayerId,
+                                playerId = resolvedExternalPlayerId,
                             )
                             when (intentResult) {
                                 is ExternalPlayerIntentResult.Success -> {

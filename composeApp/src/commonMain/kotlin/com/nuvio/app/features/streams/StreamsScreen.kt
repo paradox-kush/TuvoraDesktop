@@ -92,6 +92,7 @@ import com.nuvio.app.features.debrid.DirectDebridPlayableResult
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
 import com.nuvio.app.features.debrid.toastMessage
 import com.nuvio.app.features.player.PlayerSettingsRepository
+import com.nuvio.app.features.player.resolveAvailableExternalPlayerId
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -346,8 +347,11 @@ fun StreamsScreen(
 
         StreamActionsSheet(
             stream = streamActionsTarget,
-            externalPlayerSupported = AppFeaturePolicy.externalPlayerSupported,
-            externalPlayerEnabled = AppFeaturePolicy.externalPlayerSupported && playerSettings.externalPlayerEnabled,
+            externalPlayerSupported = AppFeaturePolicy.externalPlayerSupported &&
+                resolveAvailableExternalPlayerId(playerSettings.externalPlayerId) != null,
+            externalPlayerEnabled = AppFeaturePolicy.externalPlayerSupported &&
+                playerSettings.externalPlayerEnabled &&
+                resolveAvailableExternalPlayerId(playerSettings.externalPlayerId) != null,
             showDownloadAction = AppFeaturePolicy.downloadsEnabled,
             onDismiss = { streamActionsTarget = null },
             onCopyLink = { stream ->
