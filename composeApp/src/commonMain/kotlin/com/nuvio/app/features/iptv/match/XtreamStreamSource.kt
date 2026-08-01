@@ -23,6 +23,82 @@ internal object XtreamStreamSource {
 
     fun groupId(acc: XtreamAccount): String = "$GROUP_ID_PREFIX${acc.id}"
 
+    /**
+     * Scheme for a Stalker source whose play link has NOT been minted yet.
+     *
+     * A MAG box calls create_link once, when the viewer presses play. We used to call it while
+     * merely BUILDING the source list — up to [MAX_STALKER_EDITIONS] per account, so opening one
+     * movie with three portals fired a dozen. Panels register a session/connection per created
+     * link, and lines are commonly sold with max_connections=1, so the eager calls could occupy
+     * the very slot the real playback then needed and the stream came back 401. Listing is now
+     * free; [resolveDeferredUrl] mints exactly one link, for the edition actually chosen.
+     */
+    private const val DEFERRED_PREFIX = "stalker-deferred:"
+
+    private fun deferredMovie(acc: XtreamAccount, streamId: Int, name: String): String =
+        "$DEFERRED_PREFIX${acc.id}|movie|$streamId|${name.replace('|', ' ')}"
+
+    private fun deferredEpisode(acc: XtreamAccount, seriesId: Int, season: Int, episode: Int): String =
+        "$DEFERRED_PREFIX${acc.id}|episode|$seriesId|$season|$episode"
+
+    fun isDeferred(url: String?): Boolean = url != null && url.startsWith(DEFERRED_PREFIX)
+
+    /**
+     * Mints the real play link for a [isDeferred] URL. Returns null when the account is gone or the
+     * portal won't issue a link (callers surface that as an unplayable source).
+     */
+    suspend fun resolveDeferredUrl(url: String): String? {
+        if (!isDeferred(url)) return url
+        val d = parseDeferred(url) ?: return null
+        com.nuvio.app.features.iptv.XtreamRepository.ensureLoaded()
+        val acc = com.nuvio.app.features.iptv.XtreamRepository.uiState.value.accounts
+            .firstOrNull { it.id == d.accountId } ?: return null
+        return if (d.isMovie) {
+            StalkerClient.resolveMovieUrl(acc, d.a, d.name)
+        } else {
+            StalkerClient.resolveEpisodeUrl(acc, d.a, d.b, d.c)
+        }
+    }
+
+    internal data class Deferred(
+        val accountId: String,
+        val isMovie: Boolean,
+        val a: Int,           // movie streamId, or series id
+        val b: Int = 0,       // season
+        val c: Int = 0,       // episode
+        val name: String? = null,
+    )
+
+    /**
+     * Pure parse of a deferred URL. Split out so the tricky part is testable without a portal: a
+     * Stalker account id is ITSELF pipe-delimited ("stalker|http://host|MAC"), so this anchors on
+     * the kind marker instead of splitting blindly, and everything before it is the account id.
+     */
+    internal fun parseDeferred(url: String): Deferred? {
+        if (!isDeferred(url)) return null
+        val parts = url.removePrefix(DEFERRED_PREFIX).split("|")
+        val kindIdx = parts.indexOfFirst { it == "movie" || it == "episode" }
+        if (kindIdx <= 0) return null
+        val accountId = parts.subList(0, kindIdx).joinToString("|")
+        if (accountId.isBlank()) return null
+        return if (parts[kindIdx] == "movie") {
+            Deferred(
+                accountId = accountId,
+                isMovie = true,
+                a = parts.getOrNull(kindIdx + 1)?.toIntOrNull() ?: return null,
+                name = parts.getOrNull(kindIdx + 2),
+            )
+        } else {
+            Deferred(
+                accountId = accountId,
+                isMovie = false,
+                a = parts.getOrNull(kindIdx + 1)?.toIntOrNull() ?: return null,
+                b = parts.getOrNull(kindIdx + 2)?.toIntOrNull() ?: return null,
+                c = parts.getOrNull(kindIdx + 3)?.toIntOrNull() ?: return null,
+            )
+        }
+    }
+
     suspend fun streamsFor(acc: XtreamAccount, type: String, videoId: String, season: Int?, episode: Int?): List<StreamItem> {
         val kind = when (TmdbService.normalizeMediaType(type)) {
             "movie" -> MatchKind.MOVIE
@@ -112,14 +188,13 @@ internal object XtreamStreamSource {
                     .filter { TitleNormalizer.normKey(it.name) in wantKeys }
                     .filter { yearCompatible(TitleNormalizer.yearOf(it.name), titles.year) }
                     .take(MAX_STALKER_EDITIONS)   // a catalog carries 4K/HD/language cuts of one film
-                    .mapNotNull { movie ->
-                        // create_link FRESH — the URL carries a single-use play_token, never cached.
-                        val url = StalkerClient.resolveMovieUrl(acc, movie.streamId, movie.name)
-                            ?: return@mapNotNull null
+                    .map { movie ->
                         StreamItem(
                             name = movie.name,    // the portal's own name — carries 4K/language/etc
                             title = null,
-                            url = url,
+                            // DEFERRED — see [deferredMovie]. create_link runs when the user picks
+                            // this edition, not while the list is merely being built.
+                            url = deferredMovie(acc, movie.streamId, movie.name),
                             addonName = acc.name,
                             addonId = groupId(acc),
                         )
@@ -133,9 +208,8 @@ internal object XtreamStreamSource {
                 StalkerClient.searchSeries(acc, query)
                     .filter { TitleNormalizer.normKey(it.name) in wantKeys }
                     .take(MAX_STALKER_EDITIONS)   // language cuts ("Breaking Bad (Hindi)") are separate
-                    .mapNotNull { series ->
-                        val url = StalkerClient.resolveEpisodeUrl(acc, series.seriesId, s, e)
-                            ?: return@mapNotNull null
+                    .map { series ->
+                        val url = deferredEpisode(acc, series.seriesId, s, e)
                         StreamItem(
                             // The card renders `name` only (StreamItem.streamLabel) — `title` is never
                             // drawn — so the portal's own name has to live here, exactly like the movie

@@ -11,6 +11,8 @@ import com.nuvio.app.features.debrid.DebridStreamPresentation
 import com.nuvio.app.features.debrid.DirectDebridStreamPreparer
 import com.nuvio.app.features.debrid.LocalDebridAvailabilityService
 import com.nuvio.app.features.details.MetaDetailsRepository
+import com.nuvio.app.features.iptv.XtreamRepository
+import com.nuvio.app.features.iptv.match.XtreamStreamSource
 import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.plugins.PluginsUiState
 import com.nuvio.app.features.plugins.pluginContentId
@@ -246,8 +248,20 @@ object PlayerStreamsRepository {
             repositories = pluginUiState.repositories,
             groupByRepository = pluginUiState.groupStreamsByRepository,
         )
+        // Xtream/Stalker accounts matched to this TMDB/IMDb title. Users whose only sources are
+        // IPTV providers get ALL their streams from this lane, so without it every in-player
+        // fetch (next episode, episode switch, source switch) comes back empty for them.
+        val xtreamTargets = if (type == "movie" || type == "series") {
+            XtreamRepository.ensureLoaded()
+            XtreamRepository.uiState.value.accounts.filter {
+                it.enabled && (it.sourceType == com.nuvio.app.features.iptv.SOURCE_TYPE_XTREAM ||
+                    it.sourceType == com.nuvio.app.features.iptv.SOURCE_TYPE_STALKER)
+            }
+        } else {
+            emptyList()
+        }
 
-        if (installedAddons.isEmpty() && pluginProviderGroups.isEmpty()) {
+        if (installedAddons.isEmpty() && pluginProviderGroups.isEmpty() && xtreamTargets.isEmpty()) {
             stateFlow.value = StreamsUiState(
                 isAnyLoading = false,
                 emptyStateReason = com.nuvio.app.features.streams.StreamsEmptyStateReason.NoAddonsInstalled,
@@ -274,7 +288,7 @@ object PlayerStreamsRepository {
                 )
             }
 
-        if (streamAddons.isEmpty() && pluginProviderGroups.isEmpty()) {
+        if (streamAddons.isEmpty() && pluginProviderGroups.isEmpty() && xtreamTargets.isEmpty()) {
             stateFlow.value = StreamsUiState(
                 isAnyLoading = false,
                 emptyStateReason = com.nuvio.app.features.streams.StreamsEmptyStateReason.NoCompatibleAddons,
@@ -305,6 +319,13 @@ object PlayerStreamsRepository {
                 streams = emptyList(),
                 isLoading = true,
             )
+        } + xtreamTargets.map { acc ->
+            AddonStreamGroup(
+                addonName = acc.name,
+                addonId = XtreamStreamSource.groupId(acc),
+                streams = emptyList(),
+                isLoading = true,
+            )
         }, installedAddonOrder)
         val isInitiallyLoading = initialGroups.any { it.isLoading }
         stateFlow.value = StreamsUiState(
@@ -321,7 +342,9 @@ object PlayerStreamsRepository {
                 .associate { it.addonId to it.scrapers.size }
                 .toMutableMap()
             val pluginFirstErrorByAddonId = mutableMapOf<String, String>()
-            val totalTasks = streamAddons.size + pluginProviderGroups.sumOf { it.scrapers.size }
+            val totalTasks = streamAddons.size +
+                pluginProviderGroups.sumOf { it.scrapers.size } +
+                xtreamTargets.size
             val completions = Channel<StreamLoadCompletion>(capacity = Channel.BUFFERED)
             val debridAvailabilityJobs = mutableListOf<Job>()
 
@@ -425,6 +448,35 @@ object PlayerStreamsRepository {
                         onFailure = { err ->
                             log.w(err) { "failed $panelName request=$requestKey addon=$displayName" }
                             AddonStreamGroup(displayName, addon.addonId, emptyList(), isLoading = false, error = err.message)
+                        },
+                    )
+                    publishCompletion(StreamLoadCompletion.Addon(group))
+                }
+            }
+
+            xtreamTargets.forEach { acc ->
+                launch {
+                    val group = runCatchingUnlessCancelled {
+                        XtreamStreamSource.streamsFor(acc, type, videoId, season, episode)
+                    }.fold(
+                        onSuccess = { streams ->
+                            log.d { "Xtream match: ${streams.size} streams from ${acc.name} for $videoId" }
+                            AddonStreamGroup(
+                                addonName = acc.name,
+                                addonId = XtreamStreamSource.groupId(acc),
+                                streams = streams,
+                                isLoading = false,
+                            )
+                        },
+                        onFailure = { err ->
+                            log.w(err) { "Xtream match failed for ${acc.name}" }
+                            AddonStreamGroup(
+                                addonName = acc.name,
+                                addonId = XtreamStreamSource.groupId(acc),
+                                streams = emptyList(),
+                                isLoading = false,
+                                error = err.message,
+                            )
                         },
                     )
                     publishCompletion(StreamLoadCompletion.Addon(group))

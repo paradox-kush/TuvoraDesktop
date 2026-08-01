@@ -53,6 +53,7 @@ import com.nuvio.app.features.radar.SportsHubScreen
 import com.nuvio.app.features.iptv.XtreamItemRegistry
 import com.nuvio.app.features.iptv.XtreamLiveRecents
 import com.nuvio.app.features.iptv.XtreamRepository
+import com.nuvio.app.features.iptv.match.XtreamStreamSource
 import com.nuvio.app.features.iptv.resolveLivePlaybackUrl
 import com.nuvio.app.features.iptv.toMetaPreview
 import androidx.compose.material3.CircularProgressIndicator
@@ -2893,8 +2894,20 @@ private fun MainAppContent(
                         } else {
                             selectedStream
                         }
-                        val sourceUrl = stream.playableDirectUrl
-                        if (sourceUrl == null && stream.needsLocalDebridResolve && stream.p2pInfoHash != null) {
+                        // Auto-play of a Stalker source: mint its link now (listing left it deferred).
+                        val playableStream = if (XtreamStreamSource.isDeferred(stream.playableDirectUrl)) {
+                            val minted = XtreamStreamSource
+                                .resolveDeferredUrl(stream.playableDirectUrl.orEmpty())
+                            if (minted.isNullOrBlank()) {
+                                StreamsRepository.skipAutoPlayStream(selectedStream)
+                                return@LaunchedEffect
+                            }
+                            stream.copy(url = minted)
+                        } else {
+                            stream
+                        }
+                        val sourceUrl = playableStream.playableDirectUrl
+                        if (sourceUrl == null && playableStream.needsLocalDebridResolve && playableStream.p2pInfoHash != null) {
                             autoPlayHandled = true
                             requestOrOpenP2pStream(
                                 stream = stream,
@@ -2993,6 +3006,26 @@ private fun MainAppContent(
                         forceExternal: Boolean,
                         forceInternal: Boolean,
                     ) {
+                        // A Stalker source is listed without a play link (see XtreamStreamSource):
+                        // mint it now, for this edition only, then re-enter with the real URL.
+                        if (XtreamStreamSource.isDeferred(stream.playableDirectUrl)) {
+                            streamRouteScope.launch {
+                                val minted = XtreamStreamSource
+                                    .resolveDeferredUrl(stream.playableDirectUrl.orEmpty())
+                                if (minted.isNullOrBlank()) {
+                                    StreamsRepository.cancelLoading()
+                                    return@launch
+                                }
+                                openSelectedStream(
+                                    stream = stream.copy(url = minted),
+                                    resolvedResumePositionMs = resolvedResumePositionMs,
+                                    resolvedResumeProgressFraction = resolvedResumeProgressFraction,
+                                    forceExternal = forceExternal,
+                                    forceInternal = forceInternal,
+                                )
+                            }
+                            return
+                        }
                         if (DirectDebridPlaybackResolver.shouldResolveToPlayableStream(stream)) {
                             if (resolvingDebridStream) return
                             streamRouteScope.launch {
