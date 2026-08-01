@@ -50,6 +50,10 @@ import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.debrid.DebridSettingsRepository
 import com.nuvio.app.features.details.MetaVideo
+import com.nuvio.app.features.details.bucketContaining
+import com.nuvio.app.features.details.components.EpisodeRangePicker
+import com.nuvio.app.features.details.components.JumpToEpisodeSheet
+import com.nuvio.app.features.details.episodeBuckets
 import com.nuvio.app.features.streams.StreamBadgeSettingsRepository
 import com.nuvio.app.features.streams.StreamCard
 import com.nuvio.app.features.streams.StreamItem
@@ -189,10 +193,32 @@ private fun EpisodesListPanelContent(
     val seasonEpisodes = remember(groupedEpisodes, selectedSeason) {
         (groupedEpisodes[selectedSeason] ?: emptyList()).sortedBy { it.episode ?: 0 }
     }
+    // Long seasons are sliced into ranges here too — hunting for an episode mid-binge is exactly
+    // when scrolling a thousand rows hurts most.
+    val buckets = remember(seasonEpisodes) { episodeBuckets(seasonEpisodes) }
+    val playingIndex = remember(seasonEpisodes, selectedSeason, currentSeason, currentEpisode) {
+        if (selectedSeason == currentSeason && currentEpisode != null) {
+            seasonEpisodes.indexOfFirst { it.episode == currentEpisode }.takeIf { it >= 0 } ?: 0
+        } else {
+            0
+        }
+    }
+    var selectedBucketLabel by remember(seasonEpisodes) {
+        mutableStateOf(buckets.bucketContaining(playingIndex)?.label)
+    }
+    var showJumpSheet by remember { mutableStateOf(false) }
+    var jumpedToEpisode by remember(seasonEpisodes) { mutableStateOf<Int?>(null) }
+    val selectedBucket = buckets.firstOrNull { it.label == selectedBucketLabel }
+        ?: buckets.firstOrNull()
+    val visibleEpisodes = if (selectedBucket == null) {
+        seasonEpisodes
+    } else {
+        seasonEpisodes.subList(selectedBucket.fromIndex, selectedBucket.untilIndex)
+    }
     val seasonListState = rememberLazyListState()
     val episodeListState = rememberLazyListState()
     var positionedSeasonRow by remember(availableSeasons) { mutableStateOf(false) }
-    var positionedEpisodeList by remember(selectedSeason) { mutableStateOf(false) }
+    var positionedEpisodeList by remember(selectedSeason, selectedBucketLabel) { mutableStateOf(false) }
 
     LaunchedEffect(selectedSeason, availableSeasons) {
         val index = availableSeasons.indexOf(selectedSeason)
@@ -205,13 +231,13 @@ private fun EpisodesListPanelContent(
         }
     }
 
-    LaunchedEffect(selectedSeason, seasonEpisodes, currentSeason, currentEpisode) {
-        if (seasonEpisodes.isEmpty()) return@LaunchedEffect
-        val currentIndex = if (selectedSeason == currentSeason && currentEpisode != null) {
-            seasonEpisodes.indexOfFirst { it.season == currentSeason && it.episode == currentEpisode }
-        } else {
-            -1
-        }
+    LaunchedEffect(selectedSeason, visibleEpisodes, currentSeason, currentEpisode, jumpedToEpisode) {
+        if (visibleEpisodes.isEmpty()) return@LaunchedEffect
+        val wanted = jumpedToEpisode
+            ?: currentEpisode?.takeIf { selectedSeason == currentSeason }
+        val currentIndex = wanted?.let { number ->
+            visibleEpisodes.indexOfFirst { it.episode == number }
+        } ?: -1
         val targetIndex = currentIndex.takeIf { it >= 0 } ?: 0
         if (positionedEpisodeList) episodeListState.animateScrollToItem(targetIndex)
         else {
@@ -246,7 +272,32 @@ private fun EpisodesListPanelContent(
             Spacer(Modifier.height(12.dp))
         }
 
-        if (seasonEpisodes.isEmpty()) {
+        if (buckets.isNotEmpty()) {
+            EpisodeRangePicker(
+                buckets = buckets,
+                selected = selectedBucket,
+                onSelect = {
+                    selectedBucketLabel = it.label
+                    jumpedToEpisode = null
+                },
+                onJumpToEpisode = { showJumpSheet = true },
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
+            Spacer(Modifier.height(12.dp))
+        }
+
+        if (showJumpSheet) {
+            JumpToEpisodeSheet(
+                episodes = seasonEpisodes,
+                onDismiss = { showJumpSheet = false },
+                onJump = { index ->
+                    selectedBucketLabel = buckets.bucketContaining(index)?.label
+                    jumpedToEpisode = seasonEpisodes.getOrNull(index)?.episode
+                },
+            )
+        }
+
+        if (visibleEpisodes.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -267,7 +318,7 @@ private fun EpisodesListPanelContent(
                 contentPadding = PaddingValues(top = 4.dp, bottom = 8.dp),
             ) {
                 itemsIndexed(
-                    items = seasonEpisodes,
+                    items = visibleEpisodes,
                     key = { index, episode -> "${episode.season}:${episode.episode}:${episode.id}#$index" },
                 ) { _, episode ->
                     val isCurrent = episode.season == currentSeason && episode.episode == currentEpisode

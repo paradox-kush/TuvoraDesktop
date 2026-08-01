@@ -354,6 +354,11 @@
     <string name="compose_player_episode_title_format">S%1$dE%2$d • %3$s</string>
     <string name="compose_player_episodes">Episodes</string>
     <string name="compose_player_next_episode">Next</string>
+    <string name="episodes_range">Episode range</string>
+    <string name="episodes_go_to_episode">Go to episode</string>
+    <string name="episodes_jump_placeholder">Episode number</string>
+    <string name="episodes_jump_hint">This season has %1$d episodes.</string>
+    <string name="episodes_jump_not_found">No episode with that number in this season.</string>
     <string name="compose_player_font_size">Font Size</string>
     <string name="compose_player_font_size_value">%1$dsp</string>
     <string name="compose_player_lock_controls">Lock player controls</string>
