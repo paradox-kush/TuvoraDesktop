@@ -274,9 +274,54 @@ actual suspend fun httpStreamLines(
         } else {
             rawSource
         }
-        while (true) {
-            val line = source.readUtf8Line() ?: break
-            onLine(line)
-        }
+        streamBoundedLines(source, onLine)
     }
+}
+
+/**
+ * Largest slice handed to [onLine] when the document has no newline in reach. Big enough that a
+ * normal line-delimited playlist/guide is unaffected, small enough that a newline-free document
+ * can't blow the heap.
+ */
+private const val MAX_LINE_BYTES = 1L * 1024 * 1024
+
+/**
+ * Line reader that cannot OOM on a newline-free document.
+ *
+ * `readUtf8Line()` buffers until it finds a '\n' — on a MINIFIED XMLTV guide (the whole document on
+ * one line, which real providers do serve) that means buffering the entire feed: a 108MB allocation
+ * against a ~192MB heap, which killed the app on launch. Here the search for the newline is capped,
+ * and when none is found within the cap the buffered slice is emitted as its own chunk.
+ *
+ * Safe for both consumers: M3U lines are far below the cap so they still arrive whole, and the
+ * XMLTV tokenizer explicitly accepts chunk boundaries falling anywhere, even mid-tag.
+ */
+internal fun streamBoundedLines(source: okio.BufferedSource, onLine: (String) -> Unit) {
+    while (true) {
+        val newline = source.indexOf('\n'.code.toByte(), 0L, MAX_LINE_BYTES)
+        if (newline != -1L) {
+            val line = source.readUtf8(newline)
+            source.skip(1)                      // drop the '\n'
+            onLine(line.removeSuffix("\r"))
+            continue
+        }
+        if (!source.request(1)) return          // EOF
+        // No newline within the cap: emit what we have, cut on a character boundary so a
+        // multi-byte glyph is never split across two chunks.
+        val cut = utf8SafeCut(source.buffer, MAX_LINE_BYTES)
+        if (cut <= 0L) return
+        onLine(source.readUtf8(cut))
+    }
+}
+
+/** Largest byte count <= [max] that doesn't land inside a multi-byte UTF-8 sequence. */
+private fun utf8SafeCut(buffer: okio.Buffer, max: Long): Long {
+    var n = minOf(max, buffer.size)
+    if (n >= buffer.size) return buffer.size    // whole buffer: nothing follows to split
+    var walked = 0
+    while (n > 0 && walked < 4 && (buffer[n].toInt() and 0xC0) == 0x80) {
+        n--
+        walked++
+    }
+    return if (n > 0) n else minOf(max, buffer.size)
 }

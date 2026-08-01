@@ -3,6 +3,7 @@ package com.nuvio.app.features.player
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import co.touchlab.kermit.Logger
 import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.P2pStreamRequest
@@ -577,6 +578,11 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
         ?.removePrefix(com.nuvio.app.features.iptv.match.XtreamStreamSource.GROUP_ID_PREFIX)
     val isIptvSource = matchedIptvAccountId != null ||
         com.nuvio.app.features.iptv.XtreamItemRegistry.isXtreamId(activeVideoId)
+    iptvRefreshLog.i {
+        "gate: iptv=$isIptvSource matchedAcct=$matchedIptvAccountId addonId=$activeProviderAddonId " +
+            "videoId=$activeVideoId expiringCreds=${failedUrl.hasLikelyExpiringPlaybackCredentials()} " +
+            "jobActive=${credentialRefreshJob?.isActive} alreadyTried=${credentialRefreshAttemptedSourceUrl == failedUrl}"
+    }
     if (!isIptvSource && !failedUrl.hasLikelyExpiringPlaybackCredentials()) return false
     if (credentialRefreshJob?.isActive == true) return true
     if (credentialRefreshAttemptedSourceUrl == failedUrl) return false
@@ -608,11 +614,13 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
             com.nuvio.app.features.iptv.XtreamRepository.ensureLoaded()
             val account = com.nuvio.app.features.iptv.XtreamRepository.uiState.value.accounts
                 .firstOrNull { it.id == matchedIptvAccountId }
+            iptvRefreshLog.i { "matched-lane re-resolve: acct=$matchedIptvAccountId found=${account != null} type=$type videoId=$currentVideoId" }
             if (account != null) {
                 val streams = runCatchingUnlessCancelled {
                     com.nuvio.app.features.iptv.match.XtreamStreamSource
                         .streamsFor(account, type, currentVideoId, season, episode)
                 }.getOrDefault(emptyList())
+                iptvRefreshLog.i { "matched-lane re-resolve returned ${streams.size} stream(s)" }
                 refreshedStream = findCredentialRefreshCandidate(
                     streams = streams,
                     failedUrl = failedUrl,
@@ -656,6 +664,7 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
 
         val stream = refreshedStream
         if (stream == null) {
+            iptvRefreshLog.w { "no replacement stream found — surfacing the original error" }
             errorMessage = message
             controlsVisible = !playerControlsLocked
             return@launch
@@ -663,10 +672,12 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
 
         val refreshedUrl = stream.playableDirectUrl
         if (refreshedUrl.isNullOrBlank() || refreshedUrl == failedUrl) {
+            iptvRefreshLog.w { "replacement URL unusable (blank=${refreshedUrl.isNullOrBlank()} sameAsFailed=${refreshedUrl == failedUrl})" }
             errorMessage = message
             controlsVisible = !playerControlsLocked
             return@launch
         }
+        iptvRefreshLog.i { "recovered with a fresh link, resuming at ${savedPositionMs}ms" }
 
         flushWatchProgress()
         stopActiveP2pStream()
@@ -718,6 +729,9 @@ private fun findCredentialRefreshCandidate(
         }
         .maxByOrNull { (score, _) -> score }
         ?.second
+
+/** Traces the expired-link recovery so a field 401 can be diagnosed from a logcat capture. */
+private val iptvRefreshLog = Logger.withTag("IptvLinkRefresh")
 
 private const val CREDENTIAL_REFRESH_POLL_COUNT = 30
 private const val CREDENTIAL_REFRESH_POLL_INTERVAL_MS = 500L
