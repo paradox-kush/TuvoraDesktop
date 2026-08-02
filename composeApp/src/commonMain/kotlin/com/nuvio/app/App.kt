@@ -1179,6 +1179,9 @@ private fun MainAppContent(
 
     LaunchedEffect(Unit) {
         if (!ownsAppRuntime) return@LaunchedEffect
+        // Restores anything a previous process left unsent and starts the flush timer. Guarded
+        // because nothing about recommendation telemetry may ever affect app startup.
+        runCatching { com.nuvio.app.core.rec.RecEventLogger.start() }
         NetworkStatusRepository.ensureStarted()
         EpisodeReleaseNotificationsRepository.refreshAsync()
         kotlinx.coroutines.delay(5_000)

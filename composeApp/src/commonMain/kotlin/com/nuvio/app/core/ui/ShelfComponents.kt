@@ -62,6 +62,8 @@ import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.home_view_all
 import nuvio.composeapp.generated.resources.poster_logo_content_description
 import org.jetbrains.compose.resources.stringResource
+import com.nuvio.app.core.rec.RecRowImpressions
+import com.nuvio.app.core.rec.RecShelfTracking
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -90,8 +92,20 @@ fun <T> NuvioShelfSection(
     key: ((T) -> Any)? = null,
     animatePlacement: Boolean = false,
     state: LazyListState = rememberLazyListState(),
+    recTracking: RecShelfTracking<T>? = null,
     itemContent: @Composable (T) -> Unit,
 ) {
+    // Recommendation impressions. Opt-in per call site rather than automatic, because this
+    // composable is generic over T and cannot know how to identify an arbitrary entry.
+    recTracking?.let { tracking ->
+        RecRowImpressions(
+            listState = state,
+            surface = tracking.surface,
+            rowId = tracking.rowId,
+            rowIndex = tracking.rowIndex,
+            itemAt = { index -> entries.getOrNull(index)?.let(tracking.itemOf) },
+        )
+    }
     val tokens = MaterialTheme.nuvio
     val duplicateSafeEntries = remember(entries, key) {
         key?.let { entries.withDuplicateSafeLazyKeys(it) }

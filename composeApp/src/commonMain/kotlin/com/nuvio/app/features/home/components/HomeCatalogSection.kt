@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import com.nuvio.app.core.ui.NuvioShelfSection
@@ -69,6 +70,34 @@ private fun HomeCatalogRowSectionContent(
 ) {
     val posterCardStyle = rememberPosterCardStyleUiState()
 
+    // Clicks carry the row context that playback events cannot: a play_start knows only the item,
+    // so without this there is no way to answer "which row caused this watch?" — the question the
+    // recommender is actually being trained to answer. Wrapped once per row; the slot lookup is an
+    // index scan over one rowful, paid only on an actual click.
+    val onPosterClickLogged: ((MetaPreview) -> Unit)? =
+        remember(onPosterClick, entries, section.key) {
+            onPosterClick?.let { delegate ->
+                { preview: MetaPreview ->
+                    com.nuvio.app.core.rec.recLogClick(
+                        surface = com.nuvio.app.core.rec.RecSurface.HOME,
+                        rowId = section.key,
+                        rowIndex = null,
+                        itemPosition = entries.indexOfFirst { it.id == preview.id }
+                            .takeIf { it >= 0 },
+                        item = com.nuvio.app.core.rec.RecImpressionItem(
+                            itemId = preview.id,
+                            contentType = com.nuvio.app.core.rec.recContentTypeOf(
+                                contentType = preview.type,
+                                season = null,
+                                episode = null,
+                            ),
+                        ),
+                    )
+                    delegate(preview)
+                }
+            }
+        }
+
     NuvioShelfSection(
         title = section.title,
         entries = entries,
@@ -78,6 +107,22 @@ private fun HomeCatalogRowSectionContent(
         onViewAllClick = onViewAllClick,
         viewAllPillSize = NuvioViewAllPillSize.Compact,
         key = { item -> item.stableKey() },
+        // section.key is the catalogue's stable identity (addon + catalog), which is what makes
+        // "this row performs better than that one" answerable across sessions and releases.
+        recTracking = com.nuvio.app.core.rec.RecShelfTracking(
+            surface = com.nuvio.app.core.rec.RecSurface.HOME,
+            rowId = section.key,
+            itemOf = { preview ->
+                com.nuvio.app.core.rec.RecImpressionItem(
+                    itemId = preview.id,
+                    contentType = com.nuvio.app.core.rec.recContentTypeOf(
+                        contentType = preview.type,
+                        season = null,
+                        episode = null,
+                    ),
+                )
+            },
+        ),
     ) { item ->
         HomePosterCard(
             item = item,
@@ -87,7 +132,7 @@ private fun HomeCatalogRowSectionContent(
                 item = item,
                 fullyWatchedSeriesKeys = fullyWatchedSeriesKeys,
             ),
-            onClick = onPosterClick?.let { { it(item) } },
+            onClick = onPosterClickLogged?.let { { it(item) } },
             onLongClick = onPosterLongClick?.let { { it(item) } },
         )
     }
