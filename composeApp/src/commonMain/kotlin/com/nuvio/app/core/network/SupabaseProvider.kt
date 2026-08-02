@@ -82,7 +82,7 @@ object SupabaseProvider {
             install(Auth)
             install(Postgrest)
             install(Functions)
-            // Realtime backs upstream's sync-invalidation service.
+            // Realtime backs the fork's sync-invalidation service (upstream dropped realtime).
             install(Realtime)
         }
         holder = ClientHolder(backend = config, client = nextClient)
