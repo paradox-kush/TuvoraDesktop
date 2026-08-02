@@ -95,6 +95,11 @@ jobs:
             echo "SIMKL_CLIENT_SECRET=${SIMKL_CLIENT_SECRET}"
             echo "DONATIONS_DONATE_URL=${DONATIONS_DONATE_URL}"
           } > local.properties
+          echo "keys written to local.properties:"
+          sed -n 's/^\([A-Za-z0-9_]*\)=.*/  \1/p' local.properties | sort
+          for k in SIMKL_CLIENT_ID SIMKL_CLIENT_SECRET TRAKT_CLIENT_ID DONATIONS_DONATE_URL; do
+            v=$(sed -n "s/^$k=//p" local.properties | head -1); echo "  $k length=${#v}"
+          done
 
       - name: Build DMG (unsigned)
         env:
@@ -201,6 +206,11 @@ jobs:
             echo "SIMKL_CLIENT_SECRET=${SIMKL_CLIENT_SECRET}"
             echo "DONATIONS_DONATE_URL=${DONATIONS_DONATE_URL}"
           } > local.properties
+          echo "keys written to local.properties:"
+          sed -n 's/^\([A-Za-z0-9_]*\)=.*/  \1/p' local.properties | sort
+          for k in SIMKL_CLIENT_ID SIMKL_CLIENT_SECRET TRAKT_CLIENT_ID DONATIONS_DONATE_URL; do
+            v=$(sed -n "s/^$k=//p" local.properties | head -1); echo "  $k length=${#v}"
+          done
 
       - name: Install WebView2 SDK
         shell: pwsh
