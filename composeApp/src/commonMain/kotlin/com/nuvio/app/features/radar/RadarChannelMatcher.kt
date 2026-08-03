@@ -279,7 +279,14 @@ object RadarChannelMatcher {
     private suspend fun epgFor(channel: CandidateChannel): List<XtreamProgram> {
         val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == channel.playlistId }
             ?: return emptyList()
-        return XtreamClient.shortEpg(account, channel.streamId, limit = 8).getOrDefault(emptyList())
+        // Route through the source-correct client. Hardcoding XtreamClient here asked player_api
+        // for the EPG of a Stalker account — whose baseUrl/username/password are blank — so the
+        // call built a junk URL and failed into emptyList(), silently denying Stalker channels
+        // this tier even though portals answer get_short_epg. M3U has no per-channel guide and
+        // returns empty either way; those channels still reach the mirror tier below.
+        return com.nuvio.app.features.iptv.IptvClient.forAccount(account)
+            .shortEpg(account, channel.streamId, limit = 8)
+            .getOrDefault(emptyList())
     }
 
     /**
