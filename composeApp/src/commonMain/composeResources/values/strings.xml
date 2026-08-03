@@ -476,6 +476,8 @@
     <string name="settings_advanced_section_cache">CACHE</string>
     <string name="settings_advanced_remember_last_profile">Remember Last Profile</string>
     <string name="settings_advanced_remember_last_profile_description">Remember last selected profile at startup</string>
+    <string name="settings_advanced_rec_events">Improve recommendations</string>
+    <string name="settings_advanced_rec_events_subtitle">Share which titles you're shown and what you watch, so Tuvora can suggest better things. Never sold or shared with anyone.</string>
     <string name="settings_advanced_sentry_reports">Sentry Crash Reports</string>
     <string name="settings_advanced_sentry_reports_subtitle">Send crash and ANR reports with safe context. On by default.</string>
     <string name="sentry_enable_dialog_title">Turn on crash reports?</string>

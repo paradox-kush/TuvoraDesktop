@@ -42,6 +42,8 @@ import nuvio.composeapp.generated.resources.settings_advanced_remember_last_prof
 import nuvio.composeapp.generated.resources.settings_advanced_section_cache
 import nuvio.composeapp.generated.resources.settings_advanced_section_diagnostics
 import nuvio.composeapp.generated.resources.settings_advanced_section_startup
+import nuvio.composeapp.generated.resources.settings_advanced_rec_events
+import nuvio.composeapp.generated.resources.settings_advanced_rec_events_subtitle
 import nuvio.composeapp.generated.resources.settings_advanced_sentry_reports
 import nuvio.composeapp.generated.resources.settings_advanced_sentry_reports_subtitle
 import nuvio.composeapp.generated.resources.sentry_disable_dialog_subtitle
@@ -57,6 +59,7 @@ import nuvio.composeapp.generated.resources.sentry_sent_body
 import nuvio.composeapp.generated.resources.sentry_sent_title
 import nuvio.composeapp.generated.resources.sentry_turn_off
 import nuvio.composeapp.generated.resources.sentry_turn_on
+import com.nuvio.app.core.rec.RecEventSettings
 import org.jetbrains.compose.resources.stringResource
 
 internal fun LazyListScope.advancedSettingsContent(
@@ -79,20 +82,26 @@ internal fun LazyListScope.advancedSettingsContent(
             }
         }
     }
-    if (SentrySettingsRepository.isSupported) {
-        item {
-            val sentryEnabledFlow = remember {
-                SentrySettingsRepository.ensureLoaded()
-                SentrySettingsRepository.enabled
-            }
-            val sentryEnabled by sentryEnabledFlow.collectAsStateWithLifecycle()
-            var showSentryDialog by rememberSaveable { mutableStateOf(false) }
+    // Diagnostics always renders now. It used to be gated on Sentry support, but crash reports
+    // are Android-only (crashReportsSupported = false on iOS), and the recommendation opt-out
+    // below must exist on every platform — iOS most of all, since that is where a missing
+    // privacy control gets asked about. Only the Sentry ROW is conditional.
+    item {
+        val sentrySupported = SentrySettingsRepository.isSupported
+        val sentryEnabledFlow = remember {
+            if (sentrySupported) SentrySettingsRepository.ensureLoaded()
+            SentrySettingsRepository.enabled
+        }
+        val sentryEnabled by sentryEnabledFlow.collectAsStateWithLifecycle()
+        var showSentryDialog by rememberSaveable { mutableStateOf(false) }
+        val recEventsEnabled by RecEventSettings.enabled.collectAsStateWithLifecycle()
 
-            SettingsSection(
-                title = stringResource(Res.string.settings_advanced_section_diagnostics),
-                isTablet = isTablet,
-            ) {
-                SettingsGroup(isTablet = isTablet) {
+        SettingsSection(
+            title = stringResource(Res.string.settings_advanced_section_diagnostics),
+            isTablet = isTablet,
+        ) {
+            SettingsGroup(isTablet = isTablet) {
+                if (sentrySupported) {
                     SettingsSwitchRow(
                         title = stringResource(Res.string.settings_advanced_sentry_reports),
                         description = stringResource(Res.string.settings_advanced_sentry_reports_subtitle),
@@ -101,19 +110,30 @@ internal fun LazyListScope.advancedSettingsContent(
                         onCheckedChange = { showSentryDialog = true },
                     )
                 }
-            }
-
-            if (showSentryDialog) {
-                SentrySettingsDialog(
-                    enabled = sentryEnabled,
-                    onConfirm = {
-                        SentrySettingsRepository.setEnabled(!sentryEnabled)
-                    },
-                    onDismiss = {
-                        showSentryDialog = false
-                    },
+                // Applied immediately, deliberately without the confirmation dialog the Sentry
+                // row uses: interrupting someone who is trying to STOP data collection is
+                // friction pointed the wrong way. setEnabled also rotates the device id, so the
+                // next stream cannot be joined to the previous one.
+                SettingsSwitchRow(
+                    title = stringResource(Res.string.settings_advanced_rec_events),
+                    description = stringResource(Res.string.settings_advanced_rec_events_subtitle),
+                    checked = recEventsEnabled,
+                    isTablet = isTablet,
+                    onCheckedChange = RecEventSettings::setEnabled,
                 )
             }
+        }
+
+        if (showSentryDialog) {
+            SentrySettingsDialog(
+                enabled = sentryEnabled,
+                onConfirm = {
+                    SentrySettingsRepository.setEnabled(!sentryEnabled)
+                },
+                onDismiss = {
+                    showSentryDialog = false
+                },
+            )
         }
     }
     item {
