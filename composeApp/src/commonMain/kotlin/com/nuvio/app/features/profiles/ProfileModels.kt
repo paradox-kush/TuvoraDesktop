@@ -78,8 +78,12 @@ val PROFILE_COLORS = listOf(
     "#7CB342", "#039BE5", "#FFB300", "#6D4C41",
 )
 
+// Resolve against the SELECTED backend, not SupabaseConfig.URL. Hardcoding the hosted URL happened
+// to be right only while the hosted backend was active - after a switch to 'nuvio' the avatars were
+// still fetched from the hosted project. SyncBackendConfig already derives the correct base per
+// backend, so ask it.
 fun avatarStorageUrl(storagePath: String): String =
-    "${com.nuvio.app.core.network.SupabaseConfig.URL}/storage/v1/object/public/avatars/$storagePath"
+    com.nuvio.app.core.network.SupabaseProvider.selectedBackend.avatarStorageUrl(storagePath)
 
 fun normalizedAvatarUrl(url: String?): String? =
     url?.trim()?.takeIf { it.isValidAvatarUrl() }
