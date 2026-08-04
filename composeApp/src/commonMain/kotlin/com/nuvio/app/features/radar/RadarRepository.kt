@@ -1,5 +1,7 @@
 package com.nuvio.app.features.radar
 
+import co.touchlab.kermit.Logger
+
 import com.nuvio.app.features.iptv.XtreamAccountStorage
 import com.nuvio.app.features.profiles.ProfileRepository
 import kotlinx.coroutines.CoroutineScope
@@ -33,8 +35,17 @@ data class RadarUiState(
 ) {
     val followedLeagueIds: Set<String> get() = follows.map { it.leagueId }.toSet()
 
+    /**
+     * Catalog first, then the user's own follows — a league someone added themselves isn't in
+     * the catalog, and everything downstream resolves names and badges through here.
+     */
     fun leagueById(id: String): RadarLeague? =
         catalog.categories.asSequence().flatMap { it.leagues }.firstOrNull { it.id == id }
+            ?: follows.firstOrNull { it.leagueId == id }?.asLeague()
+
+    /** Leagues the user added that aren't in the published catalog, in follow order. */
+    val customLeagues: List<RadarLeague>
+        get() = follows.sortedBy { it.sortOrder }.mapNotNull { it.asLeague() }
 
     fun activeFeatured(nowMs: Long): List<RadarFeaturedEvent> =
         catalog.featured.filter { it.isActive(nowMs) }
@@ -80,6 +91,11 @@ data class RadarUiState(
  * XtreamRepository / XtreamHubRepository.
  */
 object RadarRepository {
+    private val log = Logger.withTag("RadarRepository")
+
+    // Leagues change on the order of weeks; this only needs to be faster than a release.
+    private const val CATALOG_TTL_MS = 6 * 60 * 60 * 1000L
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -101,8 +117,16 @@ object RadarRepository {
         }
         loaded = true
         currentProfileId = ProfileRepository.activeProfileId
-        val catalog = runCatching { json.decodeFromString<RadarCatalog>(RadarCatalogData.JSON) }
+        // Bundled copy first so the tab is never empty and never waits on the network; the
+        // cached publish layers on top, and a fresh fetch layers on top of that.
+        val bundled = runCatching { json.decodeFromString<RadarCatalog>(RadarCatalogData.JSON) }
             .getOrDefault(RadarCatalog())
+        val cachedCatalog = runCatching {
+            XtreamAccountStorage.loadRadarCatalogJson(currentProfileId)
+                ?.let { json.decodeFromString<RadarCachedCatalog>(it) }
+        }.getOrNull()
+        val catalog = cachedCatalog?.catalog?.takeIf { it.isUsable() } ?: bundled
+        scope.launch { refreshCatalog(cachedCatalog?.fetchedAtMs) }
         val local = parseLocal(XtreamAccountStorage.loadRadarJson(currentProfileId))
         val cachedFixtures = parseFixtures(XtreamAccountStorage.loadRadarFixturesJson(currentProfileId))
         _uiState.update {
@@ -115,6 +139,31 @@ object RadarRepository {
             )
         }
         refreshFixtures()
+    }
+
+
+    /**
+     * Pulls the published catalog when the cached copy is older than [CATALOG_TTL_MS].
+     *
+     * Deliberately quiet: a failed fetch, an unpublished catalog (payload null), or a
+     * document that doesn't validate all leave whatever is already loaded in place. The only
+     * way this changes what the user sees is a well-formed publish.
+     */
+    private suspend fun refreshCatalog(cachedAtMs: Long?) {
+        val ageMs = cachedAtMs?.let { RadarTime.nowMs() - it } ?: Long.MAX_VALUE
+        if (ageMs < CATALOG_TTL_MS) return
+        val envelope = RadarCatalogClient.fetch() ?: return
+        val remote = envelope.payload ?: return
+        if (!remote.isUsable()) {
+            log.w { "published catalog v${envelope.version} failed validation; keeping current" }
+            return
+        }
+        XtreamAccountStorage.saveRadarCatalogJson(
+            currentProfileId,
+            json.encodeToString(RadarCachedCatalog(envelope.version, remote, RadarTime.nowMs())),
+        )
+        _uiState.update { it.copy(catalog = remote) }
+        log.i { "adopted published catalog v${envelope.version}" }
     }
 
     fun onProfileChanged(profileId: Int) {
@@ -201,8 +250,21 @@ object RadarRepository {
     fun toggleFollow(league: RadarLeague) {
         _uiState.update { state ->
             val without = state.follows.filterNot { it.leagueId == league.id }
+            // A league that isn't in the published catalog carries its own metadata on the
+            // follow — nothing else would be able to name or draw it later.
+            val inCatalog = state.catalog.categories
+                .any { category -> category.leagues.any { it.id == league.id } }
             val follows = if (without.size == state.follows.size) {
-                without + RadarFollow(leagueId = league.id, sport = league.sport ?: "", sortOrder = without.size)
+                without + RadarFollow(
+                    leagueId = league.id,
+                    sport = league.sport ?: "",
+                    sortOrder = without.size,
+                    name = league.name.takeUnless { inCatalog },
+                    badge = league.badge.takeUnless { inCatalog },
+                    banner = league.banner.takeUnless { inCatalog },
+                    keywords = if (inCatalog) emptyList() else league.keywords,
+                    custom = !inCatalog,
+                )
             } else {
                 without
             }

@@ -29,6 +29,11 @@ internal actual object XtreamAccountStorage {
         store.putString("radar_fixtures_$profileId", json)
     }
 
+    actual fun loadRadarCatalogJson(profileId: Int): String? = store.getString("radar_catalog_$profileId")
+    actual fun saveRadarCatalogJson(profileId: Int, json: String) {
+        store.putString("radar_catalog_$profileId", json)
+    }
+
     actual fun loadRefreshStateJson(profileId: Int): String? = store.getString("xtream_refresh_state_$profileId")
 
     actual fun saveRefreshStateJson(profileId: Int, json: String) {

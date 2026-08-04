@@ -38,6 +38,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -147,6 +149,8 @@ private fun SportsOverview(
     onFixtureClick: (RadarFixture) -> Unit,
 ) {
     val nowMs = RadarTime.nowMs()
+    // null = closed, "" = choosing a sport, else the chosen sport.
+    var addLeagueSport by remember { mutableStateOf<String?>(null) }
     val featured = state.activeFeatured(nowMs)
     val upcoming = state.upcoming(
         leagueIds = state.followedLeagueIds + featured.map { it.leagueId },
@@ -224,8 +228,21 @@ private fun SportsOverview(
                     onClick = onOpenBrowse,
                 )
             }
+            // Anything we didn't curate. Last in the list so the popular sports stay first —
+            // this is the escape hatch, not the main path.
+            AddLeagueRowItem(
+                customCount = state.customLeagues.size,
+                onClick = { addLeagueSport = "" },
+            )
         }
     }
+
+    AddLeagueSheets(
+        sportOrEmpty = addLeagueSport,
+        followedLeagueIds = state.followedLeagueIds,
+        onDismiss = { addLeagueSport = null },
+        onPickSport = { addLeagueSport = it },
+    )
 }
 
 @Composable
@@ -877,3 +894,154 @@ private fun ChannelMatchRow(
 
 
 private val TABLET_TOP_BAR_INSET = 72.dp
+
+/**
+ * Sport -> country -> league, for leagues outside the published catalog. Sport comes first
+ * because a country alone mixes every sport together, and the discovery endpoint filters on
+ * both. Anything followed here lands on this account only.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AddLeagueSheets(
+    sportOrEmpty: String?,
+    followedLeagueIds: Set<String>,
+    onDismiss: () -> Unit,
+    onPickSport: (String) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var country by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(false) }
+    var results by remember { mutableStateOf<List<RadarLeague>>(emptyList()) }
+
+    if (sportOrEmpty == null) return
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    NuvioModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        val chosenCountry = country
+        when {
+            sportOrEmpty.isEmpty() -> {
+                SectionTitle("Pick a sport")
+                LazyColumn(modifier = Modifier.heightIn(max = 460.dp)) {
+                    items(RADAR_LEAGUE_SPORTS, key = { it }) { sport ->
+                        SimplePickRow(sport) { onPickSport(sport) }
+                    }
+                }
+            }
+            chosenCountry == null -> {
+                SectionTitle(sportOrEmpty)
+                LazyColumn(modifier = Modifier.heightIn(max = 460.dp)) {
+                    items(RADAR_LEAGUE_COUNTRIES, key = { it }) { c ->
+                        SimplePickRow(c) {
+                            country = c
+                            loading = true
+                            scope.launch {
+                                results = RadarCatalogClient.searchLeagues(country = c, sport = sportOrEmpty)
+                                loading = false
+                            }
+                        }
+                    }
+                }
+            }
+            else -> {
+                SectionTitle("$sportOrEmpty · $chosenCountry")
+                if (loading) {
+                    Text(
+                        "Finding leagues…",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(NuvioTokens.Space.s16),
+                    )
+                } else if (results.isEmpty()) {
+                    Text(
+                        "No leagues found for $sportOrEmpty in $chosenCountry.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(NuvioTokens.Space.s16),
+                    )
+                }
+                LazyColumn(modifier = Modifier.heightIn(max = 460.dp)) {
+                    items(results, key = { it.id }) { league ->
+                        val followed = league.id in followedLeagueIds
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { RadarRepository.toggleFollow(league) }
+                                .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s12),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            AsyncImage(
+                                model = league.badge,
+                                contentDescription = null,
+                                modifier = Modifier.size(32.dp),
+                            )
+                            Spacer(Modifier.width(NuvioTokens.Space.s12))
+                            Text(
+                                league.name,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                if (followed) "Following" else "Follow",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = if (followed) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SimplePickRow(label: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s12),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+        Text("\u203A", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** Peer of [CategoryRowItem] that opens the add-a-league flow instead of a category. */
+@Composable
+private fun AddLeagueRowItem(customCount: Int, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s12),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "+",
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(32.dp),
+        )
+        Spacer(Modifier.width(NuvioTokens.Space.s12))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                "Add a league",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                if (customCount > 0) "$customCount added" else "Not in the list? Add your own",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
