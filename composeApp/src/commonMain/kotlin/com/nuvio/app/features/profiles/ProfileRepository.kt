@@ -206,12 +206,19 @@ object ProfileRepository {
         DownloadsRepository.onProfileChanged()
     }
 
-    suspend fun pushProfiles(profiles: List<ProfilePushPayload>) {
+    /**
+     * Returns false when the change did not land, so callers can tell the user instead of assuming.
+     *
+     * This used to return Unit and swallow every failure into a log line, which is how a signed-out
+     * client silently discarded profile edits for weeks: the RPC 42501'd, nothing persisted, and the
+     * edit screen still closed as though it had saved.
+     */
+    suspend fun pushProfiles(profiles: List<ProfilePushPayload>): Boolean {
         if (AuthRepository.state.value.isLocalOnly) {
             applyPayloadsLocally(profiles)
-            return
+            return true
         }
-        try {
+        return try {
             val params = buildJsonObject {
                 put("p_client_max_profiles", MAX_PROFILES)
                 put("p_profiles", json.encodeToJsonElement(profiles))
@@ -219,9 +226,13 @@ object ProfileRepository {
             }
             SupabaseProvider.client.postgrest.rpc("sync_push_profiles", params)
             pullProfiles()
+            true
         } catch (e: Throwable) {
-            if (AuthRepository.signOutIfSessionInvalid(e, "Profile push")) return
+            // A session that just went invalid is still a failed save - the caller must not report
+            // success just because the sign-out was handled.
+            if (AuthRepository.signOutIfSessionInvalid(e, "Profile push")) return false
             log.e(e) { "Failed to push profiles" }
+            false
         }
     }
 
@@ -231,9 +242,10 @@ object ProfileRepository {
         avatarId: String? = null,
         avatarUrl: String? = null,
         usesPrimaryAddons: Boolean = false,
-    ) {
+    ): Boolean {
         val existing = _state.value.profiles
-        val nextIndex = ((1..MAX_PROFILES).toSet() - existing.map { it.profileIndex }.toSet()).minOrNull() ?: return
+        val nextIndex = ((1..MAX_PROFILES).toSet() - existing.map { it.profileIndex }.toSet()).minOrNull()
+            ?: return false
 
         val allPayloads = existing.map { profile ->
             ProfilePushPayload(
@@ -254,7 +266,7 @@ object ProfileRepository {
             avatarUrl = avatarUrl,
         )
 
-        pushProfiles(allPayloads)
+        return pushProfiles(allPayloads)
     }
 
     suspend fun updateProfile(
@@ -264,7 +276,7 @@ object ProfileRepository {
         avatarId: String? = null,
         avatarUrl: String? = null,
         usesPrimaryAddons: Boolean = false,
-    ) {
+    ): Boolean {
         val allPayloads = _state.value.profiles.map { profile ->
             if (profile.profileIndex == profileIndex) {
                 ProfilePushPayload(
@@ -288,7 +300,7 @@ object ProfileRepository {
             }
         }
 
-        pushProfiles(allPayloads)
+        return pushProfiles(allPayloads)
     }
 
     suspend fun deleteProfile(profileIndex: Int) {

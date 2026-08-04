@@ -1427,6 +1427,7 @@
     <string name="profile_avatar_options_pending">Avatar options will appear here when the catalog loads.</string>
     <string name="profile_avatar_selected">Avatar: %1$s</string>
     <string name="profile_avatar_url_invalid">Enter a valid http:// or https:// image URL.</string>
+    <string name="profile_save_failed">Couldn\'t save your changes. Check your connection and try again.</string>
     <string name="profile_choose_avatar">Choose an avatar</string>
     <string name="profile_choose_avatar_below">Choose an avatar below.</string>
     <string name="profile_create_profile">Create Profile</string>

@@ -81,6 +81,7 @@ fun ProfileEditScreen(
     var avatarUrl by rememberSaveable { mutableStateOf(currentProfile?.avatarUrl.orEmpty()) }
     var usesPrimaryAddons by rememberSaveable { mutableStateOf(currentProfile?.usesPrimaryAddons ?: false) }
     var isSaving by remember { mutableStateOf(false) }
+    var saveFailed by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showPinSetup by remember { mutableStateOf(false) }
     var showPinClear by remember { mutableStateOf(false) }
@@ -265,9 +266,10 @@ fun ProfileEditScreen(
                 enabled = name.isNotBlank() && !avatarUrlIsInvalid && !isSaving,
                 onClick = {
                     isSaving = true
+                    saveFailed = false
                     scope.launch {
                         val avatarColorHex = visibleAvatarItem?.bgColor ?: fallbackColorHex
-                        if (isNew) {
+                        val saved = if (isNew) {
                             ProfileRepository.createProfile(
                                 name = name,
                                 avatarColorHex = avatarColorHex,
@@ -286,10 +288,20 @@ fun ProfileEditScreen(
                             )
                         }
                         isSaving = false
-                        onSaved()
+                        // Only leave on success. Closing regardless is what made a failed save look
+                        // identical to a successful one and hid the edits being dropped.
+                        if (saved) onSaved() else saveFailed = true
                     }
                 },
             )
+            if (saveFailed) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = stringResource(Res.string.profile_save_failed),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
         }
 
         if (!isNew && (currentProfile?.profileIndex ?: 0) > 1) {
