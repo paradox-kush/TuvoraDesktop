@@ -158,7 +158,10 @@ private fun SportsOverview(
     )
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = NuvioTokens.Space.s24),
+        // The bottom nav floats over the content rather than taking layout space, so the last
+        // row needs room to clear it — otherwise "Add a league", now the final item, sits
+        // underneath the bar.
+        contentPadding = PaddingValues(bottom = NuvioTokens.Space.s80 + NuvioTokens.Space.s24),
     ) {
         if (featured.isNotEmpty()) {
             item(key = "featured") {
@@ -909,9 +912,12 @@ private fun AddLeagueSheets(
     onPickSport: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var country by remember { mutableStateOf<String?>(null) }
-    var loading by remember { mutableStateOf(false) }
-    var results by remember { mutableStateOf<List<RadarLeague>>(emptyList()) }
+    // Keyed on the sport: this composable stays in composition after the sheet closes (the
+    // early return below is what hides it), so unkeyed remembers survived into the next
+    // add-a-league flow and showed the previous sport's country and results.
+    var country by remember(sportOrEmpty) { mutableStateOf<String?>(null) }
+    var loading by remember(sportOrEmpty) { mutableStateOf(false) }
+    var results by remember(sportOrEmpty) { mutableStateOf<List<RadarLeague>>(emptyList()) }
 
     if (sportOrEmpty == null) return
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
