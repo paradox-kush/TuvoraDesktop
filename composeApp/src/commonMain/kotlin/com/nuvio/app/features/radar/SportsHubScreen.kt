@@ -63,6 +63,7 @@ import com.nuvio.app.core.ui.NuvioModalBottomSheet
 import com.nuvio.app.core.ui.NuvioPrimaryButton
 import com.nuvio.app.core.ui.NuvioSurfaceCard
 import com.nuvio.app.core.ui.NuvioTokens
+import com.nuvio.app.core.ui.nuvioSafeBottomPadding
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.iptv.XtreamRepository
 import kotlinx.coroutines.delay
@@ -173,10 +174,7 @@ private fun SportsOverview(
     }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        // The bottom nav floats over the content rather than taking layout space, so the last
-        // row needs room to clear it — otherwise "Add a league", now the final item, sits
-        // underneath the bar.
-        contentPadding = PaddingValues(bottom = NuvioTokens.Space.s80 + NuvioTokens.Space.s24),
+        contentPadding = PaddingValues(bottom = nuvioSafeBottomPadding(NuvioTokens.Space.s24)),
     ) {
         if (featured.isNotEmpty()) {
             item(key = "featured") {
@@ -351,7 +349,7 @@ private fun BrowseCategories(state: RadarUiState, onSelect: (RadarCategory) -> U
             modifier = Modifier.padding(horizontal = NuvioTokens.Space.s16),
         )
         Spacer(Modifier.height(NuvioTokens.Space.s8))
-        LazyColumn(contentPadding = PaddingValues(bottom = NuvioTokens.Space.s24)) {
+        LazyColumn(contentPadding = PaddingValues(bottom = nuvioSafeBottomPadding(NuvioTokens.Space.s24))) {
             items(state.catalog.categories, key = { it.name }) { category ->
                 CategoryRowItem(
                     category = category,
@@ -387,7 +385,7 @@ private fun BrowseTwoPane(
     Column(Modifier.fillMaxSize()) {
         BrowseHeader("Follow your sports", onBack)
         Row(Modifier.fillMaxSize()) {
-            LazyColumn(Modifier.width(320.dp), contentPadding = PaddingValues(bottom = NuvioTokens.Space.s24)) {
+            LazyColumn(Modifier.width(320.dp), contentPadding = PaddingValues(bottom = nuvioSafeBottomPadding(NuvioTokens.Space.s24))) {
                 items(state.catalog.categories, key = { it.name }) { category ->
                     CategoryRowItem(
                         category = category,
@@ -411,7 +409,7 @@ private fun LeagueToggleList(
     category: RadarCategory,
     onOpenLeague: (RadarLeague) -> Unit,
 ) {
-    LazyColumn(contentPadding = PaddingValues(bottom = NuvioTokens.Space.s24)) {
+    LazyColumn(contentPadding = PaddingValues(bottom = nuvioSafeBottomPadding(NuvioTokens.Space.s24))) {
         items(category.leagues, key = { it.id }) { league ->
             Row(
                 modifier = Modifier
@@ -505,7 +503,7 @@ private fun LeagueFixturesPage(
 
     Column(Modifier.fillMaxSize()) {
         BrowseHeader(league.name, onBack)
-        LazyColumn(contentPadding = PaddingValues(bottom = NuvioTokens.Space.s24)) {
+        LazyColumn(contentPadding = PaddingValues(bottom = nuvioSafeBottomPadding(NuvioTokens.Space.s24))) {
             item(key = "league-header") {
                 Row(
                     modifier = Modifier
