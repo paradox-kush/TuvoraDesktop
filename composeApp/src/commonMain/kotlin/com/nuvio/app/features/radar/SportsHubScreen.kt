@@ -123,6 +123,7 @@ fun SportsHubScreen(
                 else -> SportsOverview(
                     state = state,
                     onOpenBrowse = { browsing = true },
+                    onOpenCategory = { browsing = true; browseCategory = it },
                     onOpenLeague = { leaguePage = it },
                     onFixtureClick = { sheetFixture = it },
                 )
@@ -149,6 +150,7 @@ fun SportsHubScreen(
 private fun SportsOverview(
     state: RadarUiState,
     onOpenBrowse: () -> Unit,
+    onOpenCategory: (RadarCategory) -> Unit,
     onOpenLeague: (RadarLeague) -> Unit,
     onFixtureClick: (RadarFixture) -> Unit,
 ) {
@@ -255,7 +257,10 @@ private fun SportsOverview(
                 CategoryRowItem(
                     category = category,
                     followedCount = category.leagues.count { it.id in state.followedLeagueIds },
-                    onClick = onOpenBrowse,
+                    // Straight into the sport that was tapped. This used to open the generic
+                    // browse list, which is a screen of the very same categories — so tapping
+                    // Football landed on "pick a sport" and you had to pick Football again.
+                    onClick = { onOpenCategory(category) },
                 )
             }
             // Anything we didn't curate. Last in the list so the popular sports stay first —
