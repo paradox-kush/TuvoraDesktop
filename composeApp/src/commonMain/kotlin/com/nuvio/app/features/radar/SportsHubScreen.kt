@@ -981,10 +981,13 @@ private fun AddLeagueSheets(
 
     NuvioModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         val chosenCountry = country
+        // ONE call site, deliberately outside the `when` below. Nesting it in the branches gave
+        // each branch its own TextField, so typing the first character switched branch, disposed
+        // the field and recreated it — which dropped focus and closed the keyboard mid-word.
+        LeagueSearchField(query = query, onQueryChange = { query = it })
         when {
             // A non-empty query takes over the sheet at any depth — it is the faster route in.
             trimmedQuery.isNotEmpty() -> {
-                LeagueSearchField(query = query, onQueryChange = { query = it })
                 LeagueResultList(
                     leagues = searchResults,
                     followedLeagueIds = followedLeagueIds,
@@ -997,7 +1000,6 @@ private fun AddLeagueSheets(
                 )
             }
             sportOrEmpty.isEmpty() -> {
-                LeagueSearchField(query = query, onQueryChange = { query = it })
                 SectionTitle("Or pick a sport")
                 LazyColumn(modifier = Modifier.heightIn(max = 380.dp)) {
                     items(RADAR_LEAGUE_SPORTS, key = { it }) { sport ->
@@ -1021,7 +1023,6 @@ private fun AddLeagueSheets(
                 }
             }
             else -> {
-                LeagueSearchField(query = query, onQueryChange = { query = it })
                 SectionTitle("$sportOrEmpty · $chosenCountry")
                 LeagueResultList(
                     leagues = results,
@@ -1071,16 +1072,16 @@ private fun LeagueResultList(
     loading: Boolean,
     emptyText: String,
 ) {
-    if (loading) {
+    // One call site for the hint, so switching between "loading" and "empty" doesn't churn the
+    // node next to the search field.
+    val hint = when {
+        loading -> "Finding leagues…"
+        leagues.isEmpty() -> emptyText
+        else -> null
+    }
+    if (hint != null) {
         Text(
-            "Finding leagues…",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(NuvioTokens.Space.s16),
-        )
-    } else if (leagues.isEmpty()) {
-        Text(
-            emptyText,
+            hint,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(NuvioTokens.Space.s16),
@@ -1165,17 +1166,15 @@ private fun AddTeamSheet(
             onQueryChange = { query = it },
             placeholder = "Search teams",
         )
-        if (searching) {
+        val hint = when {
+            searching -> "Finding teams…"
+            results.isNotEmpty() -> null
+            trimmedQuery.length < MIN_LEAGUE_QUERY -> "Type a club's name to find it."
+            else -> "No teams match \"$trimmedQuery\"."
+        }
+        if (hint != null) {
             Text(
-                "Finding teams…",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(NuvioTokens.Space.s16),
-            )
-        } else if (results.isEmpty()) {
-            Text(
-                if (trimmedQuery.length < MIN_LEAGUE_QUERY) "Type a club's name to find it."
-                else "No teams match \"$trimmedQuery\".",
+                hint,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(NuvioTokens.Space.s16),
