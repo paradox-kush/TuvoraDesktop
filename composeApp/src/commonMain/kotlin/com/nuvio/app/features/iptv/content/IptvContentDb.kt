@@ -309,6 +309,51 @@ internal object IptvContentDb {
      * The programmes airing at/after [atMs] for one channel, ordered by start — the caller takes the
      * first (now) + second (next). A tiny bounded read: the covering index makes it a range scan.
      */
+    /**
+     * Programmes in a time window whose title or description mentions any of [tokens].
+     *
+     * The provider's own guide, searched in BULK — the counterpart to the EPG mirror's
+     * programmesInWindow. Sports matching had no way to ask "which of my channels is showing
+     * this match?" of the provider's EPG: the only entry point was per-channel, so the matcher
+     * fell back to a network call per channel and had to gate that behind a channel-NAME
+     * filter to stay affordable. A channel whose name says nothing useful was therefore never
+     * asked, even when this table already knew it was airing the fixture.
+     *
+     * Bounded by the window (a few hours), so the scan stays small even on a huge panel.
+     */
+    suspend fun epgSearch(
+        playlistId: String,
+        tokens: List<String>,
+        fromMs: Long,
+        toMs: Long,
+        limit: Int = 400,
+    ): List<EpgProgrammeRow> = mutex.withLock {
+        if (tokens.isEmpty()) return@withLock emptyList()
+        val terms = tokens.take(8).map { "%${it.lowercase()}%" }
+        val where = terms.joinToString(" OR ") { "(lower(title) LIKE ? OR lower(coalesce(desc,'')) LIKE ?)" }
+        connection().prepare(
+            "SELECT channel_id, start_ms, end_ms, title, desc FROM epg_programmes " +
+                "WHERE playlist_id = ? AND start_ms < ? AND end_ms > ? AND ($where) " +
+                "ORDER BY start_ms LIMIT ?"
+        ).use { st ->
+            var i = 1
+            st.bindText(i++, playlistId); st.bindLong(i++, toMs); st.bindLong(i++, fromMs)
+            terms.forEach { t -> st.bindText(i++, t); st.bindText(i++, t) }
+            st.bindLong(i, limit.toLong())
+            val out = ArrayList<EpgProgrammeRow>()
+            while (st.step()) out.add(
+                EpgProgrammeRow(
+                    channelId = st.getText(0),
+                    startMs = st.getLong(1),
+                    endMs = st.getLong(2),
+                    title = st.getText(3),
+                    desc = if (st.isNull(4)) null else st.getText(4),
+                )
+            )
+            out
+        }
+    }
+
     suspend fun epgAround(playlistId: String, channelId: String, atMs: Long, limit: Int): List<EpgProgrammeRow> = mutex.withLock {
         // Grab the currently-airing programme (start <= now < end) plus the upcoming ones. Union keeps
         // it a single indexed pass without pulling the channel's whole day.

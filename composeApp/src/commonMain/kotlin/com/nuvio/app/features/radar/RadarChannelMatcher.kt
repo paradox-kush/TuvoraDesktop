@@ -4,6 +4,7 @@ import com.nuvio.app.features.epg.EpgLang
 import com.nuvio.app.features.epg.EpgMirrorRepository
 import com.nuvio.app.features.epg.EpgNorm
 import com.nuvio.app.features.iptv.XtreamClient
+import com.nuvio.app.features.iptv.content.IptvContentDb
 import com.nuvio.app.features.iptv.XtreamItemRegistry
 import com.nuvio.app.features.iptv.XtreamProgram
 import com.nuvio.app.features.iptv.XtreamRepository
@@ -40,6 +41,8 @@ object RadarChannelMatcher {
         val logo: String?,
         /** Source-specific EPG handle; for Xtream it's the stream id. */
         val streamId: Int,
+        /** The provider's own guide id for this channel — joins provider-EPG hits back. */
+        val epgChannelId: String? = null,
         /** Channel offers catch-up (Xtream tv_archive) — enables Replay for past fixtures. */
         val hasArchive: Boolean = false,
     )
@@ -126,7 +129,9 @@ object RadarChannelMatcher {
             if (score > 0) ChannelMatch(c, programme = null, score = score) else null
         }.sortedByDescending { it.score }.take(NAME_POOL_CAP)
 
-        onPartial(named.take(RESULT_CAP))
+        // Same rule for the early partial: flashing a list of guesses and then clearing it
+        // when the guide tiers land is worse than showing the spinner a moment longer.
+        if (named.any { it.score > GENERIC_NAME_SCORE }) onPartial(named.take(RESULT_CAP))
 
         // Stage 2: EPG probes for the strongest name candidates.
         val start = fixture.startEpochMs
@@ -147,11 +152,14 @@ object RadarChannelMatcher {
         // mappings — finds every mapped channel whose guide airs this event, whatever its
         // name (the "FIFA on BBC One" gap). Stage 4: TheSportsDB broadcaster names.
         val mirrorMatches = mirrorMatches(candidates, start, keywords, homeTokens, awayTokens, eventTokens)
+        // The provider's OWN guide, searched in bulk — same name-independence as the mirror but
+        // without needing a mapping, so it reaches channels the mirror's feeds don't cover.
+        val providerEpg = providerEpgMatches(candidates, start, keywords, homeTokens, awayTokens, eventTokens)
         val stationMatches = stationMatches(candidates, stations)
 
         // Merge, best score per channel; keep any programme/language a weaker signal found.
         val merged = LinkedHashMap<String, ChannelMatch>()
-        for (m in mirrorMatches + stationMatches + probed) {
+        for (m in mirrorMatches + providerEpg + stationMatches + probed) {
             val old = merged[m.channel.contentId]
             merged[m.channel.contentId] = if (old == null) m else {
                 val best = if (m.score > old.score) m else old
@@ -162,6 +170,11 @@ object RadarChannelMatcher {
             }
         }
         val ranked = merged.values.sortedByDescending { it.score }
+        // A generic hit is a guess, not an answer: it means the channel merely has "sport" in
+        // its name — no league keyword, no team, no guide entry. A list of those reads as
+        // "here's where the match is" and sends someone into a Bulgarian feed for a Mexican
+        // fixture. When that's ALL we have, report nothing so the sheet can say so honestly.
+        if (ranked.none { it.score > GENERIC_NAME_SCORE }) return emptyList()
         // Generic sports-channel name hits don't earn slots beyond the classic list length.
         return ranked
             .filterIndexed { i, m -> i < NAME_RESULT_CAP || m.score > GENERIC_NAME_SCORE }
@@ -169,6 +182,58 @@ object RadarChannelMatcher {
     }
 
     /** Stage 3: search the mirrored programme window for the event, join via mappings. */
+
+    /**
+     * Tier-1b: the provider's own ingested XMLTV, searched in bulk for the fixture and joined
+     * back by the channel's own guide id.
+     *
+     * Costs one local query per playlist and no network, so unlike the get_short_epg probe it
+     * doesn't need a channel-name filter in front of it. That filter is what made a Liga MX
+     * fixture unmatchable: a Mexican channel scored 0 on name, was dropped before any guide was
+     * consulted, and the sheet fell through to generic "has the word sport in it" hits.
+     */
+    private suspend fun providerEpgMatches(
+        candidates: List<CandidateChannel>,
+        startMs: Long?,
+        keywords: List<String>,
+        homeTokens: List<String>,
+        awayTokens: List<String>,
+        eventTokens: List<String>,
+    ): List<ChannelMatch> {
+        if (startMs == null) return emptyList()
+        val tokens = (homeTokens + awayTokens + eventTokens).filter { it.length > 3 }.distinct().take(8)
+        if (tokens.isEmpty()) return emptyList()
+        val from = startMs - PROGRAMME_WINDOW_BACK_MS
+        val to = startMs + PROGRAMME_WINDOW_AHEAD_MS
+
+        return buildList {
+            for ((playlistId, chans) in candidates.groupBy { it.playlistId }) {
+                val byEpgId = chans.mapNotNull { c ->
+                    c.epgChannelId?.takeIf { it.isNotBlank() }?.let { it to c }
+                }.toMap()
+                if (byEpgId.isEmpty()) continue
+                val hits = runCatching { IptvContentDb.epgSearch(playlistId, tokens, from, to) }
+                    .getOrDefault(emptyList())
+                for (p in hits) {
+                    val channel = byEpgId[p.channelId] ?: continue
+                    val score = programmeScore(
+                        normalize("${p.title} ${p.desc.orEmpty()}"),
+                        keywords, homeTokens, awayTokens, eventTokens,
+                    )
+                    if (score <= 0) continue
+                    add(
+                        ChannelMatch(
+                            channel,
+                            programme = XtreamProgram(p.title, p.desc.orEmpty(), p.startMs, p.endMs, false),
+                            score = MIRROR_BASE_SCORE + score / 10,
+                            via = MatchVia.EPG,
+                        )
+                    )
+                }
+            }
+        }
+    }
+
     private suspend fun mirrorMatches(
         candidates: List<CandidateChannel>,
         startMs: Long?,
@@ -270,6 +335,7 @@ object RadarChannelMatcher {
                     name = ch.name,
                     logo = ch.logo,
                     streamId = ch.streamId,
+                    epgChannelId = ch.epgChannelId,
                     hasArchive = ch.hasArchive,
                 )
             }
