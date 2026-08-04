@@ -1,6 +1,8 @@
 package com.nuvio.app.features.iptv
 
 import com.nuvio.app.features.addons.httpGetText
+import com.nuvio.app.features.iptv.match.IndexedItem
+import com.nuvio.app.features.iptv.match.TitleNormalizer
 import io.ktor.http.encodeURLParameter
 import io.ktor.http.encodeURLPathPart
 import io.ktor.util.decodeBase64String
@@ -78,6 +80,53 @@ object XtreamClient : IptvClient {
 
     override suspend fun series(acc: XtreamAccount, categoryId: String?): Result<List<XtreamSeriesItem>> = call {
         jsonArray(acc, playerApi(acc, "get_series", categoryId)).mapNotNull { o -> parseSeriesItem(o) }
+    }
+
+    /**
+     * Catalog reduced to match-index rows.
+     *
+     * [vodMovies]/[series] stay as they are for the browse screens, which need the full model.
+     * The index only stores six fields, so building the full model first cost an extra
+     * whole-catalog copy in heap — including a stream URL constructed per item that the index
+     * has no field for. That peak is what was getting the app lowmemorykilled on low-RAM
+     * devices right after a playlist was added.
+     */
+    internal suspend fun vodIndexItems(acc: XtreamAccount): Result<List<IndexedItem>> = call {
+        jsonArray(acc, playerApi(acc, "get_vod_streams")).mapNotNull { o -> parseVodIndexItem(o) }
+    }
+
+    /** Series half of [vodIndexItems]. */
+    internal suspend fun seriesIndexItems(acc: XtreamAccount): Result<List<IndexedItem>> = call {
+        jsonArray(acc, playerApi(acc, "get_series")).mapNotNull { o -> parseSeriesIndexItem(o) }
+    }
+
+    /** One VOD list entry -> index row, skipping the domain model entirely. internal for tests. */
+    internal fun parseVodIndexItem(o: JsonObject): IndexedItem? {
+        val id = o["stream_id"].asIntOrNull() ?: return null
+        val name = o["name"].asStringOrNull() ?: ""
+        return IndexedItem(
+            sid = id,
+            name = name,
+            year = TitleNormalizer.yearOf(name),
+            tmdb = o["tmdb"].asIntOrNull()?.takeIf { it > 0 },
+            ext = o["container_extension"].asStringOrNull()?.takeIf { it.isNotBlank() },
+            poster = o["stream_icon"].asStringOrNull()?.takeIf { it.isNotBlank() },
+        )
+    }
+
+    /** One series list entry -> index row. internal for tests. */
+    internal fun parseSeriesIndexItem(o: JsonObject): IndexedItem? {
+        val id = o["series_id"].asIntOrNull() ?: return null
+        val name = o["name"].asStringOrNull() ?: ""
+        return IndexedItem(
+            sid = id,
+            name = name,
+            year = (o["releaseDate"] ?: o["release_date"]).asStringOrNull()?.trim()?.take(4)?.toIntOrNull()
+                ?: TitleNormalizer.yearOf(name),
+            tmdb = o["tmdb"].asIntOrNull()?.takeIf { it > 0 },
+            ext = null,
+            poster = o["cover"].asStringOrNull()?.takeIf { it.isNotBlank() },
+        )
     }
 
     override suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int): Result<List<XtreamProgram>> = call {

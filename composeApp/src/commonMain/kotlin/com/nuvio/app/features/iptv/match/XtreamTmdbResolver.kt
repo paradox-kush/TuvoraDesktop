@@ -16,7 +16,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 
 internal data class XtreamMatch(val item: IndexedItem, val via: String)
 
@@ -55,6 +57,9 @@ internal object XtreamTmdbResolver {
     // takes ~a minute on-device, and users navigate away — cancelling the request must
     // not kill (and backoff-poison) the build
     private val buildScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** Serializes catalog builds across every account — see the use site in [ensureIndexed]. */
+    private val buildSlot = Semaphore(1)
 
     private fun now() = TraktPlatformClock.nowEpochMs()
 
@@ -222,12 +227,13 @@ internal object XtreamTmdbResolver {
         if (isOwner) {
             buildScope.launch {
                 try {
-                    val items = when (kind) {
-                        MatchKind.MOVIE -> XtreamClient.vodMovies(acc).getOrThrow().map {
-                            IndexedItem(it.streamId, it.name, TitleNormalizer.yearOf(it.name), it.tmdb, it.containerExtension, it.poster)
-                        }
-                        MatchKind.SERIES -> XtreamClient.series(acc).getOrThrow().map {
-                            IndexedItem(it.seriesId, it.name, it.year ?: TitleNormalizer.yearOf(it.name), it.tmdb, null, it.poster)
+                    val items = buildSlot.withPermit {
+                        // One catalog build at a time across ALL accounts. Each build peaks at
+                        // the size of one catalog; warming several accounts concurrently stacked
+                        // those peaks in the same heap, which low-RAM devices can't take.
+                        when (kind) {
+                            MatchKind.MOVIE -> XtreamClient.vodIndexItems(acc).getOrThrow()
+                            MatchKind.SERIES -> XtreamClient.seriesIndexItems(acc).getOrThrow()
                         }
                     }
                     // An empty list where we previously indexed content is a panel glitch, not a
@@ -238,6 +244,13 @@ internal object XtreamTmdbResolver {
                     val stats = XtreamMatchIndex.sync(acc.id, kind, items)
                     log.i { "synced ${kind.slug} index for ${acc.name}: +${stats.added} ~${stats.changed} -${stats.removed} (${stats.total} total)" }
                     buildLock.withLock { lastFailedBuildMs.remove(key) }
+                } catch (oom: OutOfMemoryError) {
+                    // Deliberately not rethrown: the build owns the only large allocations here,
+                    // so releasing them and backing off recovers, where a rethrow would take the
+                    // app down. Logged apart from other failures because a swallowed OOM is why
+                    // this only ever surfaced as an OS low-memory kill with no stack trace.
+                    log.e(oom) { "index build ran out of memory for ${acc.name} ${kind.slug}" }
+                    buildLock.withLock { lastFailedBuildMs[key] = now() }
                 } catch (t: Throwable) {
                     log.w(t) { "index build failed for ${acc.name} ${kind.slug}" }
                     buildLock.withLock { lastFailedBuildMs[key] = now() }
