@@ -3,7 +3,7 @@ package com.nuvio.app.features.profiles
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
-import com.nuvio.app.core.auth.isAnonymous
+import com.nuvio.app.core.auth.isLocalOnly
 import com.nuvio.app.core.network.SupabaseProvider
 import com.nuvio.app.core.sync.putSyncOriginClientId
 import com.nuvio.app.core.tracking.ensureTrackingProvidersRegistered
@@ -122,7 +122,7 @@ object ProfileRepository {
     }
 
     suspend fun pullProfiles() {
-        if (AuthRepository.state.value.isAnonymous) {
+        if (AuthRepository.state.value.isLocalOnly) {
             if (!_state.value.isLoaded) {
                 _state.value = _state.value.copy(isLoaded = true)
             }
@@ -207,7 +207,7 @@ object ProfileRepository {
     }
 
     suspend fun pushProfiles(profiles: List<ProfilePushPayload>) {
-        if (AuthRepository.state.value.isAnonymous) {
+        if (AuthRepository.state.value.isLocalOnly) {
             applyPayloadsLocally(profiles)
             return
         }
@@ -292,7 +292,7 @@ object ProfileRepository {
     }
 
     suspend fun deleteProfile(profileIndex: Int) {
-        if (AuthRepository.state.value.isAnonymous) {
+        if (AuthRepository.state.value.isLocalOnly) {
             val remaining = _state.value.profiles.filter { it.profileIndex != profileIndex }
             ProfilePinCacheStorage.removePayload(profileIndex)
             _state.value = _state.value.copy(
@@ -408,11 +408,14 @@ object ProfileRepository {
     }
 
     private fun applyPayloadsLocally(payloads: List<ProfilePushPayload>) {
-        val authState = AuthRepository.state.value as? AuthState.Authenticated ?: return
+        // Signed-out callers reach this too now, and they have no user id. Bailing out here would
+        // reinstate the very data loss isLocalOnly was added to stop, so fall back to a blank id -
+        // it is only local bookkeeping, and pullProfiles overwrites it once an account signs in.
+        val localUserId = (AuthRepository.state.value as? AuthState.Authenticated)?.userId.orEmpty()
         val profiles = payloads.map { p ->
             NuvioProfile(
                 id = "",
-                userId = authState.userId,
+                userId = localUserId,
                 profileIndex = p.profileIndex,
                 name = p.name,
                 avatarColorHex = p.avatarColorHex,
@@ -539,12 +542,16 @@ object ProfileRepository {
     }
 
     private fun persist() {
-        val authState = AuthRepository.state.value as? AuthState.Authenticated ?: return
+        // Same reason as applyPayloadsLocally: signed-out users have no user id, and returning here
+        // meant nothing was ever written to disk for them - their edits survived until the process
+        // died and then vanished. ensureLoaded() compares this id to detect an account change, and a
+        // blank id correctly mismatches a real one, so signing in still discards the local set.
+        val localUserId = (AuthRepository.state.value as? AuthState.Authenticated)?.userId.orEmpty()
         val state = _state.value
         ProfileStorage.savePayload(
             json.encodeToString(
                 StoredProfilePayload(
-                    userId = authState.userId,
+                    userId = localUserId,
                     activeProfileIndex = activeProfileIndex,
                     hasEverSelectedProfile = state.hasEverSelectedProfile,
                     rememberLastProfileEnabled = state.rememberLastProfileEnabled,
