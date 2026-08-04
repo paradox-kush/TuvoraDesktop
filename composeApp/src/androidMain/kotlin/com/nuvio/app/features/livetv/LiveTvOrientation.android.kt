@@ -51,6 +51,9 @@ actual fun rememberPhysicalLandscape(): State<Boolean?> {
     return state
 }
 
+/** The window follows the device, so landscape means fullscreen. */
+actual val LiveTvFullscreenFollowsWindowAspect: Boolean = true
+
 private tailrec fun Context.findLiveActivity(): Activity? =
     when (this) {
         is Activity -> this

@@ -45,6 +45,33 @@ object XtreamLiveRecents {
         XtreamAccountStorage.saveRecentsJson(currentProfileId, json.encodeToString(updated))
     }
 
+    /** Drops one channel from the row — the Live TV counterpart of removing a Continue Watching card. */
+    fun remove(contentId: String) {
+        ensureLoaded()
+        val updated = _recents.value.filterNot { it.contentId == contentId }
+        if (updated.size == _recents.value.size) return
+        _recents.value = updated
+        XtreamAccountStorage.saveRecentsJson(currentProfileId, json.encodeToString(updated))
+    }
+
+    /** Empties the row for this profile. */
+    fun clear() {
+        ensureLoaded()
+        if (_recents.value.isEmpty()) return
+        _recents.value = emptyList()
+        XtreamAccountStorage.saveRecentsJson(currentProfileId, json.encodeToString(emptyList<XtreamLiveRecent>()))
+    }
+
+    /**
+     * Account wipe: drops the in-memory row so the signed-out account's channels don't linger on
+     * Home. The persisted JSON goes with the rest of the profile storage.
+     */
+    fun clearLocalState() {
+        loaded = false
+        currentProfileId = 1
+        _recents.value = emptyList()
+    }
+
     /**
      * IPTV playlist edit: rewrites recent channels under an old `xtream:{accountId}:` id
      * prefix to the new one, or drops them when newPrefix is null (different playlist).

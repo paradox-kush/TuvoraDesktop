@@ -109,6 +109,114 @@ fun NuvioContinueWatchingActionSheet(
     }
 }
 
+/**
+ * Live TV counterpart of [NuvioContinueWatchingActionSheet].
+ *
+ * Live channels carry no resume position, so the Live TV row is built from recents rather than
+ * watch progress and can't share the item type — but it still needs the same way out of the row
+ * that Movies and Series have.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun NuvioLiveRecentActionSheet(
+    channel: LiveRecentActionTarget?,
+    onDismiss: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    if (channel == null) return
+    val tokens = MaterialTheme.nuvio
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val coroutineScope = rememberCoroutineScope()
+
+    NuvioModalBottomSheet(
+        onDismissRequest = {
+            coroutineScope.launch {
+                dismissNuvioBottomSheet(sheetState = sheetState, onDismiss = onDismiss)
+            }
+        },
+        sheetState = sheetState,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = nuvioSafeBottomPadding(tokens.spacing.screenHorizontal)),
+        ) {
+            LiveRecentSheetHeader(channel = channel)
+            NuvioBottomSheetDivider()
+            NuvioBottomSheetActionRow(
+                icon = Icons.Default.DeleteOutline,
+                title = stringResource(Res.string.cw_action_remove),
+                onClick = {
+                    onRemove()
+                    coroutineScope.launch {
+                        dismissNuvioBottomSheet(sheetState = sheetState, onDismiss = onDismiss)
+                    }
+                },
+            )
+        }
+    }
+}
+
+/** Identity + artwork for the channel the live recents sheet is acting on. */
+data class LiveRecentActionTarget(
+    val contentId: String,
+    val name: String,
+    val logo: String?,
+)
+
+@Composable
+private fun LiveRecentSheetHeader(
+    channel: LiveRecentActionTarget,
+) {
+    val posterCardStyle = rememberPosterCardStyleUiState()
+    val tokens = MaterialTheme.nuvio
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = tokens.spacing.screenHorizontal, vertical = NuvioTokens.Space.s14),
+        horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s14),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            // Channel logos are landscape, unlike the portrait posters in the progress sheet.
+            modifier = Modifier
+                .size(width = NuvioTokens.Space.s80 + NuvioTokens.Space.s32, height = NuvioTokens.Space.s64)
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(posterCardStyle.cornerRadiusDp.dp))
+                .background(tokens.colors.surfaceCard),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (channel.logo != null) {
+                NuvioAsyncImage(
+                    model = channel.logo,
+                    contentDescription = channel.name,
+                    modifier = Modifier.matchParentSize(),
+                    contentScale = ContentScale.Fit,
+                )
+            } else {
+                Text(
+                    text = channel.name,
+                    modifier = Modifier.padding(tokens.spacing.listGap),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = tokens.colors.textMuted,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+
+        Text(
+            text = channel.name,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.titleLarge,
+            color = tokens.colors.textPrimary,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
 @Composable
 private fun ContinueWatchingSheetHeader(
     item: ContinueWatchingItem,

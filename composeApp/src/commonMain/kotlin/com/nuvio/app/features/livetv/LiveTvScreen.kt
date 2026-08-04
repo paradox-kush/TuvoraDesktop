@@ -60,6 +60,9 @@ import com.nuvio.app.features.trakt.TraktPlatformClock
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+/** Share of the window height the docked player takes when the window is wider than it is tall. */
+private const val DOCKED_PLAYER_HEIGHT_FRACTION = 0.58f
+
 /**
  * Dedicated Live TV experience. Portrait shows a docked 16:9 player over an EPG timeline guide;
  * landscape (via rotation or the fullscreen button) fills the screen with the video. Channel taps
@@ -173,12 +176,27 @@ fun LiveTvScreen(
     androidx.compose.foundation.layout.BoxWithConstraints(
         modifier = modifier.fillMaxSize().background(colors.surface),
     ) {
-        val fullscreen = maxWidth > maxHeight
+        // Rotation drives fullscreen where the window follows the device. Desktop windows are
+        // landscape at every size, so there fullscreen is whatever the user last asked for —
+        // otherwise the guide below would never get a chance to render.
+        var toggledFullscreen by remember { mutableStateOf(false) }
+        val wideWindow = maxWidth > maxHeight
+        val fullscreen =
+            if (LiveTvFullscreenFollowsWindowAspect) wideWindow else toggledFullscreen
+        val dockedPlayerHeight = maxHeight * DOCKED_PLAYER_HEIGHT_FRACTION
         val hasError = resolveError || playbackError != null
 
+        fun setFullscreen(enabled: Boolean) {
+            if (LiveTvFullscreenFollowsWindowAspect) manualOrientation = enabled
+            else toggledFullscreen = enabled
+        }
+
         // Back in fullscreen exits fullscreen instead of leaving the screen.
-        PlatformBackHandler(enabled = fullscreen) { manualOrientation = false }
-        if (fullscreen) {
+        PlatformBackHandler(enabled = fullscreen) { setFullscreen(false) }
+        // Immersive mode hides the system bars, so on a phone it belongs to fullscreen alone. On
+        // desktop it is only a display-sleep inhibitor and docked is the normal way to watch, so
+        // it stays on there whenever the screen is up — otherwise the monitor sleeps mid-channel.
+        if (fullscreen || !LiveTvFullscreenFollowsWindowAspect) {
             EnterImmersivePlayerMode(keepScreenAwake = snapshot.isPlaying || snapshot.isLoading)
         }
 
@@ -199,12 +217,22 @@ fun LiveTvScreen(
             ),
         ) {
             // The player box keeps a STABLE position (always the Column's first child); only its size
-            // modifier changes between docked (16:9) and fullscreen (fill). The MPV SurfaceView is
+            // modifier changes between docked and fullscreen (fill). The MPV SurfaceView is
             // therefore never detached/reattached on rotation, so the stream doesn't reload/rebuffer.
+            //
+            // Docked sizing differs by shape: a 16:9 box is the right dock over a portrait phone,
+            // but the full width of a landscape desktop window would push the guide off-screen, so
+            // there the dock is capped to a fraction of the height and the video letterboxes.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .then(if (fullscreen) Modifier.weight(1f) else Modifier.aspectRatio(16f / 9f))
+                    .then(
+                        when {
+                            fullscreen -> Modifier.weight(1f)
+                            wideWindow -> Modifier.height(dockedPlayerHeight)
+                            else -> Modifier.aspectRatio(16f / 9f)
+                        },
+                    )
                     .background(Color.Black)
                     .then(
                         if (fullscreen) Modifier.clickable { controlsVisible = !controlsVisible } else Modifier,
@@ -232,7 +260,7 @@ fun LiveTvScreen(
                         showPlayPause = showPlayPause,
                         danger = colors.danger,
                         onPlayPause = { if (snapshot.isPlaying) controller?.pause() else controller?.play() },
-                        onExitFullscreen = { manualOrientation = false },
+                        onExitFullscreen = { setFullscreen(false) },
                         onBack = onBack,
                     )
                 } else {
@@ -241,7 +269,7 @@ fun LiveTvScreen(
                         showPlayPause = showPlayPause,
                         danger = colors.danger,
                         onPlayPause = { if (snapshot.isPlaying) controller?.pause() else controller?.play() },
-                        onEnterFullscreen = { manualOrientation = true },
+                        onEnterFullscreen = { setFullscreen(true) },
                         onBack = onBack,
                     )
                 }

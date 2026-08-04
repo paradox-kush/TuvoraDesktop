@@ -31,6 +31,9 @@ actual fun ApplyLiveOrientation(mode: LiveOrientationMode) {
     }
 }
 
+/** The window follows the device, so landscape means fullscreen. */
+actual val LiveTvFullscreenFollowsWindowAspect: Boolean = true
+
 @Composable
 actual fun rememberPhysicalLandscape(): State<Boolean?> {
     val state = remember { mutableStateOf<Boolean?>(null) }

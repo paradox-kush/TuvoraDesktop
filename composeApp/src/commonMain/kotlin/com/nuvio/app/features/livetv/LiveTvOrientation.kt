@@ -19,6 +19,17 @@ enum class LiveOrientationMode { Sensor, ForceLandscape, ForcePortrait }
 expect fun ApplyLiveOrientation(mode: LiveOrientationMode)
 
 /**
+ * Whether Live TV fullscreen is a consequence of the window's aspect ratio.
+ *
+ * On phones and tablets the window tracks the device, so rotating to landscape IS going fullscreen
+ * and [ApplyLiveOrientation] can drive the layout. A desktop window is landscape at every size, so
+ * aspect ratio can't mean fullscreen there — the guide would be unreachable and the exit-fullscreen
+ * button would be inert, because forcing portrait is a no-op on desktop. Desktop therefore toggles
+ * fullscreen explicitly instead.
+ */
+expect val LiveTvFullscreenFollowsWindowAspect: Boolean
+
+/**
  * Reactive PHYSICAL device orientation, independent of any app-level orientation lock.
  * true = device physically landscape, false = portrait, null = unknown/flat/face-up.
  */

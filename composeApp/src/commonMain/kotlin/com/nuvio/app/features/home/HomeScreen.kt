@@ -25,7 +25,9 @@ import com.nuvio.app.core.auth.AuthState
 import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.core.network.NetworkCondition
 import com.nuvio.app.core.network.NetworkStatusRepository
+import com.nuvio.app.core.ui.LiveRecentActionTarget
 import com.nuvio.app.core.ui.LocalNuvioBottomNavigationOverlayPadding
+import com.nuvio.app.core.ui.NuvioLiveRecentActionSheet
 import com.nuvio.app.core.ui.NuvioScreen
 import com.nuvio.app.core.ui.NuvioNetworkOfflineCard
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
@@ -485,6 +487,8 @@ fun HomeScreen(
     val liveRecentsRaw by XtreamLiveRecents.recents.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { XtreamLiveRecents.ensureLoaded() }
     val liveRecentPreviews = remember(liveRecentsRaw) { liveRecentsRaw.map { it.toMetaPreview() } }
+    // Long-pressing a Live TV card opens the same kind of remove sheet the Movies/Series cards have.
+    var liveRecentActionTarget by remember { mutableStateOf<LiveRecentActionTarget?>(null) }
     val (continueWatchingItems, upcomingItems) = remember(
         allContinueWatchingItems,
         continueWatchingPreferences.sortMode,
@@ -941,6 +945,7 @@ fun HomeScreen(
                         onItemClick = onContinueWatchingClick,
                         onItemLongPress = onContinueWatchingLongPress,
                         onLivePosterClick = { onPosterClick?.invoke(it) },
+                        onLivePosterLongPress = { liveRecentActionTarget = it.toLiveRecentActionTarget() },
                     )
                     item {
                         // Store builds hide the addon system, so point at IPTV setup instead.
@@ -972,6 +977,7 @@ fun HomeScreen(
                         onItemClick = onContinueWatchingClick,
                         onItemLongPress = onContinueWatchingLongPress,
                         onLivePosterClick = { onPosterClick?.invoke(it) },
+                        onLivePosterLongPress = { liveRecentActionTarget = it.toLiveRecentActionTarget() },
                     )
                     items(3) {
                         HomeSkeletonRow(
@@ -1018,6 +1024,7 @@ fun HomeScreen(
                         onItemClick = onContinueWatchingClick,
                         onItemLongPress = onContinueWatchingLongPress,
                         onLivePosterClick = { onPosterClick?.invoke(it) },
+                        onLivePosterLongPress = { liveRecentActionTarget = it.toLiveRecentActionTarget() },
                     )
 
                     keyedEnabledHomeItems.forEach { keyedSettingsItem ->
@@ -1062,7 +1069,16 @@ fun HomeScreen(
             }
         }
     }
+
+    NuvioLiveRecentActionSheet(
+        channel = liveRecentActionTarget,
+        onDismiss = { liveRecentActionTarget = null },
+        onRemove = { liveRecentActionTarget?.let { XtreamLiveRecents.remove(it.contentId) } },
+    )
 }
+
+private fun MetaPreview.toLiveRecentActionTarget(): LiveRecentActionTarget =
+    LiveRecentActionTarget(contentId = id, name = name, logo = logo ?: poster)
 
 private fun LazyListScope.homeContinueWatchingSections(
     preferences: ContinueWatchingPreferencesUiState,
@@ -1077,6 +1093,7 @@ private fun LazyListScope.homeContinueWatchingSections(
     onItemClick: ((ContinueWatchingItem) -> Unit)?,
     onItemLongPress: ((ContinueWatchingItem) -> Unit)?,
     onLivePosterClick: (MetaPreview) -> Unit,
+    onLivePosterLongPress: (MetaPreview) -> Unit,
 ) {
     if (!preferences.isVisible) return
 
@@ -1096,6 +1113,7 @@ private fun LazyListScope.homeContinueWatchingSections(
                 onItemClick = onItemClick,
                 onItemLongPress = onItemLongPress,
                 onLivePosterClick = onLivePosterClick,
+                onLivePosterLongPress = onLivePosterLongPress,
             )
         }
     }
@@ -1883,6 +1901,7 @@ private fun HomeContinueWatchingSplit(
     onItemClick: ((ContinueWatchingItem) -> Unit)?,
     onItemLongPress: ((ContinueWatchingItem) -> Unit)?,
     onLivePosterClick: (MetaPreview) -> Unit,
+    onLivePosterLongPress: (MetaPreview) -> Unit,
     listState: LazyListState = rememberLazyListState(),
     modifier: Modifier = Modifier,
 ) {
@@ -1906,6 +1925,7 @@ private fun HomeContinueWatchingSplit(
                 ),
                 sectionPadding = sectionPadding,
                 onPosterClick = onLivePosterClick,
+                onPosterLongClick = onLivePosterLongPress,
             )
         }
         HomeContinueWatchingSection(

@@ -13,3 +13,9 @@ actual fun ApplyLiveOrientation(mode: LiveOrientationMode) = Unit
 @Composable
 actual fun rememberPhysicalLandscape(): State<Boolean?> =
     remember { mutableStateOf(null) }
+
+/**
+ * A desktop window is wider than it is tall at every size, so aspect ratio would pin Live TV to
+ * fullscreen forever and hide the guide. Fullscreen is an explicit toggle here instead.
+ */
+actual val LiveTvFullscreenFollowsWindowAspect: Boolean = false

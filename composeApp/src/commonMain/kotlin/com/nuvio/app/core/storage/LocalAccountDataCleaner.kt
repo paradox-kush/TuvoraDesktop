@@ -12,6 +12,7 @@ import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.details.MetaScreenSettingsRepository
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.HomeRepository
+import com.nuvio.app.features.iptv.XtreamLiveRecents
 import com.nuvio.app.features.library.LibraryRepository
 import com.nuvio.app.features.library.LibraryDisplaySettingsRepository
 import com.nuvio.app.features.notifications.EpisodeReleaseNotificationsRepository
@@ -48,6 +49,7 @@ internal object LocalAccountDataCleaner {
         ContinueWatchingEnrichmentCache.clearLocalState()
         WatchProgressRepository.clearLocalState()
         WatchedRepository.clearLocalState()
+        XtreamLiveRecents.clearLocalState()
         LibraryRepository.runAccountStorageWipe {
             PlatformLocalAccountDataCleaner.wipe()
         }
