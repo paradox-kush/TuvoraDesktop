@@ -228,6 +228,21 @@ internal fun PlayerScreenRuntime.emitTrackingSeekScrobbleStart() {
     }
 }
 
+/**
+ * Show the stream readout once per playback, when the engine has actually started
+ * decoding. Pulled here rather than on a tick because the engine's bitrate is a rolling
+ * estimate and the codec/resolution are not known until the first frame is decoded.
+ */
+internal fun PlayerScreenRuntime.tryShowStreamInfo() {
+    if (!playerSettingsUiState.showStreamInfo) return
+    if (streamInfoHasShown) return
+    val info = playerController?.getStreamInfo() ?: return
+    if (!info.hasAnyValue) return
+    streamInfo = info
+    streamInfoHasShown = true
+    showStreamInfoOverlay = true
+}
+
 internal fun PlayerScreenRuntime.tryShowParentalGuide() {
     if (!playerSettingsUiState.showParentalGuide) return
     if (!parentalGuideHasShown && parentalWarnings.isNotEmpty() && !playbackStartedForParentalGuide) {

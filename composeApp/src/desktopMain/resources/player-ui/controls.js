@@ -55,6 +55,9 @@ const openingMessage = document.getElementById("openingMessage");
 const openingProgressTrack = document.getElementById("openingProgressTrack");
 const openingProgressBar = document.getElementById("openingProgressBar");
 const parentalGuide = document.getElementById("parentalGuide");
+const streamInfo = document.getElementById("streamInfo");
+const streamInfoLine = document.getElementById("streamInfoLine");
+const streamInfoList = document.getElementById("streamInfoList");
 const parentalGuideLine = document.getElementById("parentalGuideLine");
 const parentalGuideList = document.getElementById("parentalGuideList");
 const skipPrompt = document.getElementById("skipPrompt");
@@ -249,6 +252,8 @@ let state = {
   lockedOverlayVisible: false,
   controlsVisible: true,
   parentalWarnings: [],
+  streamInfoLines: [],
+  showStreamInfo: false,
   showParentalGuide: false,
   showOpeningOverlay: false,
   openingArtwork: "",
@@ -338,6 +343,9 @@ let submitIntroDraft = {
   status: "",
 };
 let hasReceivedPlayerControls = false;
+let streamInfoRunId = 0;
+let streamInfoStartedKey = "";
+let streamInfoCompletedKey = "";
 let parentalGuideRunId = 0;
 let parentalGuideStartedKey = "";
 let parentalGuideCompletedKey = "";
@@ -600,6 +608,122 @@ const runParentalGuideAnimation = async (warnings, key, runId) => {
   parentalGuide.setAttribute("aria-hidden", "true");
   parentalGuideCompletedKey = key;
   send("parentalGuideComplete", 0);
+};
+
+const normalizedStreamInfoLines = () =>
+  Array.isArray(state.streamInfoLines)
+    ? state.streamInfoLines
+        .map(line => ({
+          primary: String((line && line.primary) || "").trim(),
+          secondary: String((line && line.secondary) || "").trim(),
+        }))
+        .filter(line => line.primary)
+    : [];
+
+const streamInfoKey = lines =>
+  lines.map(line => line.primary + "|" + line.secondary).join("~");
+
+const renderStreamInfoRows = lines => {
+  streamInfoList.textContent = "";
+  lines.forEach(line => {
+    const row = document.createElement("div");
+    row.className = "stream-info-row";
+
+    const primary = document.createElement("span");
+    primary.className = "stream-info-primary";
+    primary.textContent = line.primary;
+    row.appendChild(primary);
+
+    if (line.secondary) {
+      const separator = document.createElement("span");
+      separator.className = "stream-info-separator";
+      separator.textContent = " · ";
+
+      const secondary = document.createElement("span");
+      secondary.className = "stream-info-secondary";
+      secondary.textContent = line.secondary;
+
+      row.appendChild(separator);
+      row.appendChild(secondary);
+    }
+    streamInfoList.appendChild(row);
+  });
+};
+
+const hideStreamInfo = () => {
+  root.classList.remove("stream-info-visible");
+  root.classList.remove("stream-info-line-visible");
+  streamInfo.setAttribute("aria-hidden", "true");
+  const rows = streamInfoList.querySelectorAll(".stream-info-row");
+  rows.forEach(row => row.classList.remove("visible"));
+};
+
+const runStreamInfoAnimation = async (lines, key, runId) => {
+  renderStreamInfoRows(lines);
+  streamInfo.setAttribute("aria-hidden", "false");
+  root.classList.add("stream-info-visible");
+  await animationDelay(300);
+  if (runId !== streamInfoRunId) return;
+
+  root.classList.add("stream-info-line-visible");
+  await animationDelay(400);
+  if (runId !== streamInfoRunId) return;
+
+  const rows = Array.from(streamInfoList.querySelectorAll(".stream-info-row"));
+  for (const row of rows) {
+    await animationDelay(80);
+    if (runId !== streamInfoRunId) return;
+    row.classList.add("visible");
+    await animationDelay(200);
+    if (runId !== streamInfoRunId) return;
+  }
+
+  await animationDelay(5000);
+  if (runId !== streamInfoRunId) return;
+
+  for (const row of rows.slice().reverse()) {
+    await animationDelay(60);
+    if (runId !== streamInfoRunId) return;
+    row.classList.remove("visible");
+    await animationDelay(150);
+    if (runId !== streamInfoRunId) return;
+  }
+
+  await animationDelay(100);
+  if (runId !== streamInfoRunId) return;
+  root.classList.remove("stream-info-line-visible");
+
+  await animationDelay(300);
+  if (runId !== streamInfoRunId) return;
+
+  await animationDelay(200);
+  if (runId !== streamInfoRunId) return;
+  root.classList.remove("stream-info-visible");
+  await animationDelay(300);
+  if (runId !== streamInfoRunId) return;
+  streamInfo.setAttribute("aria-hidden", "true");
+  streamInfoCompletedKey = key;
+  send("streamInfoComplete", 0);
+};
+
+const syncStreamInfo = showOpening => {
+  const lines = normalizedStreamInfoLines();
+  const shouldShow = Boolean(state.showStreamInfo && lines.length && !showOpening && !state.isLocked);
+  if (!shouldShow) {
+    streamInfoRunId += 1;
+    streamInfoStartedKey = "";
+    if (!state.showStreamInfo) {
+      streamInfoCompletedKey = "";
+    }
+    hideStreamInfo();
+    return;
+  }
+
+  const key = streamInfoKey(lines);
+  if (streamInfoStartedKey === key || streamInfoCompletedKey === key) return;
+  streamInfoStartedKey = key;
+  streamInfoRunId += 1;
+  runStreamInfoAnimation(lines, key, streamInfoRunId);
 };
 
 const syncParentalGuide = showOpening => {
@@ -1847,6 +1971,7 @@ const renderChrome = () => {
   const showOpening = renderOpeningOverlay(showError);
   renderPauseMetadataOverlay(showOpening || showError);
   syncParentalGuide(showOpening || showError);
+  syncStreamInfo(showOpening || showError);
 
   title.textContent = state.title || "";
   setText(episode, state.episodeText);

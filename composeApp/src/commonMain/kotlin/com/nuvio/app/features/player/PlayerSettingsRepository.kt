@@ -34,6 +34,7 @@ fun snapToAllowedTimeout(value: Int): Int {
 data class PlayerSettingsUiState(
     val showLoadingOverlay: Boolean = true,
     val showParentalGuide: Boolean = true,
+    val showStreamInfo: Boolean = true,
     val resizeMode: PlayerResizeMode = PlayerResizeMode.Fit,
     val holdToSpeedEnabled: Boolean = true,
     val holdToSpeedValue: Float = 2f,
@@ -101,6 +102,7 @@ object PlayerSettingsRepository {
     private var hasLoaded = false
     private var showLoadingOverlay = true
     private var showParentalGuide = true
+    private var showStreamInfo = true
     private var resizeMode = PlayerResizeMode.Fit
     private var holdToSpeedEnabled = true
     private var holdToSpeedValue = 2f
@@ -173,6 +175,7 @@ object PlayerSettingsRepository {
         hasLoaded = false
         showLoadingOverlay = true
         showParentalGuide = true
+        showStreamInfo = true
         resizeMode = PlayerResizeMode.Fit
         holdToSpeedEnabled = true
         holdToSpeedValue = 2f
@@ -238,6 +241,7 @@ object PlayerSettingsRepository {
         hasLoaded = true
         showLoadingOverlay = PlayerSettingsStorage.loadShowLoadingOverlay() ?: true
         showParentalGuide = PlayerSettingsStorage.loadShowParentalGuide() ?: true
+        showStreamInfo = PlayerSettingsStorage.loadShowStreamInfo() ?: true
         resizeMode = PlayerSettingsStorage.loadResizeMode()
             ?.let { runCatching { PlayerResizeMode.valueOf(it) }.getOrNull() }
             ?: PlayerResizeMode.Fit
@@ -384,6 +388,14 @@ object PlayerSettingsRepository {
         showLoadingOverlay = enabled
         publish()
         PlayerSettingsStorage.saveShowLoadingOverlay(enabled)
+    }
+
+    fun setShowStreamInfo(enabled: Boolean) {
+        ensureLoaded()
+        if (showStreamInfo == enabled) return
+        showStreamInfo = enabled
+        publish()
+        PlayerSettingsStorage.saveShowStreamInfo(enabled)
     }
 
     fun setShowParentalGuide(enabled: Boolean) {
@@ -939,6 +951,7 @@ object PlayerSettingsRepository {
         _uiState.value = PlayerSettingsUiState(
             showLoadingOverlay = showLoadingOverlay,
             showParentalGuide = showParentalGuide,
+            showStreamInfo = showStreamInfo,
             resizeMode = resizeMode,
             holdToSpeedEnabled = holdToSpeedEnabled,
             holdToSpeedValue = holdToSpeedValue,

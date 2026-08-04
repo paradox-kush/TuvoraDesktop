@@ -109,6 +109,7 @@
 - (BOOL)isEnded;
 - (NSString *)audioTracksJson;
 - (NSString *)subtitleTracksJson;
+- (NSString *)streamInfoJson;
 - (void)selectAudioTrackId:(int)trackId;
 - (void)selectSubtitleTrackId:(int)trackId;
 - (void)addSubtitleUrl:(NSString *)url;
@@ -2110,6 +2111,72 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     }
 }
 
+/// Stream facts for the info overlay, as a `PlayerStreamInfoPayload` JSON object.
+/// Keys and units must stay in step with the Kotlin payload and the Android/iOS bridges:
+/// bitrates are bits per second, matching ExoPlayer's `Format.bitrate`.
+- (NSString *)streamInfoJson {
+    if (!_mpv) return @"";
+
+    long long count = [self int64Property:"track-list/count" fallback:0];
+    long long videoIndex = -1;
+    long long audioIndex = -1;
+    for (long long index = 0; index < count; index++) {
+        NSString *prefix = [NSString stringWithFormat:@"track-list/%lld", index];
+        if (![self flagProperty:[[prefix stringByAppendingString:@"/selected"] UTF8String] fallback:NO]) {
+            continue;
+        }
+        NSString *type = [self stringProperty:[[prefix stringByAppendingString:@"/type"] UTF8String] fallback:@""];
+        if ([type isEqualToString:@"video"] && videoIndex < 0) videoIndex = index;
+        if ([type isEqualToString:@"audio"] && audioIndex < 0) audioIndex = index;
+    }
+
+    NSMutableDictionary *info = [NSMutableDictionary dictionary];
+
+    if (videoIndex >= 0) {
+        NSString *prefix = [NSString stringWithFormat:@"track-list/%lld", videoIndex];
+        NSString *codec = [self trackStringAtIndex:videoIndex field:@"codec"];
+        if (codec.length > 0) info[@"videoCodec"] = codec;
+
+        long long width = [self int64Property:"video-params/w" fallback:0];
+        if (width <= 0) width = [self int64Property:[[prefix stringByAppendingString:@"/demux-w"] UTF8String] fallback:0];
+        if (width > 0) info[@"videoWidth"] = @(width);
+
+        long long height = [self int64Property:"video-params/h" fallback:0];
+        if (height <= 0) height = [self int64Property:[[prefix stringByAppendingString:@"/demux-h"] UTF8String] fallback:0];
+        if (height > 0) info[@"videoHeight"] = @(height);
+
+        double fps = [self doubleProperty:[[prefix stringByAppendingString:@"/demux-fps"] UTF8String] fallback:0];
+        if (fps > 0) info[@"videoFps"] = @(fps);
+
+        // Measured first, then the container's average, then the HLS variant's declared
+        // rate — live MPEG-TS usually declares neither of the latter two.
+        double bitrate = [self doubleProperty:"video-bitrate" fallback:0];
+        if (bitrate <= 0) bitrate = [self doubleProperty:[[prefix stringByAppendingString:@"/demux-bitrate"] UTF8String] fallback:0];
+        if (bitrate <= 0) bitrate = [self doubleProperty:[[prefix stringByAppendingString:@"/hls-bitrate"] UTF8String] fallback:0];
+        if (bitrate > 0) info[@"videoBitrate"] = @(bitrate);
+    }
+
+    if (audioIndex >= 0) {
+        NSString *prefix = [NSString stringWithFormat:@"track-list/%lld", audioIndex];
+        NSString *codec = [self trackStringAtIndex:audioIndex field:@"codec"];
+        if (codec.length > 0) info[@"audioCodec"] = codec;
+
+        long long channels = [self int64Property:[[prefix stringByAppendingString:@"/demux-channel-count"] UTF8String] fallback:0];
+        if (channels > 0) info[@"audioChannels"] = @(channels);
+
+        long long sampleRate = [self int64Property:[[prefix stringByAppendingString:@"/demux-samplerate"] UTF8String] fallback:0];
+        if (sampleRate > 0) info[@"audioSampleRate"] = @(sampleRate);
+
+        double audioBitrate = [self doubleProperty:"audio-bitrate" fallback:0];
+        if (audioBitrate > 0) info[@"audioBitrate"] = @(audioBitrate);
+    }
+
+    if (info.count == 0) return @"";
+    NSData *data = [NSJSONSerialization dataWithJSONObject:info options:0 error:nil];
+    if (!data) return @"";
+    return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+}
+
 - (NSString *)tracksJsonForType:(NSString *)wantedType {
     if (!_mpv) return @"[]";
     NSMutableArray<NSDictionary *> *tracks = [NSMutableArray array];
@@ -2714,6 +2781,18 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_audioTracksJson(
     if (handle == 0) return env->NewStringUTF("[]");
     MpvWebPlayer *player = (__bridge MpvWebPlayer *)(void *)(intptr_t)handle;
     NSString *json = [player audioTracksJson] ?: @"[]";
+    return env->NewStringUTF(json.UTF8String);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_streamInfoJson(
+    JNIEnv *env,
+    jobject /* bridge */,
+    jlong handle
+) {
+    if (handle == 0) return env->NewStringUTF("");
+    MpvWebPlayer *player = (__bridge MpvWebPlayer *)(void *)(intptr_t)handle;
+    NSString *json = [player streamInfoJson] ?: @"";
     return env->NewStringUTF(json.UTF8String);
 }
 

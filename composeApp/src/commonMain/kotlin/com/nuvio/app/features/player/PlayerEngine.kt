@@ -13,6 +13,14 @@ interface PlayerEngineController {
     fun setMuted(muted: Boolean) {}
     fun getAudioTracks(): List<AudioTrack>
     fun getSubtitleTracks(): List<SubtitleTrack>
+
+    /**
+     * Facts about the stream being decoded, for the stream info overlay. Defaulted so an
+     * engine that cannot report them degrades to no overlay instead of failing to build.
+     * Implementations must not throw — this is diagnostics, and it is called from the UI
+     * thread when playback starts.
+     */
+    fun getStreamInfo(): PlayerStreamInfo = PlayerStreamInfo()
     fun selectAudioTrack(index: Int)
     fun selectSubtitleTrack(index: Int)
     fun setSubtitleUri(url: String)
@@ -146,6 +154,10 @@ data class PlayerControlsState(
     val controlsVisible: Boolean = true,
     val parentalWarnings: List<ParentalWarning> = emptyList(),
     val showParentalGuide: Boolean = false,
+    // Mirrors the parental guide pair: rendered by the native controls web layer on
+    // desktop, where Compose draws underneath the native video and cannot overlay it.
+    val streamInfoLines: List<StreamInfoLine> = emptyList(),
+    val showStreamInfo: Boolean = false,
     val showOpeningOverlay: Boolean = false,
     val openingArtwork: String? = null,
     val openingLogo: String? = null,

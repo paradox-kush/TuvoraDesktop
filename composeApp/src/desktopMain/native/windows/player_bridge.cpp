@@ -1924,6 +1924,70 @@ private:
         }
     }
 
+    // Stream facts for the info overlay, as a `PlayerStreamInfoPayload` JSON object.
+    // Keys and units must stay in step with the Kotlin payload and the macOS/Android/iOS
+    // bridges: bitrates are bits per second, matching ExoPlayer's Format.bitrate.
+    std::string streamInfoJson() {
+        long long count = int64Property("track-list/count", 0);
+        long long videoIndex = -1;
+        long long audioIndex = -1;
+        for (long long index = 0; index < count; index++) {
+            std::string prefix = "track-list/" + std::to_string(index);
+            if (!flagProperty((prefix + "/selected").c_str(), false)) continue;
+            std::string type = stringProperty((prefix + "/type").c_str(), "");
+            if (type == "video" && videoIndex < 0) videoIndex = index;
+            if (type == "audio" && audioIndex < 0) audioIndex = index;
+        }
+
+        std::ostringstream json;
+        bool first = true;
+        auto putString = [&](const char *key, const std::string &value) {
+            if (value.empty()) return;
+            if (!first) json << ",";
+            first = false;
+            json << "\"" << key << "\":\"" << jsonEscape(value) << "\"";
+        };
+        auto putNumber = [&](const char *key, double value) {
+            if (value <= 0) return;
+            if (!first) json << ",";
+            first = false;
+            json << "\"" << key << "\":" << value;
+        };
+
+        if (videoIndex >= 0) {
+            std::string prefix = "track-list/" + std::to_string(videoIndex);
+            putString("videoCodec", trackStringAtIndex(videoIndex, "codec"));
+
+            long long width = int64Property("video-params/w", 0);
+            if (width <= 0) width = int64Property((prefix + "/demux-w").c_str(), 0);
+            putNumber("videoWidth", (double)width);
+
+            long long height = int64Property("video-params/h", 0);
+            if (height <= 0) height = int64Property((prefix + "/demux-h").c_str(), 0);
+            putNumber("videoHeight", (double)height);
+
+            putNumber("videoFps", doubleProperty((prefix + "/demux-fps").c_str(), 0));
+
+            // Measured first, then the container's average, then the HLS variant's
+            // declared rate — live MPEG-TS usually declares neither of the latter two.
+            double bitrate = doubleProperty("video-bitrate", 0);
+            if (bitrate <= 0) bitrate = doubleProperty((prefix + "/demux-bitrate").c_str(), 0);
+            if (bitrate <= 0) bitrate = doubleProperty((prefix + "/hls-bitrate").c_str(), 0);
+            putNumber("videoBitrate", bitrate);
+        }
+
+        if (audioIndex >= 0) {
+            std::string prefix = "track-list/" + std::to_string(audioIndex);
+            putString("audioCodec", trackStringAtIndex(audioIndex, "codec"));
+            putNumber("audioChannels", (double)int64Property((prefix + "/demux-channel-count").c_str(), 0));
+            putNumber("audioSampleRate", (double)int64Property((prefix + "/demux-samplerate").c_str(), 0));
+            putNumber("audioBitrate", doubleProperty("audio-bitrate", 0));
+        }
+
+        if (first) return "";
+        return "{" + json.str() + "}";
+    }
+
     std::string tracksJsonForType(const std::string &wantedType) {
         long long count = int64Property("track-list/count", 0);
         std::ostringstream json;
@@ -2312,6 +2376,12 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_audioTracksJson(JNIEnv *env, jobject, jlong handle) {
     auto player = playerFromHandle(handle);
     return newJavaStringUtf8(env, player ? player->audioTracksJson() : "[]");
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_streamInfoJson(JNIEnv *env, jobject, jlong handle) {
+    auto player = playerFromHandle(handle);
+    return newJavaStringUtf8(env, player ? player->streamInfoJson() : "");
 }
 
 extern "C" JNIEXPORT jstring JNICALL

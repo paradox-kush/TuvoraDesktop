@@ -98,6 +98,9 @@ internal fun PlayerControlsShell(
     parentalWarnings: List<ParentalWarning> = emptyList(),
     showParentalGuide: Boolean = false,
     onParentalGuideAnimationComplete: () -> Unit = {},
+    streamInfoLines: List<StreamInfoLine> = emptyList(),
+    showStreamInfo: Boolean = false,
+    onStreamInfoAnimationComplete: () -> Unit = {},
     onScrubChange: (Long) -> Unit,
     onScrubFinished: (Long) -> Unit,
     horizontalSafePadding: androidx.compose.ui.unit.Dp,
@@ -153,6 +156,9 @@ internal fun PlayerControlsShell(
                 parentalWarnings = parentalWarnings,
                 showParentalGuide = showParentalGuide,
                 onParentalGuideAnimationComplete = onParentalGuideAnimationComplete,
+                streamInfoLines = streamInfoLines,
+                showStreamInfo = showStreamInfo,
+                onStreamInfoAnimationComplete = onStreamInfoAnimationComplete,
                 onLockToggle = onLockToggle,
                 onVideoSettingsClick = onVideoSettingsClick,
                 onOpenInExternalPlayer = onOpenInExternalPlayer,
@@ -223,6 +229,9 @@ private fun PlayerHeader(
     parentalWarnings: List<ParentalWarning>,
     showParentalGuide: Boolean,
     onParentalGuideAnimationComplete: () -> Unit,
+    streamInfoLines: List<StreamInfoLine>,
+    showStreamInfo: Boolean,
+    onStreamInfoAnimationComplete: () -> Unit,
     onLockToggle: () -> Unit,
     onVideoSettingsClick: (() -> Unit)?,
     onOpenInExternalPlayer: (() -> Unit)?,
@@ -231,8 +240,10 @@ private fun PlayerHeader(
 ) {
     val typeScale = MaterialTheme.nuvioTypeScale
     val metadataAlpha by animateFloatAsState(
-        targetValue = if (!showParentalGuide && showActions) 1f else 0f,
-        animationSpec = tween(durationMillis = if (!showParentalGuide && showActions) 260 else 160),
+        targetValue = if (!showParentalGuide && !showStreamInfo && showActions) 1f else 0f,
+        animationSpec = tween(
+            durationMillis = if (!showParentalGuide && !showStreamInfo && showActions) 260 else 160,
+        ),
         label = "playerHeaderMetadataAlpha",
     )
     Column(modifier = modifier) {
@@ -311,6 +322,7 @@ private fun PlayerHeader(
                 )
             }
 
+            Box(contentAlignment = Alignment.TopEnd) {
             if (showActions) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -363,6 +375,15 @@ private fun PlayerHeader(
                         contentDescription = stringResource(Res.string.compose_player_close),
                     )
                 }
+            }
+            // Same slot as the action buttons, which fade out while this is on screen —
+            // the mirror of the parental guide occupying the leading edge.
+            StreamInfoOverlay(
+                lines = streamInfoLines,
+                isVisible = showStreamInfo,
+                onAnimationComplete = onStreamInfoAnimationComplete,
+                contentPadding = PaddingValues(0.dp),
+            )
             }
         }
     }

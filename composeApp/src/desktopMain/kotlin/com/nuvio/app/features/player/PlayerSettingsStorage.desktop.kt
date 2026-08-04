@@ -19,6 +19,7 @@ import kotlinx.serialization.json.put
 internal actual object PlayerSettingsStorage {
     private const val showLoadingOverlayKey = "show_loading_overlay"
     private const val showParentalGuideKey = "show_parental_guide"
+    private const val showStreamInfoKey = "show_stream_info"
     private const val resizeModeKey = "resize_mode"
     private const val holdToSpeedEnabledKey = "hold_to_speed_enabled"
     private const val holdToSpeedValueKey = "hold_to_speed_value"
@@ -161,6 +162,8 @@ internal actual object PlayerSettingsStorage {
     actual fun saveShowLoadingOverlay(enabled: Boolean) = saveBoolean(showLoadingOverlayKey, enabled)
     actual fun loadShowParentalGuide(): Boolean? = loadBoolean(showParentalGuideKey)
     actual fun saveShowParentalGuide(enabled: Boolean) = saveBoolean(showParentalGuideKey, enabled)
+    actual fun loadShowStreamInfo(): Boolean? = loadBoolean(showStreamInfoKey)
+    actual fun saveShowStreamInfo(enabled: Boolean) = saveBoolean(showStreamInfoKey, enabled)
     actual fun loadResizeMode(): String? = loadString(resizeModeKey)
     actual fun saveResizeMode(mode: String) = saveString(resizeModeKey, mode)
     actual fun loadHoldToSpeedEnabled(): Boolean? = loadBoolean(holdToSpeedEnabledKey)
@@ -315,6 +318,7 @@ internal actual object PlayerSettingsStorage {
     actual fun exportToSyncPayload(): JsonObject = buildJsonObject {
         loadShowLoadingOverlay()?.let { put(showLoadingOverlayKey, encodeSyncBoolean(it)) }
         loadShowParentalGuide()?.let { put(showParentalGuideKey, encodeSyncBoolean(it)) }
+        loadShowStreamInfo()?.let { put(showStreamInfoKey, encodeSyncBoolean(it)) }
         loadResizeMode()?.let { put(resizeModeKey, encodeSyncString(it)) }
         loadHoldToSpeedEnabled()?.let { put(holdToSpeedEnabledKey, encodeSyncBoolean(it)) }
         loadHoldToSpeedValue()?.let { put(holdToSpeedValueKey, encodeSyncFloat(it)) }
@@ -388,6 +392,7 @@ internal actual object PlayerSettingsStorage {
         store.removeAll(syncKeys.map(::scoped))
         payload.decodeSyncBoolean(showLoadingOverlayKey)?.let(::saveShowLoadingOverlay)
         payload.decodeSyncBoolean(showParentalGuideKey)?.let(::saveShowParentalGuide)
+        payload.decodeSyncBoolean(showStreamInfoKey)?.let(::saveShowStreamInfo)
         payload.decodeSyncString(resizeModeKey)?.let(::saveResizeMode)
         payload.decodeSyncBoolean(holdToSpeedEnabledKey)?.let(::saveHoldToSpeedEnabled)
         payload.decodeSyncFloat(holdToSpeedValueKey)?.let(::saveHoldToSpeedValue)

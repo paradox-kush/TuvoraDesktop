@@ -284,6 +284,8 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         controlsVisible = controlsVisible && !playerControlsLocked,
         parentalWarnings = parentalWarnings,
         showParentalGuide = showParentalGuide,
+        streamInfoLines = rememberStreamInfoLines(streamInfo),
+        showStreamInfo = showStreamInfoOverlay,
         showSubmitIntro = isSeries &&
             playerSettingsUiState.introSubmitEnabled &&
             playerSettingsUiState.introDbApiKey.isNotBlank() &&
@@ -599,6 +601,9 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
             parentalWarnings = parentalWarnings,
             showParentalGuide = showParentalGuide,
             onParentalGuideAnimationComplete = { showParentalGuide = false },
+            streamInfoLines = rememberStreamInfoLines(streamInfo),
+            showStreamInfo = showStreamInfoOverlay,
+            onStreamInfoAnimationComplete = { showStreamInfoOverlay = false },
             onScrubChange = { positionMs ->
                 isScrubbingTimeline = true
                 scrubbingPositionMs = positionMs
@@ -867,6 +872,9 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
         "subtitleStyleReset" -> PlayerSettingsRepository.setSubtitleStyle(SubtitleStyleState.DEFAULT)
         "parentalGuideComplete" -> {
             showParentalGuide = false
+        }
+        "streamInfoComplete" -> {
+            showStreamInfoOverlay = false
         }
         else -> return false
     }

@@ -386,6 +386,14 @@ private fun PlaybackSettingsSection(
                     isTablet = isTablet,
                     onCheckedChange = PlayerSettingsRepository::setShowParentalGuide,
                 )
+                SettingsGroupDivider(isTablet = isTablet)
+                SettingsSwitchRow(
+                    title = stringResource(Res.string.settings_playback_stream_info),
+                    description = stringResource(Res.string.settings_playback_stream_info_description),
+                    checked = autoPlayPlayerSettings.showStreamInfo,
+                    isTablet = isTablet,
+                    onCheckedChange = PlayerSettingsRepository::setShowStreamInfo,
+                )
                 if (externalPlayerSupported) {
                     SettingsGroupDivider(isTablet = isTablet)
                     SettingsNavigationRow(

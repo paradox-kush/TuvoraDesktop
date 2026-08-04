@@ -45,6 +45,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.nuvio.app.core.ui.NuvioTokens
@@ -54,6 +55,11 @@ import com.nuvio.app.features.iptv.XtreamProgram
 import com.nuvio.app.features.player.EnterImmersivePlayerMode
 import com.nuvio.app.features.player.PlatformPlayerSurface
 import com.nuvio.app.features.player.PlayerEngineController
+import com.nuvio.app.features.player.PlayerSettingsRepository
+import com.nuvio.app.features.player.PlayerStreamInfo
+import com.nuvio.app.features.player.StreamInfoOverlay
+import com.nuvio.app.features.player.rememberStreamInfoLines
+import kotlinx.coroutines.delay
 import com.nuvio.app.features.player.PlayerPlaybackSnapshot
 import com.nuvio.app.features.player.PlayerResizeMode
 import com.nuvio.app.features.trakt.TraktPlatformClock
@@ -87,6 +93,11 @@ fun LiveTvScreen(
     var playbackError by remember { mutableStateOf<String?>(null) }
     var snapshot by remember { mutableStateOf(PlayerPlaybackSnapshot()) }
     var controller by remember { mutableStateOf<PlayerEngineController?>(null) }
+    // Live TV hosts its own player surface rather than going through PlayerScreen, so the
+    // stream readout has to be wired up here too — this is the surface users actually ask
+    // "what resolution is this channel?" about.
+    var streamInfo by remember { mutableStateOf(PlayerStreamInfo()) }
+    var showStreamInfo by remember { mutableStateOf(false) }
     var retryTick by remember { mutableStateOf(0) }
 
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -243,6 +254,31 @@ fun LiveTvScreen(
                     onControllerReady = { controller = it },
                     onSnapshot = { snapshot = it },
                     onError = { playbackError = it },
+                )
+
+                // Re-read per channel: switching channels in place keeps this composable
+                // alive, so keying only on isPlaying would show the first channel's facts.
+                LaunchedEffect(snapshot.isPlaying, source) {
+                    if (!snapshot.isPlaying) return@LaunchedEffect
+                    if (!PlayerSettingsRepository.uiState.value.showStreamInfo) return@LaunchedEffect
+                    // mpv's video-bitrate is a throttled rolling estimate measured over
+                    // keyframe intervals — at first frame it is still 0. Let it settle so
+                    // the bitrate row isn't dropped on every live channel.
+                    delay(STREAM_INFO_SETTLE_MS)
+                    val info = controller?.getStreamInfo() ?: return@LaunchedEffect
+                    if (!info.hasAnyValue) return@LaunchedEffect
+                    streamInfo = info
+                    showStreamInfo = true
+                }
+
+                StreamInfoOverlay(
+                    lines = rememberStreamInfoLines(streamInfo),
+                    isVisible = showStreamInfo,
+                    onAnimationComplete = { showStreamInfo = false },
+                    modifier = Modifier.align(Alignment.TopEnd),
+                    // Sits below the fullscreen button and the LIVE badge, which own the
+                    // top edge of the dock.
+                    contentPadding = PaddingValues(end = 16.dp, top = 76.dp),
                 )
 
                 // Loading / error indicators (both orientations).
@@ -550,3 +586,6 @@ private fun OverlayIconButton(
         )
     }
 }
+
+/** How long to let mpv measure a bitrate before reading the stream info. */
+private const val STREAM_INFO_SETTLE_MS = 2500L

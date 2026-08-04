@@ -9,6 +9,10 @@ import com.nuvio.app.features.player.PlayerControlSeasonItem
 import com.nuvio.app.features.player.PlayerControlSourceItem
 import com.nuvio.app.features.player.PlayerControlSubtitleCueItem
 import com.nuvio.app.features.player.AudioTrack
+import com.nuvio.app.features.player.ENGINE_LABEL_LIBMPV
+import com.nuvio.app.features.player.PlayerStreamInfo
+import com.nuvio.app.features.player.StreamInfoLine
+import com.nuvio.app.features.player.decodePlayerStreamInfo
 import com.nuvio.app.features.player.ParentalWarning
 import com.nuvio.app.features.player.PlayerControlsAction
 import com.nuvio.app.features.player.PlayerControlsState
@@ -454,6 +458,17 @@ internal class NativePlayerController(
         handle.takeIf { it != 0L }?.let { NativePlayerBridge.setSpeed(it, speed) }
     }
 
+    override fun getStreamInfo(): PlayerStreamInfo {
+        val current = handle.takeIf { it != 0L }
+            ?: return PlayerStreamInfo(playerEngine = ENGINE_LABEL_LIBMPV)
+        return runCatching {
+            decodePlayerStreamInfo(NativePlayerBridge.streamInfoJson(current), ENGINE_LABEL_LIBMPV)
+        }.getOrElse { error ->
+            log.w(error) { "Failed to read native stream info" }
+            PlayerStreamInfo(playerEngine = ENGINE_LABEL_LIBMPV)
+        }
+    }
+
     override fun getAudioTracks(): List<AudioTrack> =
         decodeTracks { NativePlayerBridge.audioTracksJson(it) }.map { track ->
             AudioTrack(
@@ -896,7 +911,11 @@ private fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
         append(',')
         appendJsonArrayField("parentalWarnings", parentalWarnings) { appendParentalWarningJson(it) }
         append(',')
+        appendJsonArrayField("streamInfoLines", streamInfoLines) { appendStreamInfoLineJson(it) }
+        append(',')
         appendJsonField("showParentalGuide", showParentalGuide)
+        append(',')
+        appendJsonField("showStreamInfo", showStreamInfo)
         append(',')
         appendJsonField("showOpeningOverlay", showOpeningOverlay)
         append(',')
@@ -1153,6 +1172,14 @@ private fun StringBuilder.appendSubtitleCueItemJson(item: PlayerControlSubtitleC
     appendJsonField("timeLabel", item.timeLabel)
     append(',')
     appendJsonField("text", item.text)
+    append('}')
+}
+
+private fun StringBuilder.appendStreamInfoLineJson(item: StreamInfoLine) {
+    append('{')
+    appendJsonField("primary", item.primary)
+    append(',')
+    appendJsonField("secondary", item.secondary.orEmpty())
     append('}')
 }
 

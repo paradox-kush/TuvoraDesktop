@@ -222,6 +222,38 @@ data class PlayerPlaybackSnapshot(
     val videoHeight: Int = 0,
 )
 
+/**
+ * What the player is actually decoding right now, for the stream info overlay.
+ *
+ * Pulled on demand rather than carried in [PlayerPlaybackSnapshot]: the snapshot is
+ * dispatched on a tick for the scrubber, and none of this changes often enough to
+ * justify recomposing the whole player for it.
+ *
+ * Every field is optional. Engines differ in what they can report (a live MPEG-TS
+ * declares almost nothing, an HLS variant declares a bitrate but no frame rate), so a
+ * missing value means "this stream did not tell us", and the overlay omits that row
+ * rather than showing a zero.
+ */
+data class PlayerStreamInfo(
+    val videoCodec: String? = null,
+    val videoWidth: Int? = null,
+    val videoHeight: Int? = null,
+    val videoFrameRate: Float? = null,
+    /** Bits per second, matching ExoPlayer's `Format.bitrate` and mpv's `video-bitrate`. */
+    val videoBitrate: Int? = null,
+    val audioCodec: String? = null,
+    val audioChannelCount: Int? = null,
+    val audioSampleRate: Int? = null,
+    val audioBitrate: Int? = null,
+    /** Which engine produced these values, e.g. "ExoPlayer" or "libmpv". */
+    val playerEngine: String? = null,
+) {
+    val hasAnyValue: Boolean
+        get() = videoCodec != null || videoWidth != null || videoFrameRate != null ||
+            videoBitrate != null || audioCodec != null || audioChannelCount != null ||
+            audioSampleRate != null || audioBitrate != null
+}
+
 data class PlayerNowPlayingInfo(
     val title: String,
     val subtitle: String? = null,

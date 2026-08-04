@@ -156,6 +156,7 @@ button:disabled {
 .bottom-gradient,
 .metadata,
 .parental-guide,
+.stream-info,
 .skip-prompt,
 .next-episode-card,
 .header-actions,
@@ -168,6 +169,7 @@ button:disabled {
 .player.native-resizing .bottom-gradient,
 .player.native-resizing .metadata,
 .player.native-resizing .parental-guide,
+.player.native-resizing .stream-info,
 .player.native-resizing .skip-prompt,
 .player.native-resizing .next-episode-card,
 .player.native-resizing .header-actions,
@@ -187,6 +189,7 @@ button:disabled {
 .player.chrome-hidden .progress,
 .player.locked .metadata,
 .player.locked .parental-guide,
+.player.locked .stream-info,
 .player.locked .header-actions,
 .player.locked .center-controls {
   opacity: 0;
@@ -196,6 +199,7 @@ button:disabled {
 .player.opening-active .top-gradient,
 .player.opening-active .bottom-gradient,
 .player.opening-active .parental-guide,
+.player.opening-active .stream-info,
 .player.opening-active .pause-metadata-overlay,
 .player.opening-active .skip-prompt,
 .player.opening-active .next-episode-card,
@@ -210,6 +214,7 @@ button:disabled {
 .player.error-active .bottom-gradient,
 .player.error-active .metadata,
 .player.error-active .parental-guide,
+.player.error-active .stream-info,
 .player.error-active .pause-metadata-overlay,
 .player.error-active .skip-prompt,
 .player.error-active .next-episode-card,
@@ -543,6 +548,83 @@ button:disabled {
 }
 
 .parental-guide-severity {
+  color: rgba(255, 255, 255, .5);
+}
+
+/* Stream info — the mirror image of the parental guide: same rule, same row metrics,
+   same timing, anchored to the trailing edge so the two never compete. */
+.stream-info {
+  position: absolute;
+  top: calc(var(--slider-bottom) + env(safe-area-inset-top));
+  right: var(--hp);
+  z-index: 5;
+  display: flex;
+  align-items: flex-start;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 300ms ease;
+}
+
+.player.stream-info-visible .stream-info {
+  opacity: 1;
+}
+
+.stream-info-line {
+  width: 3px;
+  height: 0;
+  border-radius: 1px;
+  background: var(--theme-accent);
+  transform: scaleY(0);
+  transform-origin: top;
+  transition: transform 400ms var(--ease-out);
+}
+
+.player.stream-info-line-visible .stream-info-line {
+  transform: scaleY(1);
+}
+
+.stream-info-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  padding-right: 10px;
+}
+
+.stream-info-row {
+  height: 18px;
+  display: flex;
+  align-items: center;
+  opacity: 0;
+  transform: translateY(2px);
+  transition:
+    opacity 200ms ease,
+    transform 200ms var(--ease-out);
+  white-space: nowrap;
+}
+
+.stream-info-row.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.stream-info-primary,
+.stream-info-separator,
+.stream-info-secondary {
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.stream-info-primary {
+  color: rgba(255, 255, 255, .85);
+  font-weight: 600;
+}
+
+.stream-info-separator {
+  color: rgba(255, 255, 255, .4);
+}
+
+.stream-info-secondary {
   color: rgba(255, 255, 255, .5);
 }
 

@@ -2187,4 +2187,13 @@
     <string name="home_empty_iptv_hint_title">No content yet</string>
     <string name="home_empty_iptv_hint_message">Add your IPTV playlist in Settings to see your channels, movies, and series here.</string>
     <string name="settings_donate_description">Support the development of Tuvora</string>
+    <!-- Player stream info overlay -->
+    <string name="stream_info_frame_rate_value">%1$s fps</string>
+    <string name="stream_info_bitrate_mbps">%1$s Mbps</string>
+    <string name="stream_info_bitrate_kbps">%1$s kbps</string>
+    <string name="stream_info_channels_mono">Mono</string>
+    <string name="stream_info_channels_stereo">Stereo</string>
+    <string name="stream_info_channels_other">%1$dch</string>
+    <string name="settings_playback_stream_info">Stream info</string>
+    <string name="settings_playback_stream_info_description">Briefly show quality, codec and bitrate when playback starts</string>
 </resources>
