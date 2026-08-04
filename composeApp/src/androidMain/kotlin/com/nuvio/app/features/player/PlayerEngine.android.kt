@@ -1248,6 +1248,25 @@ private class NuvioLibmpvView(
         override fun event(eventId: Int, data: MPVNode) = Unit
     }
 
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        // BaseMPVView writes android-surface-size straight from this callback, and
+        // mpv_set_property takes the core lock — which a live demuxer holds for seconds at a
+        // time. Because SurfaceView resizes synchronously inside View.layout, that turns
+        // every docked <-> fullscreen transition into a main-thread stall:
+        //
+        //   main  pthread_cond_wait <- mpv_set_property <- MPV.setPropertyString
+        //         <- SurfaceView.updateSurface <- SurfaceView.setFrame <- View.layout
+        //
+        // (reproduced as an ANR on the fullscreen toggle). Queue the write instead, like
+        // every other mpv write in this class. mpv applies it a beat later and resizes its
+        // output then; blocking layout on it bought nothing and could also strand mpv at the
+        // pre-resize size, leaving the video drawn small in the corner of the new surface.
+        //
+        // Deliberately does NOT call super: the whole of BaseMPVView.surfaceChanged is that
+        // one property write, which is what we are re-issuing off the main thread.
+        ctl { mpv.setPropertyString("android-surface-size", "${width}x$height") }
+    }
+
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         // The surface dies exactly when the app leaves the foreground. Flag the rejoin here
         // rather than in a lifecycle observer: BaseMPVView's vo teardown below can block the
