@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -24,7 +25,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -32,18 +35,18 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,14 +59,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import com.nuvio.app.core.ui.NuvioModalBottomSheet
 import com.nuvio.app.core.ui.NuvioPrimaryButton
 import com.nuvio.app.core.ui.NuvioSurfaceCard
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.iptv.XtreamRepository
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Sports Centre tab: featured event banners, live & upcoming fixtures for followed leagues,
@@ -918,6 +922,25 @@ private fun AddLeagueSheets(
     var country by remember(sportOrEmpty) { mutableStateOf<String?>(null) }
     var loading by remember(sportOrEmpty) { mutableStateOf(false) }
     var results by remember(sportOrEmpty) { mutableStateOf<List<RadarLeague>>(emptyList()) }
+    // Search runs beside the sport/country drill-down rather than inside it: someone who knows
+    // the league's name shouldn't have to guess which country the catalog files it under.
+    var query by remember(sportOrEmpty) { mutableStateOf("") }
+    var searching by remember(sportOrEmpty) { mutableStateOf(false) }
+    var searchResults by remember(sportOrEmpty) { mutableStateOf<List<RadarLeague>>(emptyList()) }
+
+    val trimmedQuery = query.trim()
+    // Debounced so a settled query costs one upstream call, not one per keystroke.
+    LaunchedEffect(trimmedQuery) {
+        if (trimmedQuery.length < MIN_LEAGUE_QUERY) {
+            searching = false
+            searchResults = emptyList()
+            return@LaunchedEffect
+        }
+        searching = true
+        delay(SEARCH_DEBOUNCE_MS)
+        searchResults = RadarCatalogClient.searchLeagues(text = trimmedQuery)
+        searching = false
+    }
 
     if (sportOrEmpty == null) return
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -925,9 +948,24 @@ private fun AddLeagueSheets(
     NuvioModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         val chosenCountry = country
         when {
+            // A non-empty query takes over the sheet at any depth — it is the faster route in.
+            trimmedQuery.isNotEmpty() -> {
+                LeagueSearchField(query = query, onQueryChange = { query = it })
+                LeagueResultList(
+                    leagues = searchResults,
+                    followedLeagueIds = followedLeagueIds,
+                    loading = searching,
+                    emptyText = if (trimmedQuery.length < MIN_LEAGUE_QUERY) {
+                        "Keep typing to search leagues."
+                    } else {
+                        "No leagues match \"$trimmedQuery\"."
+                    },
+                )
+            }
             sportOrEmpty.isEmpty() -> {
-                SectionTitle("Pick a sport")
-                LazyColumn(modifier = Modifier.heightIn(max = 460.dp)) {
+                LeagueSearchField(query = query, onQueryChange = { query = it })
+                SectionTitle("Or pick a sport")
+                LazyColumn(modifier = Modifier.heightIn(max = 380.dp)) {
                     items(RADAR_LEAGUE_SPORTS, key = { it }) { sport ->
                         SimplePickRow(sport) { onPickSport(sport) }
                     }
@@ -949,53 +987,105 @@ private fun AddLeagueSheets(
                 }
             }
             else -> {
+                LeagueSearchField(query = query, onQueryChange = { query = it })
                 SectionTitle("$sportOrEmpty · $chosenCountry")
-                if (loading) {
-                    Text(
-                        "Finding leagues…",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(NuvioTokens.Space.s16),
-                    )
-                } else if (results.isEmpty()) {
-                    Text(
-                        "No leagues found for $sportOrEmpty in $chosenCountry.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(NuvioTokens.Space.s16),
-                    )
+                LeagueResultList(
+                    leagues = results,
+                    followedLeagueIds = followedLeagueIds,
+                    loading = loading,
+                    emptyText = "No leagues found for $sportOrEmpty in $chosenCountry.",
+                )
+            }
+        }
+    }
+}
+
+/** Shortest query worth a round trip — one or two letters match half the database. */
+private const val MIN_LEAGUE_QUERY = 3
+private const val SEARCH_DEBOUNCE_MS = 350L
+
+@Composable
+private fun LeagueSearchField(query: String, onQueryChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        singleLine = true,
+        placeholder = { Text("Search leagues") },
+        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+        trailingIcon = {
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onQueryChange("") }) {
+                    Icon(Icons.Filled.Close, contentDescription = "Clear search")
                 }
-                LazyColumn(modifier = Modifier.heightIn(max = 460.dp)) {
-                    items(results, key = { it.id }) { league ->
-                        val followed = league.id in followedLeagueIds
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { RadarRepository.toggleFollow(league) }
-                                .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s12),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            AsyncImage(
-                                model = league.badge,
-                                contentDescription = null,
-                                modifier = Modifier.size(32.dp),
-                            )
-                            Spacer(Modifier.width(NuvioTokens.Space.s12))
-                            Text(
-                                league.name,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Text(
-                                if (followed) "Following" else "Follow",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = if (followed) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+            }
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s8),
+    )
+}
+
+/** The follow list shared by the country drill-down and the search results. */
+@Composable
+private fun LeagueResultList(
+    leagues: List<RadarLeague>,
+    followedLeagueIds: Set<String>,
+    loading: Boolean,
+    emptyText: String,
+) {
+    if (loading) {
+        Text(
+            "Finding leagues…",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(NuvioTokens.Space.s16),
+        )
+    } else if (leagues.isEmpty()) {
+        Text(
+            emptyText,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(NuvioTokens.Space.s16),
+        )
+    }
+    LazyColumn(modifier = Modifier.heightIn(max = 380.dp)) {
+        items(leagues, key = { it.id }) { league ->
+            val followed = league.id in followedLeagueIds
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { RadarRepository.toggleFollow(league) }
+                    .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s12),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AsyncImage(
+                    model = league.badge,
+                    contentDescription = null,
+                    modifier = Modifier.size(32.dp),
+                )
+                Spacer(Modifier.width(NuvioTokens.Space.s12))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        league.name,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    // Search spans every country, so the sport is what tells two similarly
+                    // named leagues apart.
+                    league.sport?.takeIf { it.isNotBlank() }?.let { sport ->
+                        Text(
+                            sport,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
+                Text(
+                    if (followed) "Following" else "Follow",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (followed) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
