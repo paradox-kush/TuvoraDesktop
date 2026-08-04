@@ -32,8 +32,40 @@ data class RadarUiState(
      *  suppress the time-window inference). */
     val livescoreSports: Set<String> = emptySet(),
     val loadingFixtures: Boolean = false,
+    /** Followed clubs (always user-added — there is no published team catalog). */
+    val teamFollows: List<RadarTeamFollow> = emptyList(),
+    /** teamId -> that club's own schedule, from the team lane of radar-fixtures. */
+    val fixturesByTeam: Map<String, List<RadarFixture>> = emptyMap(),
 ) {
     val followedLeagueIds: Set<String> get() = follows.map { it.leagueId }.toSet()
+    val followedTeamIds: Set<String> get() = teamFollows.map { it.teamId }.toSet()
+
+    /** Followed clubs in follow order, as the picker/search shape. */
+    val followedTeams: List<RadarTeam> get() = teamFollows.sortedBy { it.sortOrder }.map { it.asTeam() }
+
+    /** Fixtures of the given clubs that are live or upcoming, soonest first. */
+    fun upcomingForTeams(teamIds: Collection<String>, nowMs: Long, cap: Int = 20): List<RadarFixture> =
+        teamIds.asSequence()
+            .flatMap { fixturesByTeam[it].orEmpty() }
+            .distinctBy { it.id ?: "${it.leagueId}/${it.event}/${it.ts}" }
+            .filter { fx ->
+                val start = fx.startEpochMs ?: return@filter false
+                start >= nowMs - 4 * 60 * 60 * 1000L || isLive(fx, nowMs)
+            }
+            .sortedBy { it.startEpochMs }
+            .take(cap)
+            .toList()
+
+    /** Finished/started fixtures of one club, most recent first. */
+    fun recentForTeam(teamId: String, nowMs: Long, cap: Int = 15): List<RadarFixture> =
+        fixturesByTeam[teamId].orEmpty()
+            .distinctBy { it.id ?: "${it.leagueId}/${it.event}/${it.ts}" }
+            .filter { fx ->
+                val start = fx.startEpochMs ?: return@filter false
+                start < nowMs && !isLive(fx, nowMs)
+            }
+            .sortedByDescending { it.startEpochMs }
+            .take(cap)
 
     /**
      * Catalog first, then the user's own follows — a league someone added themselves isn't in
@@ -134,7 +166,9 @@ object RadarRepository {
                 catalog = catalog,
                 follows = local.follows,
                 prefs = local.prefs,
+                teamFollows = local.teams,
                 fixturesByLeague = cachedFixtures?.fixtures ?: emptyMap(),
+                fixturesByTeam = cachedFixtures?.teamFixtures ?: emptyMap(),
                 liveEventIds = cachedFixtures?.let { r -> liveIds(r) } ?: emptySet(),
             )
         }
@@ -185,15 +219,19 @@ object RadarRepository {
         if (!force && mark != null && mark.elapsedNow() < FETCH_TTL) return
         val nowMs = RadarTime.nowMs()
         val leagues = leaguesToFetch(nowMs)
-        if (leagues.isEmpty()) return
+        val teams = _uiState.value.followedTeamIds
+        if (leagues.isEmpty() && teams.isEmpty()) return
         lastFetchMark = TimeSource.Monotonic.markNow()
         val profileAtStart = currentProfileId
         // Livescore only for covered sports actually on screen — 2min server TTL, cheap.
-        val sports = leagues.mapNotNull { id -> _uiState.value.leagueById(id)?.sport?.lowercase() }
-            .filter { it in RADAR_LIVESCORE_SPORTS }.toSet()
+        val sports = (
+            leagues.mapNotNull { id -> _uiState.value.leagueById(id)?.sport?.lowercase() } +
+                // A followed club may be the only reason a sport is on screen at all.
+                _uiState.value.teamFollows.map { it.sport.lowercase() }
+            ).filter { it in RADAR_LIVESCORE_SPORTS }.toSet()
         _uiState.update { it.copy(loadingFixtures = true) }
         scope.launch {
-            val response = RadarFixturesClient.fetch(leagues, sports)
+            val response = RadarFixturesClient.fetch(leagues, sports, teams)
             if (profileAtStart != currentProfileId) return@launch
             if (response == null) {
                 _uiState.update { it.copy(loadingFixtures = false) }
@@ -205,6 +243,7 @@ object RadarRepository {
                 it.copy(
                     // Merge so leagues the server skipped (budget/partial) keep their cache.
                     fixturesByLeague = it.fixturesByLeague + response.fixtures,
+                    fixturesByTeam = it.fixturesByTeam + response.teamFixtures,
                     liveEventIds = liveIds(response),
                     livescoreSports = response.livescore.keys.map { s -> s.lowercase() }.toSet(),
                     loadingFixtures = false,
@@ -214,7 +253,12 @@ object RadarRepository {
             // this (possibly partial) response omitted from the offline cache.
             XtreamAccountStorage.saveRadarFixturesJson(
                 profileAtStart,
-                json.encodeToString(response.copy(fixtures = _uiState.value.fixturesByLeague)),
+                json.encodeToString(
+                    response.copy(
+                        fixtures = _uiState.value.fixturesByLeague,
+                        teamFixtures = _uiState.value.fixturesByTeam,
+                    ),
+                ),
             )
         }
     }
@@ -274,6 +318,27 @@ object RadarRepository {
         refreshFixtures(force = true)
     }
 
+    fun isTeamFollowed(teamId: String): Boolean = _uiState.value.followedTeamIds.contains(teamId)
+
+    /**
+     * Follow/unfollow a club. Unlike a league there is no catalog to fall back on, so the
+     * whole team travels onto the follow row — dropping it would leave nothing to name,
+     * draw or channel-match the club with later.
+     */
+    fun toggleFollowTeam(team: RadarTeam) {
+        _uiState.update { state ->
+            val without = state.teamFollows.filterNot { it.teamId == team.id }
+            val teams = if (without.size == state.teamFollows.size) {
+                without + team.asFollow(sortOrder = without.size)
+            } else {
+                without
+            }
+            state.copy(teamFollows = teams)
+        }
+        persist()
+        refreshFixtures(force = true)
+    }
+
     // --- featured-event prefs --------------------------------------------------
 
     fun setOptIn(featuredEventId: String, accepted: Boolean) {
@@ -297,7 +362,12 @@ object RadarRepository {
     // --- sync ----------------------------------------------------------------
 
     /** Replace this profile's follows+prefs from a remote pull WITHOUT echoing a push back. */
-    fun applyFromRemote(profileId: Int, follows: List<RadarFollow>, prefs: RadarPrefs?) {
+    fun applyFromRemote(
+        profileId: Int,
+        follows: List<RadarFollow>,
+        prefs: RadarPrefs?,
+        teams: List<RadarTeamFollow>? = null,
+    ) {
         loaded = true
         currentProfileId = profileId
         _uiState.update { state ->
@@ -306,13 +376,19 @@ object RadarRepository {
                     ?: runCatching { json.decodeFromString<RadarCatalog>(RadarCatalogData.JSON) }.getOrDefault(RadarCatalog()),
                 follows = follows,
                 prefs = prefs ?: state.prefs,
+                // Null means the pull said nothing about teams (older backend); keep local.
+                teamFollows = teams ?: state.teamFollows,
             )
         }
         XtreamAccountStorage.saveRadarJson(profileId, json.encodeToString(localState()))
         refreshFixtures(force = true)
     }
 
-    private fun localState() = RadarLocalState(follows = _uiState.value.follows, prefs = _uiState.value.prefs)
+    private fun localState() = RadarLocalState(
+        follows = _uiState.value.follows,
+        prefs = _uiState.value.prefs,
+        teams = _uiState.value.teamFollows,
+    )
 
     private fun persist() {
         XtreamAccountStorage.saveRadarJson(currentProfileId, json.encodeToString(localState()))

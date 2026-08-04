@@ -19,12 +19,17 @@ internal object RadarFixturesClient {
     private val log = Logger.withTag("RadarFixturesClient")
     private val json = Json { ignoreUnknownKeys = true }
 
-    suspend fun fetch(leagueIds: Collection<String>, livescoreSports: Collection<String>): RadarFixturesResponse? {
-        if (leagueIds.isEmpty() && livescoreSports.isEmpty()) return null
+    suspend fun fetch(
+        leagueIds: Collection<String>,
+        livescoreSports: Collection<String>,
+        teamIds: Collection<String> = emptyList(),
+    ): RadarFixturesResponse? {
+        if (leagueIds.isEmpty() && livescoreSports.isEmpty() && teamIds.isEmpty()) return null
         return runCatching {
             val body = buildJsonObject {
                 put("league_ids", buildJsonArray { leagueIds.forEach { add(it) } })
                 put("livescore_sports", buildJsonArray { livescoreSports.forEach { add(it) } })
+                put("team_ids", buildJsonArray { teamIds.forEach { add(it) } })
             }
             val response = SupabaseProvider.client.functions.invoke(
                 function = "radar-fixtures",

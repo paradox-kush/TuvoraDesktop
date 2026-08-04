@@ -49,4 +49,20 @@ internal object RadarCatalogClient {
             json.decodeFromString<RadarLeagueSearchResponse>(response.bodyAsText()).leagues
         }.onFailure { e -> log.w(e) { "league search — FAILED" } }.getOrDefault(emptyList())
     }
+
+    /**
+     * Free-text club search for the "follow a team" picker. There is no browse-by-country
+     * fallback here as there is for leagues: nobody scrolls to their club through a list of
+     * every team in a country, they type its name.
+     */
+    suspend fun searchTeams(text: String): List<RadarTeam> {
+        if (text.isBlank()) return emptyList()
+        return runCatching {
+            val response = SupabaseProvider.client.functions.invoke(
+                function = "radar-fixtures",
+                body = buildJsonObject { put("team_search", text) },
+            )
+            json.decodeFromString<RadarTeamSearchResponse>(response.bodyAsText()).teams
+        }.onFailure { e -> log.w(e) { "team search — FAILED" } }.getOrDefault(emptyList())
+    }
 }

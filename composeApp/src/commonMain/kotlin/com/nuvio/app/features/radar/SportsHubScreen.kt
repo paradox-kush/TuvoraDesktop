@@ -155,11 +155,20 @@ private fun SportsOverview(
     val nowMs = RadarTime.nowMs()
     // null = closed, "" = choosing a sport, else the chosen sport.
     var addLeagueSport by remember { mutableStateOf<String?>(null) }
+    var addingTeam by remember { mutableStateOf(false) }
     val featured = state.activeFeatured(nowMs)
-    val upcoming = state.upcoming(
-        leagueIds = state.followedLeagueIds + featured.map { it.leagueId },
-        nowMs = nowMs,
-    )
+    // Followed clubs feed the same Live & Upcoming row as followed leagues — someone who
+    // follows only Arsenal still expects their match at the top, not buried under Browse.
+    val upcoming = remember(state, nowMs) {
+        val leagueFixtures = state.upcoming(
+            leagueIds = state.followedLeagueIds + featured.map { it.leagueId },
+            nowMs = nowMs,
+        )
+        val teamFixtures = state.upcomingForTeams(state.followedTeamIds, nowMs)
+        (leagueFixtures + teamFixtures)
+            .distinctBy { it.id ?: "${it.leagueId}/${it.event}/${it.ts}" }
+            .sortedBy { it.startEpochMs }
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         // The bottom nav floats over the content rather than taking layout space, so the last
@@ -207,7 +216,21 @@ private fun SportsOverview(
                 }
             }
         }
-        if (state.follows.isEmpty()) {
+        items(state.followedTeams, key = { "team-${it.id}" }) { team ->
+            val fixtures = state.upcomingForTeams(listOf(team.id), nowMs, cap = 12)
+            if (fixtures.isNotEmpty()) {
+                SectionTitle(team.name)
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = NuvioTokens.Space.s16),
+                    horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s10),
+                ) {
+                    items(fixtures, key = { "team-${team.id}-${it.id ?: it.hashCode()}" }) { fx ->
+                        MatchCard(fx, live = state.isLive(fx, nowMs), onClick = { onFixtureClick(fx) })
+                    }
+                }
+            }
+        }
+        if (state.follows.isEmpty() && state.teamFollows.isEmpty()) {
             item(key = "follow-cta") { FollowCta(onOpenBrowse) }
         } else {
             items(state.follows, key = { "league-${it.leagueId}" }) { follow ->
@@ -241,7 +264,18 @@ private fun SportsOverview(
                 customCount = state.customLeagues.size,
                 onClick = { addLeagueSport = "" },
             )
+            AddTeamRowItem(
+                followedCount = state.teamFollows.size,
+                onClick = { addingTeam = true },
+            )
         }
+    }
+
+    if (addingTeam) {
+        AddTeamSheet(
+            followedTeamIds = state.followedTeamIds,
+            onDismiss = { addingTeam = false },
+        )
     }
 
     AddLeagueSheets(
@@ -1005,12 +1039,16 @@ private const val MIN_LEAGUE_QUERY = 3
 private const val SEARCH_DEBOUNCE_MS = 350L
 
 @Composable
-private fun LeagueSearchField(query: String, onQueryChange: (String) -> Unit) {
+private fun LeagueSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    placeholder: String = "Search leagues",
+) {
     OutlinedTextField(
         value = query,
         onValueChange = onQueryChange,
         singleLine = true,
-        placeholder = { Text("Search leagues") },
+        placeholder = { Text(placeholder) },
         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
         trailingIcon = {
             if (query.isNotEmpty()) {
@@ -1087,6 +1125,135 @@ private fun LeagueResultList(
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
+    }
+}
+
+/**
+ * Follow a single club. Search-only by design: nobody finds their team by scrolling a list of
+ * every club in a country, and unlike leagues there is no curated set to browse in the first
+ * place.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AddTeamSheet(
+    followedTeamIds: Set<String>,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var query by remember { mutableStateOf("") }
+    var searching by remember { mutableStateOf(false) }
+    var results by remember { mutableStateOf<List<RadarTeam>>(emptyList()) }
+
+    val trimmedQuery = query.trim()
+    LaunchedEffect(trimmedQuery) {
+        if (trimmedQuery.length < MIN_LEAGUE_QUERY) {
+            searching = false
+            results = emptyList()
+            return@LaunchedEffect
+        }
+        searching = true
+        delay(SEARCH_DEBOUNCE_MS)
+        results = RadarCatalogClient.searchTeams(trimmedQuery)
+        searching = false
+    }
+
+    NuvioModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        SectionTitle("Follow a team")
+        LeagueSearchField(
+            query = query,
+            onQueryChange = { query = it },
+            placeholder = "Search teams",
+        )
+        if (searching) {
+            Text(
+                "Finding teams…",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(NuvioTokens.Space.s16),
+            )
+        } else if (results.isEmpty()) {
+            Text(
+                if (trimmedQuery.length < MIN_LEAGUE_QUERY) "Type a club's name to find it."
+                else "No teams match \"$trimmedQuery\".",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(NuvioTokens.Space.s16),
+            )
+        }
+        LazyColumn(modifier = Modifier.heightIn(max = 380.dp)) {
+            items(results, key = { it.id }) { team ->
+                val followed = team.id in followedTeamIds
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { RadarRepository.toggleFollowTeam(team) }
+                        .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s12),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    AsyncImage(
+                        model = team.badge,
+                        contentDescription = null,
+                        modifier = Modifier.size(32.dp),
+                    )
+                    Spacer(Modifier.width(NuvioTokens.Space.s12))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            team.name,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        // Many clubs share a short name; the league is what separates them.
+                        listOfNotNull(team.league, team.country)
+                            .firstOrNull { it.isNotBlank() }
+                            ?.let { subtitle ->
+                                Text(
+                                    subtitle,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                    }
+                    Text(
+                        if (followed) "Following" else "Follow",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (followed) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Peer of [AddLeagueRowItem] for clubs. */
+@Composable
+private fun AddTeamRowItem(followedCount: Int, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s12),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "+",
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(32.dp),
+        )
+        Spacer(Modifier.width(NuvioTokens.Space.s12))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                "Follow a team",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                if (followedCount > 0) "$followedCount followed" else "Just your club's matches",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

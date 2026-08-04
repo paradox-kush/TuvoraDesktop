@@ -51,6 +51,19 @@ object RadarSyncService {
         val custom: Boolean = false,
     )
 
+    /** A followed club. Every column is populated — there is no team catalog to defer to. */
+    @Serializable
+    private data class TeamFollowRow(
+        @SerialName("team_id") val teamId: String,
+        val name: String = "",
+        val sport: String = "",
+        val badge: String? = null,
+        @SerialName("league_id") val leagueId: String? = null,
+        val league: String? = null,
+        val keywords: List<String>? = null,
+        @SerialName("sort_order") val sortOrder: Int = 0,
+    )
+
     @Serializable
     private data class PrefsRow(
         @SerialName("featured_event_id") val featuredEventId: String = "",
@@ -107,9 +120,28 @@ object RadarSyncService {
                     put("opt_in_state", state.prefs.optInState)
                     put("promo_dismissed", state.prefs.promoDismissed)
                 }
+                // Always sent, even when empty: the RPC reads a MISSING p_teams as "this
+                // client has nothing to say about teams" and leaves the remote rows alone, so
+                // omitting it here would make unfollowing your last club un-syncable.
+                put("p_teams", buildJsonArray {
+                    state.teamFollows.forEachIndexed { index, team ->
+                        addJsonObject {
+                            put("team_id", team.teamId)
+                            put("name", team.name)
+                            put("sport", team.sport)
+                            put("sort_order", index)
+                            team.badge?.let { put("badge", it) }
+                            team.leagueId?.let { put("league_id", it) }
+                            team.league?.let { put("league", it) }
+                            if (team.keywords.isNotEmpty()) {
+                                put("keywords", buildJsonArray { team.keywords.forEach { add(it) } })
+                            }
+                        }
+                    }
+                })
             }
             SupabaseProvider.client.postgrest.rpc("sync_push_radar", params)
-            log.d { "pushToRemote — ${state.follows.size} follows" }
+            log.d { "pushToRemote — ${state.follows.size} follows, ${state.teamFollows.size} teams" }
         }.onFailure { e -> log.e(e) { "pushToRemote — FAILED" } }
     }
 
@@ -124,15 +156,22 @@ object RadarSyncService {
                     order("sort_order", Order.ASCENDING)
                 }
                 .decodeList<FollowRow>()
+            val teamRows = SupabaseProvider.client.postgrest
+                .from("radar_team_follows")
+                .select {
+                    filter { eq("profile_id", profileId) }
+                    order("sort_order", Order.ASCENDING)
+                }
+                .decodeList<TeamFollowRow>()
             val prefsRow = SupabaseProvider.client.postgrest
                 .from("radar_prefs")
                 .select { filter { eq("profile_id", profileId) } }
                 .decodeList<PrefsRow>()
                 .firstOrNull()
             if (ProfileRepository.activeProfileId != profileId) return@runCatching
-            if (followRows.isEmpty() && prefsRow == null) {
+            if (followRows.isEmpty() && teamRows.isEmpty() && prefsRow == null) {
                 val local = RadarRepository.uiState.value
-                if (local.follows.isNotEmpty() || local.prefs != RadarPrefs()) {
+                if (local.follows.isNotEmpty() || local.teamFollows.isNotEmpty() || local.prefs != RadarPrefs()) {
                     log.i { "pullFromServer — remote empty, migrating local radar state up" }
                     pushToRemote(profileId)
                 }
@@ -154,9 +193,21 @@ object RadarSyncService {
                     )
                 },
                 prefs = prefsRow?.let { RadarPrefs(it.featuredEventId, it.optInState, it.promoDismissed) },
+                teams = teamRows.map {
+                    RadarTeamFollow(
+                        teamId = it.teamId,
+                        name = it.name,
+                        sport = it.sport,
+                        badge = it.badge,
+                        leagueId = it.leagueId,
+                        league = it.league,
+                        keywords = it.keywords.orEmpty(),
+                        sortOrder = it.sortOrder,
+                    )
+                },
             )
             isSyncingFromRemote = false
-            log.i { "pullFromServer — applied ${followRows.size} follows" }
+            log.i { "pullFromServer — applied ${followRows.size} follows, ${teamRows.size} teams" }
         }.onFailure { e ->
             isSyncingFromRemote = false
             log.e(e) { "pullFromServer — FAILED" }
