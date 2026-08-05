@@ -233,15 +233,47 @@ private fun readResponseBodyLimited(body: ResponseBody?, maxBytes: Int): String 
     return if (readResult.truncated) decoded + truncationSuffix else decoded
 }
 
+/**
+ * Whole-body read, bounded by [MaxTextResponseBytes].
+ *
+ * `body.bytes()` asks for the entire response as ONE array, which is how a large Xtream catalog
+ * produced `Failed to allocate a 26891064 byte allocation` on the Android twin. Bulk lists stream
+ * now, so this cap is a backstop against anything else on this path growing without warning.
+ *
+ * A declared Content-Length over the cap is refused before a single byte is read — the cheapest
+ * possible outcome. Within the cap it still goes through `bytes()`, whose one exact-sized
+ * allocation beats a growing buffer that doubles and copies. Only a length-less (chunked)
+ * response needs the incremental read, and those are small in practice.
+ */
 private fun readResponseBody(body: ResponseBody?): String {
     if (body == null) return ""
-    val bytes = body.bytes()
+    val declaredLength = body.contentLength()
+    if (declaredLength > MaxTextResponseBytes) throw responseTooLarge(declaredLength)
+
+    val bytes = if (declaredLength >= 0) {
+        body.bytes()
+    } else {
+        val readResult = body.byteStream().use { stream ->
+            readAtMostBytes(stream, MaxTextResponseBytes)
+        }
+        // readAtMostBytes peeks one byte past the cap, so an overrun is caught without
+        // buffering the excess.
+        if (readResult.truncated) throw responseTooLarge(-1)
+        readResult.bytes
+    }
+
     return runCatching {
         val charset = body.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8
         String(bytes, charset)
     }.getOrElse {
         String(bytes, Charsets.UTF_8)
     }
+}
+
+private fun responseTooLarge(declaredLength: Long): ResponseTooLargeException {
+    val limitMb = MaxTextResponseBytes / (1024 * 1024)
+    val size = if (declaredLength >= 0) "$declaredLength bytes" else "response"
+    return ResponseTooLargeException("Body too large to read as text ($size, limit ${limitMb}MB)")
 }
 
 actual suspend fun httpStreamLines(

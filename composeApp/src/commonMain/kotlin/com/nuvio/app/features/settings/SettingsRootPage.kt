@@ -11,6 +11,7 @@ import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Notifications
@@ -37,6 +38,7 @@ import nuvio.composeapp.generated.resources.compose_settings_page_integrations
 import nuvio.composeapp.generated.resources.compose_settings_page_licenses_attributions
 import nuvio.composeapp.generated.resources.compose_settings_page_notifications
 import nuvio.composeapp.generated.resources.compose_settings_page_playback
+import nuvio.composeapp.generated.resources.compose_settings_page_discord
 import nuvio.composeapp.generated.resources.compose_settings_page_privacy_policy
 import nuvio.composeapp.generated.resources.compose_settings_page_supporters_contributors
 import nuvio.composeapp.generated.resources.compose_settings_root_account_description
@@ -49,6 +51,7 @@ import nuvio.composeapp.generated.resources.compose_settings_root_downloads_titl
 import nuvio.composeapp.generated.resources.compose_settings_root_general_section
 import nuvio.composeapp.generated.resources.compose_settings_root_integrations_description
 import nuvio.composeapp.generated.resources.compose_settings_root_notifications_description
+import nuvio.composeapp.generated.resources.compose_settings_root_discord_description
 import nuvio.composeapp.generated.resources.compose_settings_root_privacy_policy_description
 import nuvio.composeapp.generated.resources.compose_settings_root_switch_profile_description
 import nuvio.composeapp.generated.resources.compose_settings_root_switch_profile_title
@@ -69,6 +72,9 @@ import nuvio.composeapp.generated.resources.about_licenses_attributions_subtitle
 import org.jetbrains.compose.resources.stringResource
 
 private const val PRIVACY_POLICY_URL = "https://tuvora.co/privacy"
+// Permanent invite. The community lives on Discord alone - the subreddit that was meant
+// to sit alongside it was banned by Reddit the day it went up.
+private const val DISCORD_URL = "https://discord.gg/wFu9T2nS8X"
 
 internal fun LazyListScope.settingsRootContent(
     isTablet: Boolean,
@@ -228,6 +234,14 @@ internal fun LazyListScope.settingsRootContent(
                         )
                         SettingsGroupDivider(isTablet = isTablet)
                     }
+                    SettingsNavigationRow(
+                        title = stringResource(Res.string.compose_settings_page_discord),
+                        description = stringResource(Res.string.compose_settings_root_discord_description),
+                        icon = Icons.Rounded.Forum,
+                        isTablet = isTablet,
+                        onClick = { uriHandler.openUri(DISCORD_URL) },
+                    )
+                    SettingsGroupDivider(isTablet = isTablet)
                     SettingsNavigationRow(
                         title = stringResource(Res.string.compose_settings_page_privacy_policy),
                         description = stringResource(Res.string.compose_settings_root_privacy_policy_description),

@@ -1,6 +1,7 @@
 package com.nuvio.app.features.watching.sync
 
 import com.nuvio.app.core.network.SupabaseProvider
+import com.nuvio.app.core.sync.SyncSession
 import com.nuvio.app.core.sync.putSyncOriginClientId
 import com.nuvio.app.features.watchprogress.WatchProgressEntry
 import com.nuvio.app.features.watchprogress.isLiveChannelProgress
@@ -102,6 +103,7 @@ object SupabaseProgressSyncAdapter : ProgressSyncAdapter {
         profileId: Int,
         entries: Collection<WatchProgressEntry>,
     ) {
+        SyncSession.requirePushable()
         val syncEntries = entries
             // Live channels have no meaningful resume position — keep them out of remote sync.
             .filterNot { it.isLiveChannelProgress() }
@@ -137,6 +139,7 @@ object SupabaseProgressSyncAdapter : ProgressSyncAdapter {
         profileId: Int,
         entries: Collection<WatchProgressEntry>,
     ) {
+        SyncSession.requirePushable()
         val progressKeys = entries.map { entry -> entry.resolvedProgressKey() }
         val params = buildJsonObject {
             put("p_profile_id", profileId)

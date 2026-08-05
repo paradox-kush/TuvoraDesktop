@@ -920,6 +920,7 @@ private fun MainAppContent(
         val homeScrollToTopRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
         val searchScrollToTopRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
         val libraryScrollToTopRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
+        val iptvScrollToTopRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
         val settingsRootActionRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
 
         LaunchedEffect(ownsAppRuntime) {
@@ -1059,7 +1060,7 @@ private fun MainAppContent(
                 searchScrollToTopRequests.tryEmit(Unit)
             }
             AppScreenTab.Library -> libraryScrollToTopRequests.tryEmit(Unit)
-            AppScreenTab.Iptv -> {}
+            AppScreenTab.Iptv -> iptvScrollToTopRequests.tryEmit(Unit)
             AppScreenTab.Sports -> {}
             AppScreenTab.Settings -> settingsRootActionRequests.tryEmit(Unit)
         }
@@ -2190,6 +2191,7 @@ private fun MainAppContent(
                                         homeScrollToTopRequests = homeScrollToTopRequests,
                                         searchScrollToTopRequests = searchScrollToTopRequests,
                                         libraryScrollToTopRequests = libraryScrollToTopRequests,
+                                        iptvScrollToTopRequests = iptvScrollToTopRequests,
                                         settingsRootActionRequests = settingsRootActionRequests,
                                         onCatalogClick = onCatalogClick,
                                         onPosterClick = { meta ->
@@ -4071,6 +4073,7 @@ private fun AppTabHost(
     homeScrollToTopRequests: Flow<Unit>,
     searchScrollToTopRequests: Flow<Unit>,
     libraryScrollToTopRequests: Flow<Unit>,
+    iptvScrollToTopRequests: Flow<Unit>,
     settingsRootActionRequests: Flow<Unit>,
     onCatalogClick: ((HomeCatalogSection) -> Unit)? = null,
     onPosterClick: ((MetaPreview) -> Unit)? = null,
@@ -4169,6 +4172,7 @@ private fun AppTabHost(
                                 onPlayLiveChannel = onPlayLiveChannel,
                                 onFavoriteLiveChannel = onIptvFavoriteChannel,
                                 onAddProvider = onIptvAddProvider,
+                                scrollToTopRequests = iptvScrollToTopRequests,
                             )
                         }
 

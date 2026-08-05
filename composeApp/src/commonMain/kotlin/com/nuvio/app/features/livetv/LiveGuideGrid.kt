@@ -37,6 +37,9 @@ import androidx.compose.ui.layout.ContentScale
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.iptv.XtreamProgram
+import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.compose_livetv_no_epg
+import org.jetbrains.compose.resources.stringResource
 
 private val CHANNEL_COL_WIDTH = 88.dp
 private val ROW_HEIGHT = 64.dp
@@ -217,7 +220,7 @@ private fun GuideRow(
                 val progs = programmes
                 if (progs.isNullOrEmpty()) {
                     ProgrammeBlock(
-                        title = "No EPG",
+                        title = stringResource(Res.string.compose_livetv_no_epg),
                         startX = 0.dp,
                         width = totalWidth,
                         isNow = false,

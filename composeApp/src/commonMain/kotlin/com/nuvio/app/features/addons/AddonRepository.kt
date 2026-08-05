@@ -2,6 +2,7 @@ package com.nuvio.app.features.addons
 
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.network.SupabaseProvider
+import com.nuvio.app.core.sync.SyncSession
 import com.nuvio.app.core.sync.putSyncOriginClientId
 import com.nuvio.app.features.profiles.ProfileRepository
 import io.github.jan.supabase.postgrest.postgrest
@@ -381,6 +382,14 @@ object AddonRepository {
         scope.launch {
             runCatching {
                 if (isUsingPrimaryAddonsFromSecondaryProfile()) {
+                    return@runCatching
+                }
+                // Add/remove/reorder/enable all reach here, and the addon manager works fine
+                // signed out — so without this the RPC goes out as `anon` and comes back
+                // 42501, once per edit. Nothing is lost by refusing: the list was already
+                // persist()ed locally, and pullFromServer() migrates it up on the next sign-in.
+                if (!SyncSession.canPush()) {
+                    log.d { "pushToServer() — skipped, no signed-in session" }
                     return@runCatching
                 }
                 val profileId = currentProfileId

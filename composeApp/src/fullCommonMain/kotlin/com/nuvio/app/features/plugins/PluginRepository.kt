@@ -2,6 +2,7 @@ package com.nuvio.app.features.plugins
 
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.network.SupabaseProvider
+import com.nuvio.app.core.sync.SyncSession
 import com.nuvio.app.features.addons.encodeUnsafeHttpUrlCharacters
 import com.nuvio.app.features.addons.httpGetText
 import com.nuvio.app.features.profiles.ProfileRepository
@@ -440,6 +441,14 @@ actual object PluginRepository {
     private fun pushToServer() {
         scope.launch {
             runCatching {
+                // Install/remove/refresh all reach here, and the plugins screen works signed out
+                // — so without this the RPC goes out as `anon` and comes back 42501, once per
+                // edit. Nothing is lost by refusing: the repo list was already persist()ed
+                // locally, and pullFromServer() migrates it up on the next sign-in.
+                if (!SyncSession.canPush()) {
+                    log.d { "pushToServer skipped, no signed-in session" }
+                    return@runCatching
+                }
                 val repos = _uiState.value.repositories.mapIndexed { index, repo ->
                     PluginPushItem(
                         url = repo.manifestUrl,

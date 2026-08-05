@@ -19,6 +19,27 @@ data class RawHttpResponse(
 internal const val DefaultRawHttpResponseMaxBytes = 1024 * 1024
 
 /**
+ * Ceiling on a body [httpGetText] and friends will materialize as a String.
+ *
+ * Those functions can only work by holding the whole response at once, so a big enough body is
+ * an OOM no matter how carefully it is read — a real provider's Xtream catalog is ~27 MB, and
+ * allocating that in one piece is what silently killed TMDB matching on a phone already using
+ * ~80 MB of heap. Bulk lists now stream instead (see XtreamClient.streamArray), and nothing
+ * left on this path legitimately approaches this size, so exceeding it means something has gone
+ * wrong. Failing with [ResponseTooLargeException] keeps that diagnosable and, unlike an
+ * OutOfMemoryError, doesn't drag the rest of the app through blocking-GC stalls on the way down.
+ */
+internal const val MaxTextResponseBytes = 16 * 1024 * 1024
+
+/**
+ * A response was too large to be read as a String — see [MaxTextResponseBytes].
+ *
+ * [IllegalStateException] so existing `runCatching`/catch sites treat it exactly like any other
+ * fetch failure.
+ */
+class ResponseTooLargeException(message: String) : IllegalStateException(message)
+
+/**
  * The server answered 2xx with an empty body.
  *
  * Distinct from the generic failure so callers can tell "the server said nothing" apart from a
@@ -66,6 +87,11 @@ expect suspend fun httpRequestRaw(
  * response is gzip-decoded transparently when the server sends `Content-Encoding: gzip`. [onLine]
  * runs on a background thread; keep it cheap (buffer + flush) and do not block it. Throws on a
  * non-2xx status. Memory stays O(one line + the caller's buffer).
+ *
+ * Also carries the Xtream bulk lists (XtreamClient.streamArray), whose JSON is typically minified
+ * onto a single line — the chunking cap in each implementation is what keeps that bounded, and the
+ * catalog splitter accepts chunk boundaries falling anywhere. Note that a line arrives WITHOUT its
+ * newline: harmless for JSON, where a newline is only whitespace between tokens.
  *
  * [dnsProvider] (P3) selects a per-playlist DNS-over-HTTPS resolver on Android for the M3U/XMLTV
  * fetch (same values as [httpGetText]); iOS ignores it (no per-app DNS hook).

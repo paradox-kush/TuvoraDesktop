@@ -24,6 +24,8 @@ import com.nuvio.app.features.tracking.TrackingSettingsRepository
 import com.nuvio.app.features.tracking.WatchProgressSource
 import com.nuvio.app.features.tracking.effectiveLibrarySourceMode
 import com.nuvio.app.features.tracking.effectiveWatchProgressSource
+import com.nuvio.app.features.watched.WatchedRepository
+import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import com.nuvio.app.features.watchprogress.WatchProgressSourceCoordinator
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
@@ -390,6 +392,14 @@ object SyncManager {
                         "failedSteps=${syncResult.failedSteps}"
                 }
             }
+            // Now that the pull half is done, flush anything written while signed out. Order
+            // matters: the merge that just ran preserves locally-dirty keys, so nothing sent here
+            // can be clobbered by what was pulled, and whatever the server already had has been
+            // acknowledged out of the dirty sets. Before this existed a scrobble that failed to
+            // push stayed dirty forever with nothing to retry it.
+            WatchProgressRepository.pushPendingToServer(profileId)
+            WatchedRepository.pushPendingToServer(profileId)
+
             // Fork surfaces (IPTV accounts + Radar follows) ride alongside the ordered
             // pipeline — upstream's ProfileSyncOperations doesn't know about them.
             accountScopeSnapshot().launch {

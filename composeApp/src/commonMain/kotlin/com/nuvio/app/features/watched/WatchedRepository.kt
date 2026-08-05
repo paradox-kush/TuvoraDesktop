@@ -3,6 +3,8 @@ package com.nuvio.app.features.watched
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
+import com.nuvio.app.core.sync.SyncNotAuthenticatedException
+import com.nuvio.app.core.sync.SyncSession
 import com.nuvio.app.core.tracking.ensureTrackingProvidersRegistered
 import com.nuvio.app.features.details.MetaDetails
 import com.nuvio.app.features.details.MetaVideo
@@ -1008,7 +1010,47 @@ object WatchedRepository {
                     )
                 }
             }.onFailure { e ->
-                log.e(e) { "Failed to push watched items" }
+                // Signed out is expected, not a fault: the keys stay in nuvioDirtyWatchedKeys and
+                // go out from pushPendingToServer() on the next full sync.
+                if (e is SyncNotAuthenticatedException) {
+                    log.d { "Deferred watched-items push — not signed in" }
+                } else {
+                    log.e(e) { "Failed to push watched items" }
+                }
+            }
+        }
+    }
+
+    /**
+     * Pushes every watched item still marked dirty — the marks made while signed out, or whose
+     * push failed for any other reason.
+     *
+     * Twin of WatchProgressRepository.pushPendingToServer; see that one for why this runs after
+     * the pull half of a full sync rather than before it.
+     */
+    internal fun pushPendingToServer(profileId: Int) {
+        if (activeSource.providerId != null) return   // a tracker owns history; Nuvio Sync doesn't
+        if (profileId != currentProfileId) return
+        if (!SyncSession.canPush()) return
+
+        val operationGeneration = profileGeneration
+        val dirtyKeys = nuvioDirtyWatchedKeys.toSet()
+        if (dirtyKeys.isEmpty()) return
+        val items = dirtyKeys.mapNotNull { key -> nuvioItemsByKey[key] }
+        if (items.isEmpty()) return
+
+        accountScopeSnapshot().launch {
+            runCatching {
+                syncAdapter.push(profileId = profileId, items = items)
+                recordSuccessfulPush(
+                    profileId = profileId,
+                    operationGeneration = operationGeneration,
+                    items = items,
+                )
+                log.i { "Flushed ${items.size} queued watched items profile=$profileId" }
+            }.onFailure { e ->
+                // Still dirty — the next full sync tries again.
+                log.e(e) { "Failed to flush queued watched items" }
             }
         }
     }

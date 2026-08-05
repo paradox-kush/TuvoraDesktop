@@ -40,7 +40,7 @@ import com.nuvio.app.core.ui.rememberPosterCardStyleUiState
 import kotlin.math.roundToInt
 
 @Composable
-private fun rememberHomeSkeletonBrush(): Brush {
+internal fun rememberHomeSkeletonBrush(): Brush {
     val shimmerColors = listOf(
         MaterialTheme.colorScheme.surface,
         MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),

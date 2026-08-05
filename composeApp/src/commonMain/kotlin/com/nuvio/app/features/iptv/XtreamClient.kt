@@ -1,8 +1,10 @@
 package com.nuvio.app.features.iptv
 
 import com.nuvio.app.features.addons.httpGetText
+import com.nuvio.app.features.addons.httpStreamLines
 import com.nuvio.app.features.iptv.match.IndexedItem
 import com.nuvio.app.features.iptv.match.TitleNormalizer
+import com.nuvio.app.features.iptv.match.XtreamCatalogIndexParser
 import io.ktor.http.encodeURLParameter
 import io.ktor.http.encodeURLPathPart
 import io.ktor.util.decodeBase64String
@@ -60,8 +62,8 @@ object XtreamClient : IptvClient {
     // onnipsite sends `rating` as `0`, not `"0"`). A strict decode throws on the FIRST such
     // field and loses the ENTIRE catalog, so the provider's index silently never builds.
     override suspend fun liveChannels(acc: XtreamAccount, categoryId: String?): Result<List<XtreamChannel>> = call {
-        jsonArray(acc, playerApi(acc, "get_live_streams", categoryId)).mapNotNull { o ->
-            val id = o["stream_id"].asIntOrNull() ?: return@mapNotNull null
+        streamArray(acc, playerApi(acc, "get_live_streams", categoryId)) { o ->
+            val id = o["stream_id"].asIntOrNull() ?: return@streamArray null
             XtreamChannel(
                 streamId = id,
                 name = o["name"].asStringOrNull() ?: "",
@@ -75,11 +77,11 @@ object XtreamClient : IptvClient {
     }
 
     override suspend fun vodMovies(acc: XtreamAccount, categoryId: String?): Result<List<XtreamMovie>> = call {
-        jsonArray(acc, playerApi(acc, "get_vod_streams", categoryId)).mapNotNull { o -> parseVodItem(acc, o) }
+        streamArray(acc, playerApi(acc, "get_vod_streams", categoryId)) { o -> parseVodItem(acc, o) }
     }
 
     override suspend fun series(acc: XtreamAccount, categoryId: String?): Result<List<XtreamSeriesItem>> = call {
-        jsonArray(acc, playerApi(acc, "get_series", categoryId)).mapNotNull { o -> parseSeriesItem(o) }
+        streamArray(acc, playerApi(acc, "get_series", categoryId)) { o -> parseSeriesItem(o) }
     }
 
     /**
@@ -92,12 +94,12 @@ object XtreamClient : IptvClient {
      * devices right after a playlist was added.
      */
     internal suspend fun vodIndexItems(acc: XtreamAccount): Result<List<IndexedItem>> = call {
-        jsonArray(acc, playerApi(acc, "get_vod_streams")).mapNotNull { o -> parseVodIndexItem(o) }
+        streamArray(acc, playerApi(acc, "get_vod_streams")) { o -> parseVodIndexItem(o) }
     }
 
     /** Series half of [vodIndexItems]. */
     internal suspend fun seriesIndexItems(acc: XtreamAccount): Result<List<IndexedItem>> = call {
-        jsonArray(acc, playerApi(acc, "get_series")).mapNotNull { o -> parseSeriesIndexItem(o) }
+        streamArray(acc, playerApi(acc, "get_series")) { o -> parseSeriesIndexItem(o) }
     }
 
     /** One VOD list entry -> index row, skipping the domain model entirely. internal for tests. */
@@ -250,8 +252,8 @@ object XtreamClient : IptvClient {
     private fun String.splitCsv(): List<String> = split(",").mapNotNull { it.trim().ifBlank { null } }
 
     private suspend fun categories(acc: XtreamAccount, action: String): Result<List<XtreamCategory>> = call {
-        jsonArray(acc, playerApi(acc, action)).mapNotNull { o ->
-            val id = o["category_id"].asStringOrNull() ?: return@mapNotNull null
+        streamArray(acc, playerApi(acc, action)) { o ->
+            val id = o["category_id"].asStringOrNull() ?: return@streamArray null
             XtreamCategory(id, o["category_name"].asStringOrNull() ?: "")
         }
     }
@@ -287,8 +289,27 @@ object XtreamClient : IptvClient {
         )
     }
 
-    private suspend fun jsonArray(acc: XtreamAccount, url: String): List<JsonObject> =
-        (json.parseToJsonElement(httpGetText(url, acc.dnsProvider)) as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+    /**
+     * Fetches a bulk list and maps it element by element, never holding the response whole.
+     *
+     * Every `player_api.php` array endpoint goes through here. [httpGetText] used to, and on a
+     * large provider its single ~27 MB body allocation was enough to OOM the match-index build
+     * outright — see [XtreamCatalogIndexParser] for the failure and the shape of the fix. The
+     * mapping functions are unchanged, so field-level parsing behaves exactly as before.
+     *
+     * User-Agent is deliberately left null: that is what the panel saw on the [httpGetText]
+     * path, and a UA a user configured for their M3U host is not necessarily one the panel
+     * accepts.
+     */
+    private suspend fun <T> streamArray(
+        acc: XtreamAccount,
+        url: String,
+        map: (JsonObject) -> T?,
+    ): List<T> {
+        val parser = XtreamCatalogIndexParser(json, map)
+        httpStreamLines(url, userAgent = null, dnsProvider = acc.dnsProvider) { parser.accept(it) }
+        return parser.finish()
+    }
 
     private fun playerApi(acc: XtreamAccount, action: String? = null, categoryId: String? = null): String {
         val base = acc.baseUrl.trimEnd('/')

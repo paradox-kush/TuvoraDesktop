@@ -65,6 +65,16 @@ import com.nuvio.app.features.player.PlayerResizeMode
 import com.nuvio.app.features.trakt.TraktPlatformClock
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.action_back
+import nuvio.composeapp.generated.resources.compose_iptv_hub_epg_next
+import nuvio.composeapp.generated.resources.compose_livetv_error_tap_retry
+import nuvio.composeapp.generated.resources.compose_livetv_exit_fullscreen
+import nuvio.composeapp.generated.resources.compose_livetv_fullscreen
+import nuvio.composeapp.generated.resources.compose_livetv_live_badge
+import nuvio.composeapp.generated.resources.compose_livetv_no_programme_info
+import nuvio.composeapp.generated.resources.compose_livetv_play_pause
+import org.jetbrains.compose.resources.stringResource
 
 /** Share of the window height the docked player takes when the window is wider than it is tall. */
 private const val DOCKED_PLAYER_HEIGHT_FRACTION = 0.58f
@@ -381,18 +391,10 @@ private fun NowBar(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            val subtitle = buildString {
-                nowNext.now?.let {
-                    append(liveClockLabel(it.startMs))
-                    append(" – ")
-                    append(liveClockLabel(it.endMs))
-                }
-                nowNext.next?.let {
-                    if (isNotEmpty()) append("   ")
-                    append("Next: ")
-                    append(it.title)
-                }
-            }.ifBlank { "No programme information" }
+            val nextLabel = nowNext.next?.let { stringResource(Res.string.compose_iptv_hub_epg_next, it.title) }
+            val timeLabel = nowNext.now?.let { "${liveClockLabel(it.startMs)} – ${liveClockLabel(it.endMs)}" }
+            val subtitle = listOfNotNull(timeLabel, nextLabel).joinToString("   ")
+                .ifBlank { stringResource(Res.string.compose_livetv_no_programme_info) }
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.labelSmall,
@@ -421,16 +423,16 @@ private fun DockedPlayerOverlay(
                 .padding(NuvioTokens.Space.s8),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            OverlayIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
+            OverlayIconButton(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(Res.string.action_back), onBack)
             Spacer(Modifier.width(NuvioTokens.Space.s8))
             LiveBadge(danger)
             Spacer(Modifier.weight(1f))
-            OverlayIconButton(Icons.Filled.Fullscreen, "Fullscreen", onEnterFullscreen)
+            OverlayIconButton(Icons.Filled.Fullscreen, stringResource(Res.string.compose_livetv_fullscreen), onEnterFullscreen)
         }
         if (showPlayPause) {
             OverlayIconButton(
                 if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                "Play/pause",
+                stringResource(Res.string.compose_livetv_play_pause),
                 onPlayPause,
                 big = true,
                 modifier = Modifier.align(Alignment.Center),
@@ -460,7 +462,7 @@ private fun FullscreenControls(
                 .padding(NuvioTokens.Space.s12),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            OverlayIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
+            OverlayIconButton(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(Res.string.action_back), onBack)
             Spacer(Modifier.width(NuvioTokens.Space.s12))
             LiveBadge(danger)
             Spacer(Modifier.width(NuvioTokens.Space.s12))
@@ -476,7 +478,7 @@ private fun FullscreenControls(
         if (showPlayPause) {
             OverlayIconButton(
                 if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                "Play/pause",
+                stringResource(Res.string.compose_livetv_play_pause),
                 onPlayPause,
                 big = true,
                 modifier = Modifier.align(Alignment.Center),
@@ -487,7 +489,7 @@ private fun FullscreenControls(
                 .align(Alignment.BottomEnd)
                 .padding(NuvioTokens.Space.s16),
         ) {
-            OverlayIconButton(Icons.Filled.FullscreenExit, "Exit fullscreen", onExitFullscreen)
+            OverlayIconButton(Icons.Filled.FullscreenExit, stringResource(Res.string.compose_livetv_exit_fullscreen), onExitFullscreen)
         }
     }
     }
@@ -534,7 +536,7 @@ private fun LiveBadge(danger: Color) {
     ) {
         Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.White))
         Text(
-            text = "LIVE",
+            text = stringResource(Res.string.compose_livetv_live_badge),
             style = MaterialTheme.typography.labelSmall,
             color = Color.White,
             fontWeight = FontWeight.Bold,
@@ -555,7 +557,7 @@ private fun ErrorPill(danger: Color, onRetry: () -> Unit) {
     ) {
         Icon(Icons.Filled.Refresh, contentDescription = null, tint = danger)
         Text(
-            text = "Can't play this channel · Tap to retry",
+            text = stringResource(Res.string.compose_livetv_error_tap_retry),
             style = MaterialTheme.typography.bodyMedium,
             color = Color.White,
         )
