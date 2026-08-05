@@ -1,5 +1,6 @@
 package com.nuvio.app.features.radar
 
+import co.touchlab.kermit.Logger
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -66,9 +67,14 @@ import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.iptv.XtreamRepository
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+
+private val sportsMatchLog = Logger.withTag("SportsChannelMatch")
 
 /**
  * Sports Centre tab: featured event banners, live & upcoming fixtures for followed leagues,
@@ -740,22 +746,55 @@ internal fun MatchChannelsSheet(
     var matches by remember(fixture) { mutableStateOf<List<RadarChannelMatcher.ChannelMatch>>(emptyList()) }
     var recordings by remember(fixture) { mutableStateOf<List<RadarChannelMatcher.RecordingHit>>(emptyList()) }
     var matching by remember(fixture) { mutableStateOf(true) }
+    var matchingFailed by remember(fixture) { mutableStateOf(false) }
     val hasPlaylists = xtreamState.accounts.any { it.enabled }
     val fixtureStarted = (fixture.startEpochMs ?: Long.MAX_VALUE) <= RadarTime.nowMs()
 
     LaunchedEffect(fixture) {
-        XtreamRepository.ensureLoaded()
-        if (XtreamRepository.uiState.value.accounts.any { it.enabled }) {
-            // Recordings only make sense once the match has started; probe alongside channels.
-            if (fixtureStarted) {
-                launch { recordings = runCatching { RadarChannelMatcher.findRecordings(fixture) }.getOrDefault(emptyList()) }
+        try {
+            XtreamRepository.ensureLoaded()
+            if (XtreamRepository.uiState.value.accounts.any { it.enabled }) {
+                // Recordings only make sense once the match has started; probe alongside channels.
+                if (fixtureStarted) {
+                    launch {
+                        val found = try {
+                            withContext(Dispatchers.Default) { RadarChannelMatcher.findRecordings(fixture) }
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (error: Exception) {
+                            sportsMatchLog.w(error) { "Sports recording lookup failed" }
+                            emptyList()
+                        }
+                        // This launch inherits LaunchedEffect's Main dispatcher.
+                        recordings = found
+                    }
+                }
+                // Broadcaster listings are one cached edge-fn call; bounded so a slow network
+                // can't hold the sheet hostage (matching proceeds without them).
+                val stations = withContext(Dispatchers.Default) {
+                    try {
+                        withTimeoutOrNull(4_000) { RadarRepository.tvStations(fixture.id) } ?: emptyList()
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        sportsMatchLog.w(error) { "Sports broadcaster lookup failed" }
+                        emptyList()
+                    }
+                }
+                val result = RadarChannelMatcher.match(fixture, league, stations, onPartial = { partial ->
+                    withContext(Dispatchers.Main) { matches = partial }
+                })
+                // match() returns to LaunchedEffect's Main dispatcher before Compose state changes.
+                matches = result
             }
-            // Broadcaster listings are one cached edge-fn call; bounded so a slow network
-            // can't hold the sheet hostage (matching proceeds without them).
-            val stations = withTimeoutOrNull(4_000) { RadarRepository.tvStations(fixture.id) } ?: emptyList()
-            matches = RadarChannelMatcher.match(fixture, league, stations, onPartial = { matches = it })
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            sportsMatchLog.e(error) { "Sports channel matching failed" }
+            matchingFailed = true
+        } finally {
+            matching = false
         }
-        matching = false
     }
 
     NuvioModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
@@ -843,6 +882,11 @@ internal fun MatchChannelsSheet(
                     Modifier.fillMaxWidth().height(80.dp),
                     contentAlignment = Alignment.Center,
                 ) { CircularProgressIndicator(strokeWidth = 2.dp) }
+                matches.isEmpty() && matchingFailed -> Text(
+                    "Couldn't load channels from your providers. Please try again.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 matches.isEmpty() -> Text(
                     "None of your channels list this match. Matching depends on your playlist's EPG and channel names.",
                     style = MaterialTheme.typography.bodyMedium,

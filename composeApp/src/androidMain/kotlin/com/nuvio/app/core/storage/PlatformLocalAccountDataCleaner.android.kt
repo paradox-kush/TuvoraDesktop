@@ -8,7 +8,10 @@ internal actual object PlatformLocalAccountDataCleaner {
         "nuvio_library",
         "nuvio_library_display_settings",
         "nuvio_home_catalog_settings",
+        "nuvio_meta_screen_settings",
+        "nuvio_season_view_mode",
         "nuvio_player_settings",
+        "nuvio_player_track_preferences",
         "torrent_settings",
         "nuvio_profile_cache",
         "nuvio_avatar_cache",
@@ -23,14 +26,21 @@ internal actual object PlatformLocalAccountDataCleaner {
         "nuvio_simkl_sync",
         "nuvio_trakt_library",
         "nuvio_trakt_settings",
+        "nuvio_trakt_comments",
+        "nuvio_tmdb_settings",
         "nuvio_watched",
+        "nuvio_search_history",
+        "nuvio_downloads",
+        "nuvio_iptv",
         "nuvio_stream_link_cache",
+        "nuvio_binge_group_cache",
         "nuvio_stream_badge_settings",
         "nuvio_continue_watching_preferences",
         "nuvio_cw_enrichment",
         "nuvio_episode_release_notifications",
         "nuvio_episode_release_notifications_platform",
         "nuvio_watch_progress",
+        "nuvio_resume_prompt",
         "nuvio_collection_mobile_settings",
         "nuvio_collections",
         "nuvio_plugins",
@@ -48,7 +58,7 @@ internal actual object PlatformLocalAccountDataCleaner {
             context.getSharedPreferences(name, Context.MODE_PRIVATE)
                 .edit()
                 .clear()
-                .apply()
+                .commit()
         }
     }
 }

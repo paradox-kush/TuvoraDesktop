@@ -244,15 +244,14 @@ internal object XtreamTmdbResolver {
                     val stats = XtreamMatchIndex.sync(acc.id, kind, items)
                     log.i { "synced ${kind.slug} index for ${acc.name}: +${stats.added} ~${stats.changed} -${stats.removed} (${stats.total} total)" }
                     buildLock.withLock { lastFailedBuildMs.remove(key) }
-                } catch (oom: OutOfMemoryError) {
-                    // Deliberately not rethrown: the build owns the only large allocations here,
-                    // so releasing them and backing off recovers, where a rethrow would take the
-                    // app down. Logged apart from other failures because a swallowed OOM is why
-                    // this only ever surfaced as an OS low-memory kill with no stack trace.
-                    log.e(oom) { "index build ran out of memory for ${acc.name} ${kind.slug}" }
-                    buildLock.withLock { lastFailedBuildMs[key] = now() }
                 } catch (t: Throwable) {
-                    log.w(t) { "index build failed for ${acc.name} ${kind.slug}" }
+                    // OutOfMemoryError is JVM-only and cannot be named from commonMain. Keep the
+                    // useful distinction without making iOS/native compilation target-dependent.
+                    if (t::class.simpleName == "OutOfMemoryError") {
+                        log.e(t) { "index build ran out of memory for ${acc.name} ${kind.slug}" }
+                    } else {
+                        log.w(t) { "index build failed for ${acc.name} ${kind.slug}" }
+                    }
                     buildLock.withLock { lastFailedBuildMs[key] = now() }
                 } finally {
                     buildLock.withLock {

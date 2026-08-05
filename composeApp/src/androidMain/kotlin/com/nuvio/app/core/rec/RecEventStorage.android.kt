@@ -23,6 +23,10 @@ internal actual object RecEventStorage {
         preferences?.edit()?.putString(key, value)?.apply()
     }
 
+    actual fun removeString(key: String) {
+        preferences?.edit()?.remove(key)?.commit()
+    }
+
     actual fun loadBoolean(key: String, default: Boolean): Boolean =
         preferences?.getBoolean(key, default) ?: default
 

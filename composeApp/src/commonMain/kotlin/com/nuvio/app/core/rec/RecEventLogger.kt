@@ -79,7 +79,10 @@ object RecEventLogger {
         if (started) return
         started = true
         scope.launch {
-            runCatching { restoreQueue() }
+            runCatching {
+                if (RecEventSettings.isActive(recNowMillis())) restoreQueue()
+                else discardPendingEvents()
+            }
             while (isActive) {
                 delay(FLUSH_INTERVAL_MS)
                 flush("timer")
@@ -122,6 +125,20 @@ object RecEventLogger {
         runCatching { scope.launch { flush(reason) } }
     }
 
+    /** Synchronous privacy boundary used by opt-out and local account deletion. */
+    internal fun discardPendingEvents() {
+        synchronized(queueLock) { queue.clear() }
+        retryNotBeforeMs = 0L
+        backoffMs = BACKOFF_START_MS
+        persistQueue(emptyList())
+    }
+
+    /** Remove queued behavior and unlink future anonymous events from the old install token. */
+    internal fun resetLocalState() {
+        discardPendingEvents()
+        RecEventIdentity.resetLocalState()
+    }
+
     /**
      * Read per event, never cached: on a shared device the profile IS the user as far as
      * training is concerned.
@@ -138,11 +155,19 @@ object RecEventLogger {
             val pending = synchronized(queueLock) { queue.toList() }
             if (pending.isEmpty()) return
             persistQueue(pending)
+            if (!RecEventSettings.isActive(recNowMillis())) {
+                discardPendingEvents()
+                return
+            }
 
             // One request per session: the envelope carries a single session_id, and a batch that
             // survived a cold start can straddle two.
             for ((sessionId, records) in pending.groupBy { it.sessionId }) {
                 for (chunk in records.chunked(FLUSH_AT_EVENTS)) {
+                    if (!RecEventSettings.isActive(recNowMillis())) {
+                        discardPendingEvents()
+                        return
+                    }
                     val outcome = send(sessionId, chunk.map { it.event })
                     if (outcome == SendOutcome.RETRY) {
                         retryNotBeforeMs = recNowMillis() + backoffMs

@@ -12,11 +12,13 @@ import com.nuvio.app.features.iptv.XtreamSearchIndex
 import com.nuvio.app.features.iptv.match.MatchKind
 import com.nuvio.app.features.iptv.match.XtreamMatchIndex
 import com.nuvio.app.features.iptv.match.XtreamTmdbResolver
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -111,8 +113,8 @@ object RadarChannelMatcher {
         fixture: RadarFixture,
         league: RadarLeague?,
         stations: List<RadarTvStation> = emptyList(),
-        onPartial: (List<ChannelMatch>) -> Unit = {},
-    ): List<ChannelMatch> {
+        onPartial: suspend (List<ChannelMatch>) -> Unit = {},
+    ): List<ChannelMatch> = withContext(Dispatchers.Default) {
         val keywords = buildList {
             league?.keywords?.forEach { add(normalize(it)) }
             fixture.league?.let { add(normalize(it)) }
@@ -174,9 +176,9 @@ object RadarChannelMatcher {
         // its name — no league keyword, no team, no guide entry. A list of those reads as
         // "here's where the match is" and sends someone into a Bulgarian feed for a Mexican
         // fixture. When that's ALL we have, report nothing so the sheet can say so honestly.
-        if (ranked.none { it.score > GENERIC_NAME_SCORE }) return emptyList()
+        if (ranked.none { it.score > GENERIC_NAME_SCORE }) return@withContext emptyList()
         // Generic sports-channel name hits don't earn slots beyond the classic list length.
-        return ranked
+        ranked
             .filterIndexed { i, m -> i < NAME_RESULT_CAP || m.score > GENERIC_NAME_SCORE }
             .take(RESULT_CAP)
     }
@@ -326,18 +328,24 @@ object RadarChannelMatcher {
     private suspend fun assembleCandidates(): List<CandidateChannel> {
         XtreamRepository.ensureLoaded()
         val accounts = XtreamRepository.uiState.value.accounts.filter { it.enabled }
-        return accounts.flatMap { account ->
-            XtreamSearchIndex.liveChannelsFor(account).map { ch ->
-                CandidateChannel(
-                    playlistId = account.id,
-                    playlistName = account.name,
-                    contentId = XtreamItemRegistry.liveId(account.id, ch.streamId),
-                    name = ch.name,
-                    logo = ch.logo,
-                    streamId = ch.streamId,
-                    epgChannelId = ch.epgChannelId,
-                    hasArchive = ch.hasArchive,
-                )
+        return buildList {
+            for (account in accounts) {
+                // Ktor and the platform stores are suspend/non-blocking. This runs on Default,
+                // the platform-neutral background dispatcher, via match() above.
+                for (ch in XtreamSearchIndex.liveChannelsFor(account)) {
+                    add(
+                        CandidateChannel(
+                            playlistId = account.id,
+                            playlistName = account.name,
+                            contentId = XtreamItemRegistry.liveId(account.id, ch.streamId),
+                            name = ch.name,
+                            logo = ch.logo,
+                            streamId = ch.streamId,
+                            epgChannelId = ch.epgChannelId,
+                            hasArchive = ch.hasArchive,
+                        )
+                    )
+                }
             }
         }
     }

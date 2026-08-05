@@ -3,7 +3,7 @@ package com.nuvio.app.features.settings
 import com.nuvio.app.core.storage.DesktopStorage
 
 internal actual object SentrySettingsPlatform {
-    actual val crashReportsSupported: Boolean = false
+    actual val crashReportsSupported: Boolean = true
 }
 
 internal actual object SentrySettingsStorage {

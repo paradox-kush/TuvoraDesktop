@@ -34,6 +34,7 @@ private const val NuvioDesktopIconPath = "icons/tuvora-app-icon.png"
 private const val MacosDarkAquaAppearance = "NSAppearanceNameDarkAqua"
 
 fun main(args: Array<String>) {
+    DesktopReliabilityReporter.start()
     configureDesktopChrome()
     installDesktopOpenUriHandler()
     handleDesktopLaunchArgs(args)

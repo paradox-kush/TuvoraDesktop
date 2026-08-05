@@ -8,6 +8,7 @@ internal actual object PlatformLocalAccountDataCleaner {
         "profile_payload",
         "avatar_catalog_payload",
         "anonymous_user_id",
+        "nuvio.downloads.live_status.payload",
     )
     private val profilePinCachePrefixes = listOf("profile_pin_cache_")
     private val profileIndexedPrefixes = listOf(
@@ -84,6 +85,7 @@ internal actual object PlatformLocalAccountDataCleaner {
         for (key in defaults.dictionaryRepresentation().keys) {
             val keyString = key as? String ?: continue
             if (
+                (1..MAX_PROFILES).any { profileId -> keyString.endsWith("_$profileId") } ||
                 keyString.startsWith("stream_link_") ||
                 keyString.startsWith("cw_enrichment_cache_")
             ) {

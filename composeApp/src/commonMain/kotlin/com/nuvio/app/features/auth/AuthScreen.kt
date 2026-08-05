@@ -42,6 +42,8 @@ import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -104,8 +106,8 @@ import nuvio.composeapp.generated.resources.compose_auth_sign_up
 import nuvio.composeapp.generated.resources.compose_auth_sign_up_subtitle
 import nuvio.composeapp.generated.resources.compose_auth_store_locally
 import nuvio.composeapp.generated.resources.compose_auth_tagline
+import nuvio.composeapp.generated.resources.compose_auth_age_terms_confirmation
 import nuvio.composeapp.generated.resources.compose_auth_terms_link
-import nuvio.composeapp.generated.resources.compose_auth_terms_prefix
 import nuvio.composeapp.generated.resources.compose_auth_welcome_back
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
@@ -123,6 +125,19 @@ private val AuthPaneBorder = Color.White.copy(alpha = 0.07f)
 private val AuthDividerColor = Color.White.copy(alpha = 0.10f)
 private val AuthSecondaryButtonBackground = Color.White.copy(alpha = 0.05f)
 private val AuthSecondaryButtonBorder = Color.White.copy(alpha = 0.09f)
+
+internal const val TUVORA_TERMS_URL = "https://tuvora.co/terms"
+
+internal fun canSubmitAuth(
+    isSignUp: Boolean,
+    email: String,
+    password: String,
+    isLoading: Boolean,
+    eligibilityConfirmed: Boolean,
+): Boolean = email.isNotBlank() &&
+    password.length >= 6 &&
+    !isLoading &&
+    (!isSignUp || eligibilityConfirmed)
 
 private data class AuthFormMetrics(
     val fieldHeight: Dp,
@@ -194,11 +209,12 @@ fun AuthScreen(
     var password by rememberSaveable { mutableStateOf("") }
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
     var isLoading by rememberSaveable { mutableStateOf(false) }
+    var signUpEligibilityConfirmed by rememberSaveable { mutableStateOf(false) }
     var emailFieldBounds by remember { mutableStateOf<Rect?>(null) }
     var passwordFieldBounds by remember { mutableStateOf<Rect?>(null) }
 
     fun submitAuth() {
-        if (email.isBlank() || password.length < 6 || isLoading) return
+        if (!canSubmitAuth(isSignUp, email, password, isLoading, signUpEligibilityConfirmed)) return
         isLoading = true
         focusManager.clearFocus(force = true)
         scope.launch {
@@ -210,6 +226,7 @@ fun AuthScreen(
 
     fun toggleAuthMode() {
         isSignUp = !isSignUp
+        if (!isSignUp) signUpEligibilityConfirmed = false
         AuthRepository.clearError()
     }
 
@@ -259,6 +276,7 @@ fun AuthScreen(
                         password = password,
                         passwordVisible = passwordVisible,
                         isLoading = isLoading,
+                        signUpEligibilityConfirmed = signUpEligibilityConfirmed,
                         authError = authError,
                         formPaneWidth = if (compactLargeScreen) 460.dp else formPaneWidth,
                         brandHorizontalPadding = brandHorizontalPadding,
@@ -274,6 +292,7 @@ fun AuthScreen(
                             AuthRepository.clearError()
                         },
                         onPasswordVisibilityToggle = { passwordVisible = !passwordVisible },
+                        onSignUpEligibilityChange = { signUpEligibilityConfirmed = it },
                         onSubmit = ::submitAuth,
                         onToggleAuthMode = ::toggleAuthMode,
                         onContinueWithoutAccount = {
@@ -290,6 +309,7 @@ fun AuthScreen(
                         password = password,
                         passwordVisible = passwordVisible,
                         isLoading = isLoading,
+                        signUpEligibilityConfirmed = signUpEligibilityConfirmed,
                         authError = authError,
                         statusBarTop = statusBarTop,
                         onEmailChange = {
@@ -301,6 +321,7 @@ fun AuthScreen(
                             AuthRepository.clearError()
                         },
                         onPasswordVisibilityToggle = { passwordVisible = !passwordVisible },
+                        onSignUpEligibilityChange = { signUpEligibilityConfirmed = it },
                         onSubmit = ::submitAuth,
                         onToggleAuthMode = ::toggleAuthMode,
                         onContinueWithoutAccount = {
@@ -323,11 +344,13 @@ private fun AuthMobileLayout(
     password: String,
     passwordVisible: Boolean,
     isLoading: Boolean,
+    signUpEligibilityConfirmed: Boolean,
     authError: String?,
     statusBarTop: Dp,
     onEmailChange: (String) -> Unit,
     onPasswordChange: (String) -> Unit,
     onPasswordVisibilityToggle: () -> Unit,
+    onSignUpEligibilityChange: (Boolean) -> Unit,
     onSubmit: () -> Unit,
     onToggleAuthMode: () -> Unit,
     onContinueWithoutAccount: () -> Unit,
@@ -380,11 +403,13 @@ private fun AuthMobileLayout(
                 password = password,
                 passwordVisible = passwordVisible,
                 isLoading = isLoading,
+                signUpEligibilityConfirmed = signUpEligibilityConfirmed,
                 authError = authError,
                 metrics = MobileAuthFormMetrics,
                 onEmailChange = onEmailChange,
                 onPasswordChange = onPasswordChange,
                 onPasswordVisibilityToggle = onPasswordVisibilityToggle,
+                onSignUpEligibilityChange = onSignUpEligibilityChange,
                 onSubmit = onSubmit,
                 onToggleAuthMode = onToggleAuthMode,
                 onContinueWithoutAccount = onContinueWithoutAccount,
@@ -403,6 +428,7 @@ private fun AuthLargeLayout(
     password: String,
     passwordVisible: Boolean,
     isLoading: Boolean,
+    signUpEligibilityConfirmed: Boolean,
     authError: String?,
     formPaneWidth: Dp,
     brandHorizontalPadding: Dp,
@@ -412,6 +438,7 @@ private fun AuthLargeLayout(
     onEmailChange: (String) -> Unit,
     onPasswordChange: (String) -> Unit,
     onPasswordVisibilityToggle: () -> Unit,
+    onSignUpEligibilityChange: (Boolean) -> Unit,
     onSubmit: () -> Unit,
     onToggleAuthMode: () -> Unit,
     onContinueWithoutAccount: () -> Unit,
@@ -503,12 +530,14 @@ private fun AuthLargeLayout(
                     password = password,
                     passwordVisible = passwordVisible,
                     isLoading = isLoading,
+                    signUpEligibilityConfirmed = signUpEligibilityConfirmed,
                     authError = authError,
                     metrics = formMetrics,
                     scale = scale,
                     onEmailChange = onEmailChange,
                     onPasswordChange = onPasswordChange,
                     onPasswordVisibilityToggle = onPasswordVisibilityToggle,
+                    onSignUpEligibilityChange = onSignUpEligibilityChange,
                     onSubmit = onSubmit,
                     onToggleAuthMode = onToggleAuthMode,
                     onContinueWithoutAccount = onContinueWithoutAccount,
@@ -590,12 +619,14 @@ private fun AuthForm(
     password: String,
     passwordVisible: Boolean,
     isLoading: Boolean,
+    signUpEligibilityConfirmed: Boolean,
     authError: String?,
     metrics: AuthFormMetrics,
     scale: Float = 1f,
     onEmailChange: (String) -> Unit,
     onPasswordChange: (String) -> Unit,
     onPasswordVisibilityToggle: () -> Unit,
+    onSignUpEligibilityChange: (Boolean) -> Unit,
     onSubmit: () -> Unit,
     onToggleAuthMode: () -> Unit,
     onContinueWithoutAccount: () -> Unit,
@@ -661,8 +692,10 @@ private fun AuthForm(
         if (isSignUp) {
             Spacer(modifier = Modifier.height(14.dp * scale))
             AuthTermsAcknowledgement(
+                checked = signUpEligibilityConfirmed,
                 scale = scale,
-                onTermsClick = { uriHandler.openUri("https://nuvio.tv/terms") },
+                onCheckedChange = onSignUpEligibilityChange,
+                onTermsClick = { uriHandler.openUri(TUVORA_TERMS_URL) },
             )
         }
 
@@ -672,7 +705,7 @@ private fun AuthForm(
             text = if (isSignUp) stringResource(Res.string.compose_auth_create_account)
             else stringResource(Res.string.compose_auth_sign_in),
             isLoading = isLoading,
-            enabled = !isLoading,
+            enabled = !isLoading && (!isSignUp || signUpEligibilityConfirmed),
             height = metrics.primaryHeight,
             scale = scale,
             onClick = onSubmit,
@@ -718,16 +751,28 @@ private fun AuthForm(
 
 @Composable
 private fun AuthTermsAcknowledgement(
+    checked: Boolean,
     scale: Float,
+    onCheckedChange: (Boolean) -> Unit,
     onTermsClick: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Center,
+        horizontalArrangement = Arrangement.Start,
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        Checkbox(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = CheckboxDefaults.colors(
+                checkedColor = AuthTextPrimary,
+                checkmarkColor = AuthPrimaryButtonText,
+                uncheckedColor = AuthTextSecondary,
+            ),
+        )
         Text(
-            text = stringResource(Res.string.compose_auth_terms_prefix),
+            text = stringResource(Res.string.compose_auth_age_terms_confirmation),
+            modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodyMedium.copy(
                 color = AuthTextSecondary,
                 fontSize = (13f * scale).sp,

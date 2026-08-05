@@ -1,6 +1,7 @@
 package com.nuvio.app.core.storage
 
 import com.nuvio.app.core.build.AppFeaturePolicy
+import com.nuvio.app.core.rec.RecEventLogger
 import com.nuvio.app.core.sync.SyncManager
 import com.nuvio.app.core.sync.ProfileSettingsSync
 import com.nuvio.app.core.tracking.ensureTrackingProvidersRegistered
@@ -10,9 +11,11 @@ import com.nuvio.app.features.collection.CollectionMobileSettingsRepository
 import com.nuvio.app.features.collection.CollectionRepository
 import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.details.MetaScreenSettingsRepository
+import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.HomeRepository
 import com.nuvio.app.features.iptv.XtreamLiveRecents
+import com.nuvio.app.features.iptv.XtreamRepository
 import com.nuvio.app.features.library.LibraryRepository
 import com.nuvio.app.features.library.LibraryDisplaySettingsRepository
 import com.nuvio.app.features.notifications.EpisodeReleaseNotificationsRepository
@@ -24,6 +27,7 @@ import com.nuvio.app.features.player.SubtitleRepository
 import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.profiles.MAX_PROFILES
 import com.nuvio.app.features.search.SearchRepository
+import com.nuvio.app.features.search.SearchHistoryRepository
 import com.nuvio.app.features.settings.ThemeSettingsRepository
 import com.nuvio.app.features.streams.StreamContextStore
 import com.nuvio.app.features.streams.StreamBadgeSettingsRepository
@@ -50,6 +54,7 @@ internal object LocalAccountDataCleaner {
         WatchProgressRepository.clearLocalState()
         WatchedRepository.clearLocalState()
         XtreamLiveRecents.clearLocalState()
+        RecEventLogger.resetLocalState()
         LibraryRepository.runAccountStorageWipe {
             PlatformLocalAccountDataCleaner.wipe()
         }
@@ -80,6 +85,9 @@ internal object LocalAccountDataCleaner {
         StreamsRepository.clear()
         MetaDetailsRepository.clear()
         SearchRepository.reset()
+        SearchHistoryRepository.clearLocalState()
+        DownloadsRepository.clearLocalState()
+        XtreamRepository.clearLocalState()
         SubtitleRepository.clear()
         PlayerLaunchStore.clear()
         StreamLaunchStore.clear()

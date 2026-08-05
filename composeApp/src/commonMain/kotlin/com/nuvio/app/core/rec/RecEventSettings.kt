@@ -26,11 +26,22 @@ object RecEventSettings {
 
     fun setEnabled(value: Boolean) {
         if (_enabled.value == value) return
-        // Rotate BEFORE re-enabling so the first event of the new stream already carries the new
-        // id; an opt-out cycle should read as a new device, not a gap in an existing one.
-        if (value) RecEventIdentity.rotateDeviceId()
-        RecEventStorage.saveBoolean(KEY_ENABLED, value)
-        _enabled.value = value
+        if (!value) {
+            // Stop collection before touching the queue so a concurrent logger cannot append a
+            // new event behind the purge. Unsent events are user data too: opting out discards
+            // both the in-memory buffer and its persisted file immediately.
+            RecEventStorage.saveBoolean(KEY_ENABLED, false)
+            _enabled.value = false
+            RecEventLogger.discardPendingEvents()
+            return
+        }
+
+        // A prior version could leave a queue file behind after opt-out. Purge it before rotating
+        // identity so no pre-opt-out event can be uploaded under the new device id.
+        RecEventLogger.discardPendingEvents()
+        RecEventIdentity.rotateDeviceId()
+        RecEventStorage.saveBoolean(KEY_ENABLED, true)
+        _enabled.value = true
     }
 
     fun suppressUntil(nowMs: Long) {

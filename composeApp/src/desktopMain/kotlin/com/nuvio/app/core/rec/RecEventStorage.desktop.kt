@@ -15,6 +15,10 @@ internal actual object RecEventStorage {
         store.putString(key, value)
     }
 
+    actual fun removeString(key: String) {
+        store.remove(key)
+    }
+
     actual fun loadBoolean(key: String, default: Boolean): Boolean =
         store.getBoolean(key) ?: default
 

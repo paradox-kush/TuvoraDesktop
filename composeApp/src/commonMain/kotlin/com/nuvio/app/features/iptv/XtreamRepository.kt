@@ -338,6 +338,16 @@ object XtreamRepository {
         persist()
     }
 
+    /** Drop credential-bearing in-memory state after sign-out or account deletion. */
+    fun clearLocalState() {
+        loaded = false
+        currentProfileId = 1
+        _uiState.value = XtreamUiState()
+        XtreamItemRegistry.resetForProfile()
+        XtreamHubRepository.resetForProfile()
+        XtreamSearchIndex.resetForProfile()
+    }
+
     fun clearError() = _uiState.update { it.copy(error = null) }
 
     /** Replace this profile's accounts from a remote pull WITHOUT echoing a push back. */

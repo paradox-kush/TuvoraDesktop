@@ -13,6 +13,7 @@ package com.nuvio.app.core.rec
 internal expect object RecEventStorage {
     fun loadString(key: String): String?
     fun saveString(key: String, value: String)
+    fun removeString(key: String)
     fun loadBoolean(key: String, default: Boolean): Boolean
     fun saveBoolean(key: String, value: Boolean)
     fun loadLong(key: String, default: Long): Long

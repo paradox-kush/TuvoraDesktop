@@ -45,6 +45,14 @@ object RecEventIdentity {
         currentSessionId = randomUuid()
     }
 
+    /** Forget the install token when local account data is wiped. */
+    internal fun resetLocalState() {
+        RecEventStorage.removeString(KEY_DEVICE_ID)
+        cachedDeviceId = null
+        currentSessionId = randomUuid()
+        lastActivityAtMs = 0L
+    }
+
     /**
      * The session this event belongs to; rolls over after [SESSION_IDLE_RESET_MS] of no logging.
      * Callers must treat a changed value as a dedupe-set reset.

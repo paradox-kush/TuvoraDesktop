@@ -23,6 +23,8 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.getString
 
@@ -144,6 +146,10 @@ object AuthRepository {
         SupabaseProvider.client.auth.signUpWith(Email) {
             this.email = email
             this.password = password
+            data = buildJsonObject {
+                put("adult_confirmed", true)
+                put("terms_version", "2026-08-04")
+            }
         }
         // Clear any lingering anonymous id so the sessionStatus collector honors the real session.
         AuthStorage.clearAnonymousUserId()

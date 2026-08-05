@@ -27,6 +27,10 @@ internal actual object RecEventStorage {
         defaults.setObject(value, forKey = key)
     }
 
+    actual fun removeString(key: String) {
+        defaults.removeObjectForKey(key)
+    }
+
     actual fun loadBoolean(key: String, default: Boolean): Boolean =
         if (defaults.objectForKey(key) == null) default else defaults.boolForKey(key)
 

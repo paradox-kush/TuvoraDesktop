@@ -17,6 +17,7 @@ fun readXcconfigValue(file: File, key: String): String? {
 plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.sentry.android.gradle)
+    id("com.posthog.android") version "1.4.0"
 }
 
 val localProps = Properties().apply {
