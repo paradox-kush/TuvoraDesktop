@@ -9,11 +9,15 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import co.touchlab.kermit.Logger
+import com.nuvio.app.core.analytics.LivePlaybackFreezeReporter
+import com.nuvio.app.core.analytics.LivePlaybackReconnector
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.debrid.DebridSettingsRepository
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
@@ -131,6 +135,14 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     }
     val playerSurfaceSourceUrl = if (isP2pPlaybackActive) p2pResolvedSourceUrl else activeSourceUrl
     val initialPositionRequestKey = currentInitialPositionRequestKey()
+    // Live channels reached through the full player (rather than the docked Live TV screen)
+    // can wedge the same way, with no error for any existing report path to see.
+    val isLiveStream = activeStreamType.equals("live", ignoreCase = true)
+    val freezeReporter = remember { LivePlaybackFreezeReporter() }
+    val freezeReconnector = remember { LivePlaybackReconnector(freezeReporter) }
+    DisposableEffect(playerSurfaceSourceUrl) {
+        onDispose { if (isLiveStream) freezeReporter.onLiveSnapshotStopped(playbackSnapshot) }
+    }
     val openingOverlayWanted = playerSettingsUiState.showLoadingOverlay &&
         !initialLoadCompleted &&
         errorMessage == null
@@ -424,7 +436,21 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                 onSnapshot = { snapshot ->
                     playbackSnapshot = snapshot
                     if (!snapshot.isLoading) initialLoadCompleted = true
-                    if (snapshot.isEnded) {
+                    if (isLiveStream) {
+                        freezeReporter.onLiveSnapshot(
+                            snapshot = snapshot,
+                            engine = { playerController?.getStreamInfo()?.playerEngine },
+                            streamUrl = playerSurfaceSourceUrl,
+                            contentId = activeVideoId,
+                            surface = LIVE_FREEZE_SURFACE_PLAYER,
+                            reconnector = freezeReconnector,
+                            reconnect = { playerController?.retry() },
+                        )
+                    }
+                    // A live channel has no end: ENDED means the upstream closed, and the
+                    // reconnect above is what answers it. Pausing here would fight that, and
+                    // would leave the picture frozen if the reconnect ladder is still running.
+                    if (snapshot.isEnded && !isLiveStream) {
                         shouldPlay = false
                         controlsVisible = !playerControlsLocked
                     }

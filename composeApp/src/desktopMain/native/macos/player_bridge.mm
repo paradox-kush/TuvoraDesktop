@@ -1408,6 +1408,16 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     setMpvOptionString(_mpv, "input-default-bindings", "yes");
     setMpvOptionString(_mpv, "input-vo-keyboard", "no");
     setMpvOptionString(_mpv, "keep-open", "yes");
+    // keep-open parks the core on the last frame at EOF, which is right for a file and wrong for
+    // a live channel: an IPTV panel closing the socket mid-stream reads as a clean EOF, so the
+    // picture freezes with nothing to time it out. Bound the blocking read, and let ffmpeg
+    // re-open the URL itself — that heals a transient drop before the app-level reconnect
+    // (LivePlaybackFreezeTracking) has to tear playback down and rebuild it.
+    setMpvOptionString(_mpv, "network-timeout", "15");
+    setMpvOptionString(
+        _mpv,
+        "stream-lavf-o",
+        "reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=5");
     setMpvOptionString(_mpv, "vo", "libmpv");
     setMpvOptionString(_mpv, "ao", "avfoundation,coreaudio,");
     setMpvOptionString(_mpv, "audio-channels", "auto");

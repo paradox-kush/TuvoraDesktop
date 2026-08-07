@@ -32,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -52,7 +53,12 @@ import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.PlatformBackHandler
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.iptv.XtreamProgram
+import com.nuvio.app.core.analytics.LivePlaybackFreezeReporter
+import com.nuvio.app.core.analytics.LivePlaybackReconnector
 import com.nuvio.app.features.player.EnterImmersivePlayerMode
+import com.nuvio.app.features.player.LIVE_FREEZE_SURFACE_DOCKED
+import com.nuvio.app.features.player.onLiveSnapshot
+import com.nuvio.app.features.player.onLiveSnapshotStopped
 import com.nuvio.app.features.player.PlatformPlayerSurface
 import com.nuvio.app.features.player.PlayerEngineController
 import com.nuvio.app.features.player.PlayerSettingsRepository
@@ -109,6 +115,17 @@ fun LiveTvScreen(
     var streamInfo by remember { mutableStateOf(PlayerStreamInfo()) }
     var showStreamInfo by remember { mutableStateOf(false) }
     var retryTick by remember { mutableStateOf(0) }
+
+    // Live channels can wedge with no error at all, which no existing report path can see.
+    // Survives channel switches (this composable stays alive), so the reporter is re-armed
+    // per channel below rather than recreated.
+    val freezeReporter = remember { LivePlaybackFreezeReporter() }
+    val freezeReconnector = remember { LivePlaybackReconnector(freezeReporter) }
+    // Keyed on the channel: fires on a channel switch and on leaving the screen, which are the
+    // two ways a viewer escapes a frozen picture.
+    DisposableEffect(currentContentId) {
+        onDispose { freezeReporter.onLiveSnapshotStopped(snapshot) }
+    }
 
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var channels by remember { mutableStateOf<List<LiveGuideChannel>>(emptyList()) }
@@ -262,7 +279,21 @@ fun LiveTvScreen(
                 LivePlayerSurface(
                     source = source,
                     onControllerReady = { controller = it },
-                    onSnapshot = { snapshot = it },
+                    onSnapshot = {
+                        snapshot = it
+                        freezeReporter.onLiveSnapshot(
+                            snapshot = it,
+                            engine = { controller?.getStreamInfo()?.playerEngine },
+                            streamUrl = source?.url,
+                            contentId = currentContentId,
+                            surface = LIVE_FREEZE_SURFACE_DOCKED,
+                            reconnector = freezeReconnector,
+                            // Re-resolve rather than controller.retry(): live links carry
+                            // expiring tokens, so replaying the same URL can reconnect to a
+                            // link the provider has already invalidated.
+                            reconnect = onRetry,
+                        )
+                    },
                     onError = { playbackError = it },
                 )
 

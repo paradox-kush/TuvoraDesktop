@@ -53,6 +53,10 @@ internal object DesktopReliabilityReporter {
                 releaseIdentifier = version
             }
             PostHog.setup(config)
+            // Lets shared code capture without depending on a platform-specific SDK.
+            com.nuvio.app.core.analytics.AnalyticsSink.register { event, properties ->
+                PostHog.capture(event, properties = properties)
+            }
             if (crashReportsEnabled) PostHog.optIn() else PostHog.optOut()
             PostHog.register(PostHogPrivacy.GEOIP_DISABLE_PROPERTY, true)
             PostHog.register("\$app_name", "Tuvora Desktop")
