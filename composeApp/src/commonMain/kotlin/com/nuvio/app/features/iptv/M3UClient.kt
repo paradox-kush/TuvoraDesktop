@@ -104,7 +104,7 @@ object M3UClient : IptvClient {
             streamFileLines(path, onLine)
         } else {
             // dnsProvider (P3) routes the M3U fetch through the playlist's DoH resolver on Android.
-            httpStreamLines(url, acc.userAgent(), acc.dnsProvider, onLine)
+            httpStreamLines(url, acc.userAgent(), acc.dnsProvider, onLine = onLine)
         }
     }
 

@@ -280,10 +280,12 @@ actual suspend fun httpStreamLines(
     url: String,
     userAgent: String?,
     dnsProvider: String?,
+    headers: Map<String, String>,
     onLine: (String) -> Unit,
 ): Unit = withContext(Dispatchers.IO) {
     val builder = Request.Builder().url(url).get()
     if (!userAgent.isNullOrBlank()) builder.header("User-Agent", userAgent)
+    for ((k, v) in headers) builder.header(k, v)
     // OkHttp transparently gunzips a `Content-Encoding: gzip` response when we don't set
     // Accept-Encoding ourselves — so leave it unset. For a URL that returns a raw .gz body
     // (no Content-Encoding header), we sniff the gzip magic bytes and wrap manually.

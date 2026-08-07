@@ -113,7 +113,7 @@ object XmltvClient {
 
     /** Streams the guide's lines. Network only in P2 — a `file://` EPG source is a later upgrade. */
     private suspend fun streamGuideLines(source: EpgSource, userAgent: String?, dnsProvider: String?, onLine: (String) -> Unit) {
-        httpStreamLines(source.url, userAgent, dnsProvider, onLine)
+        httpStreamLines(source.url, userAgent, dnsProvider, onLine = onLine)
     }
 
     private class EpgCollector(private val playlistId: String) {

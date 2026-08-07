@@ -23,7 +23,7 @@ class XtreamCatalogIndexParserTest {
     private val json = Json { ignoreUnknownKeys = true }
 
     private fun ids(vararg chunks: String): List<Int> {
-        val parser = XtreamCatalogIndexParser(json) { o -> o["id"]?.jsonPrimitive?.intOrNull }
+        val parser = XtreamCatalogIndexParser(json, map = { o -> o["id"]?.jsonPrimitive?.intOrNull })
         chunks.forEach(parser::accept)
         return parser.finish()
     }
@@ -56,7 +56,7 @@ class XtreamCatalogIndexParserTest {
     @Test
     fun bracesAndBracketsInsideStringsDoNotEndAnElement() {
         // Real titles carry these: "Movie [2019] {Extended}", plus escaped quotes.
-        val parser = XtreamCatalogIndexParser(json) { o -> o["name"]?.jsonPrimitive?.contentOrNull }
+        val parser = XtreamCatalogIndexParser(json, map = { o -> o["name"]?.jsonPrimitive?.contentOrNull })
         parser.accept("""[{"name":"A [2019] {x}, and \"quoted\""},{"name":"B"}]""")
         assertEquals(listOf("""A [2019] {x}, and "quoted"""", "B"), parser.finish())
     }
@@ -64,7 +64,7 @@ class XtreamCatalogIndexParserTest {
     @Test
     fun escapedBackslashBeforeQuoteStillClosesTheString() {
         // "C:\\" ends the string at the following quote — the backslash is escaped, not escaping.
-        val parser = XtreamCatalogIndexParser(json) { o -> o["name"]?.jsonPrimitive?.contentOrNull }
+        val parser = XtreamCatalogIndexParser(json, map = { o -> o["name"]?.jsonPrimitive?.contentOrNull })
         parser.accept("""[{"name":"back\\"},{"name":"next"}]""")
         assertEquals(listOf("""back\""", "next"), parser.finish())
     }
@@ -73,7 +73,7 @@ class XtreamCatalogIndexParserTest {
     fun escapeSequenceSplitAcrossChunksIsNotLost() {
         // The backslash and the quote it escapes land in different chunks — scanner state has to
         // survive the boundary or the string is read as closed and the element falls apart.
-        val parser = XtreamCatalogIndexParser(json) { o -> o["name"]?.jsonPrimitive?.contentOrNull }
+        val parser = XtreamCatalogIndexParser(json, map = { o -> o["name"]?.jsonPrimitive?.contentOrNull })
         parser.accept("[{\"name\":\"a\\")          // ends on the backslash
         parser.accept("\"b\"},{\"name\":\"c\"}]")  // opens on the quote it escapes
         assertEquals(listOf("a\"b", "c"), parser.finish())
@@ -120,7 +120,7 @@ class XtreamCatalogIndexParserTest {
     fun feedsRealCatalogRowsThroughTheExistingItemParsers() {
         // End to end on the shapes the panels actually send, including the field-type chaos the
         // loose parsers exist to absorb (tmdb as int on one row, quoted string on the next).
-        val vodParser = XtreamCatalogIndexParser<IndexedItem>(json) { o -> parseVod(o) }
+        val vodParser = XtreamCatalogIndexParser<IndexedItem>(json, map = { o -> parseVod(o) })
         vodParser.accept(
             """[{"stream_id":1,"name":"Dune (2021)","tmdb":"438631","container_extension":"mkv"},"""
         )

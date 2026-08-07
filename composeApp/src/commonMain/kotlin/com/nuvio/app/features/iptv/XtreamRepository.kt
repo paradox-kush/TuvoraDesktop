@@ -330,8 +330,10 @@ object XtreamRepository {
         WatchedRepository.migrateIdPrefix(prefix, null)
         XtreamLiveRecents.migrateIdPrefix(prefix, null)
         // Free the parsed catalog rows + EPG for a removed M3U playlist (can be hundreds of MB of DB),
-        // and drop a file playlist's saved local copy.
-        if (removed != null && removed.sourceType.isM3u()) scope.launch {
+        // and drop a file playlist's saved local copy. Stalker rides the same clear: its bulk EPG
+        // now lives in the same per-playlist tables (P5 streamed ingest), and clearing a playlist
+        // with no catalog rows is a no-op for the other tables.
+        if (removed != null && (removed.sourceType.isM3u() || removed.sourceType == SOURCE_TYPE_STALKER)) scope.launch {
             M3UClient.clear(removed)
             if (removed.sourceType == SOURCE_TYPE_M3U_FILE) deleteM3UFile(removed.id)
         }

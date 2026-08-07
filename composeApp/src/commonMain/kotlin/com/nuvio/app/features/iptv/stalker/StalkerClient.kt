@@ -11,9 +11,13 @@ import com.nuvio.app.features.iptv.XtreamProgram
 import com.nuvio.app.features.iptv.XtreamSeriesDetail
 import com.nuvio.app.features.iptv.XtreamSeriesItem
 import com.nuvio.app.features.iptv.XtreamVodDetail
+import com.nuvio.app.features.iptv.content.EpgProgrammeRow
+import com.nuvio.app.features.iptv.content.IptvContentDb
 import com.nuvio.app.features.trakt.TraktPlatformClock
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -48,11 +52,12 @@ object StalkerClient : IptvClient {
     private val liveCmds = mutableMapOf<String, String>()
     private val liveMutex = Mutex()
 
-    // The whole guide per account in ONE get_epg_info fetch, keyed by channel id (see [bulkEpg]).
-    private class EpgSnapshot(val byChannel: Map<Int, List<XtreamProgram>>, val fetchedAtMs: Long)
-    private val epgCache = mutableMapOf<String, EpgSnapshot>()
+    // Bulk EPG lands in IptvContentDb.epg_programmes (streamed, chunk-inserted — see
+    // [ensureBulkEpg]); nothing guide-sized is retained in memory anymore. This set only marks
+    // portals whose get_epg_info genuinely has no data, so they use the per-channel fallback.
     private val epgUnsupported = mutableSetOf<String>()
     private val epgMutex = Mutex()
+    private val epgJson = Json { ignoreUnknownKeys = true; isLenient = true }
 
     // Season rows per series (one movie_id=<id> request), keyed accountId:seriesId — see [seasonsOf].
     private val seasonCache = mutableMapOf<String, List<StalkerSeason>>()
@@ -72,7 +77,6 @@ object StalkerClient : IptvClient {
         rowCache.keys.removeAll { it.startsWith("${acc.id}:") }
         liveCmds.keys.removeAll { it.startsWith("${acc.id}:") }
         liveCache.remove(acc.id)
-        epgCache.remove(acc.id)
         epgUnsupported.remove(acc.id)
         seasonCache.keys.removeAll { it.startsWith("${acc.id}:") }
         sessionFactory(acc).also { sessions[acc.id] = Entry(it, fp) }
@@ -273,8 +277,22 @@ object StalkerClient : IptvClient {
      * browse, the biggest single load left after get_all_channels).
      */
     override suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int): Result<List<XtreamProgram>> = runCatching {
-        bulkEpg(acc)?.let { return@runCatching it[streamId].orEmpty().take(limit) }
-        // Portal has no get_epg_info — fall back to the per-channel call.
+        if (ensureBulkEpg(acc)) {
+            val now = TraktPlatformClock.nowEpochMs()
+            return@runCatching IptvContentDb.epgAround(acc.id, streamId.toString(), now, limit).map {
+                XtreamProgram(
+                    title = it.title,
+                    description = it.desc.orEmpty(),
+                    startMs = it.startMs,
+                    endMs = it.endMs,
+                    nowPlaying = now in it.startMs until it.endMs,
+                )
+            }
+        }
+        // Transient bulk failure (network/cooldown): return empty rather than fanning out a
+        // per-channel request per visible tile — the next ensure retries. Only a portal that
+        // GENUINELY lacks get_epg_info takes the per-channel path.
+        if (acc.id !in epgUnsupported) return@runCatching emptyList()
         val js = sessionFor(acc).request(
             mapOf("type" to "itv", "action" to "get_short_epg", "ch_id" to streamId.toString(), "size" to limit.toString())
         )
@@ -284,35 +302,96 @@ object StalkerClient : IptvClient {
     }
 
     /**
-     * The WHOLE guide in ONE request (`get_epg_info&period=3` — 2.5MB, ~600 channels, 1s on a real
-     * portal), keyed by channel id. Null when the portal doesn't support it, so the caller degrades to
-     * the per-channel path. Re-fetched every [EPG_TTL_MS] because "now/next" advances.
+     * Ensures a fresh (≤[EPG_TTL_MS]) bulk guide for [acc] is stored in [IptvContentDb], fetching
+     * `get_epg_info&period=3` when stale. The response is STREAMED through
+     * [StalkerEpgStreamParser] and chunk-inserted — it used to be read into one String plus a full
+     * JsonElement tree plus a retained byChannel map, which is the 174.5 MB failure mode a real
+     * client trace demonstrated (research/iptv-catalog-loading.md §3). Peak memory is now one
+     * insert chunk regardless of guide size, and the rows double as [IptvContentDb.epgSearch]
+     * input, so the sports matcher can finally see a Stalker portal's own guide.
      *
-     * Note only channels that HAVE epg appear — a miss here means the portal has no guide for that
-     * channel, NOT that we should go ask per-channel (that's what caused the fan-out).
+     * Returns true when the DB holds programmes for this playlist. Marks [epgUnsupported] ONLY
+     * when a healthy body genuinely carries no `data` object — a transport failure stays
+     * retryable (the old code marked unsupported on any failure, so one network blip put the hub
+     * on the per-channel fan-out path for the whole session).
      */
-    private suspend fun bulkEpg(acc: XtreamAccount): Map<Int, List<XtreamProgram>>? = epgMutex.withLock {
-        if (acc.id in epgUnsupported) return@withLock null
+    private suspend fun ensureBulkEpg(acc: XtreamAccount): Boolean {
+        if (acc.id in epgUnsupported) return false
         val now = TraktPlatformClock.nowEpochMs()
-        epgCache[acc.id]?.takeIf { now - it.fetchedAtMs < EPG_TTL_MS }?.let { return@withLock it.byChannel }
-        val js = runCatching {
-            sessionFor(acc).request(mapOf("type" to "itv", "action" to "get_epg_info", "period" to EPG_PERIOD_HOURS))
-        }.getOrNull()
-        val data = (js as? JsonObject)?.get("data") as? JsonObject
-        if (data.isNullOrEmpty()) {
-            epgUnsupported += acc.id   // don't retry the bulk call all session
-            return@withLock null
-        }
-        val byChannel = buildMap<Int, List<XtreamProgram>> {
-            data.forEach { (chId, arr) ->
-                val id = chId.toIntOrNull() ?: return@forEach
-                val progs = (arr as? JsonArray)?.mapNotNull { it as? JsonObject }
-                    ?.map { programOf(it, nowMs = now) }.orEmpty()
-                if (progs.isNotEmpty()) put(id, progs)
+        IptvContentDb.epgMeta(acc.id)?.takeIf { now - it.builtAtMs < EPG_TTL_MS }
+            ?.let { return it.programmeCount > 0 }
+        return epgMutex.withLock {
+            IptvContentDb.epgMeta(acc.id)?.takeIf { now - it.builtAtMs < EPG_TTL_MS }
+                ?.let { return@withLock it.programmeCount > 0 }   // raced: another caller ingested
+            val ingest = EpgIngest(acc.id, epgJson)
+            val streamed = runCatching {
+                ingest.begin()
+                sessionFor(acc).requestStream(
+                    params = mapOf("type" to "itv", "action" to "get_epg_info", "period" to EPG_PERIOD_HOURS),
+                    onRestart = { ingest.restart() },
+                    onChunk = { ingest.feed(it) },
+                )
             }
+            if (streamed.isFailure) return@withLock false   // retryable — meta stays absent/stale
+            if (!ingest.sawData) {
+                epgUnsupported += acc.id                    // healthy body, genuinely no guide
+                IptvContentDb.finishEpg(acc.id, 0)
+                return@withLock false
+            }
+            val count = ingest.finish()
+            count > 0
         }
-        epgCache[acc.id] = EpgSnapshot(byChannel, now)
-        byChannel
+    }
+
+    /**
+     * One bulk-EPG ingest attempt: buffers parsed programme rows and flushes every [EPG_FLUSH]
+     * via [kotlinx.coroutines.runBlocking] on the transport's IO thread (the established
+     * M3U-ingest idiom — never the main thread). [restart] wipes and re-arms for the session's
+     * single re-auth retry.
+     */
+    private class EpgIngest(private val playlistId: String, private val json: Json) {
+        private val buffer = ArrayList<EpgProgrammeRow>(EPG_FLUSH)
+        private var parser = newParser()
+        private var count = 0
+
+        val sawData: Boolean get() = parser.sawData
+
+        private fun newParser() = StalkerEpgStreamParser(json) { chId, prog ->
+            buffer.add(
+                EpgProgrammeRow(
+                    channelId = chId.toString(),
+                    startMs = prog.startMs,
+                    endMs = prog.endMs,
+                    title = prog.title,
+                    desc = prog.description.takeIf { it.isNotBlank() },
+                )
+            )
+            count++
+            if (buffer.size >= EPG_FLUSH) flushBlocking()
+        }
+
+        fun begin() = runBlocking { IptvContentDb.beginEpg(playlistId) }
+
+        fun restart() {
+            buffer.clear()
+            count = 0
+            parser = newParser()
+            begin()
+        }
+
+        fun feed(chunk: String) = parser.feed(chunk)
+
+        private fun flushBlocking() = runBlocking {
+            IptvContentDb.insertEpgChunk(playlistId, buffer)
+            buffer.clear()
+        }
+
+        /** Flushes the tail and writes the meta row LAST (crash-safe, like every other ingest). */
+        fun finish(): Int {
+            if (buffer.isNotEmpty()) flushBlocking()
+            runBlocking { IptvContentDb.finishEpg(playlistId, count) }
+            return count
+        }
     }
 
     /** [nowMs] > 0 decides nowPlaying against the clock; else the portal's first-entry hint is used. */
@@ -535,9 +614,10 @@ object StalkerClient : IptvClient {
     // ever cover the first slice, so let it fail fast instead of firing 200 requests to still miss.
     private const val FALLBACK_SCAN_ITEMS = 280
 
-    // get_epg_info window + how long a snapshot stays fresh. 3h covers now/next comfortably; the
-    // snapshot is re-fetched every 30 min so "now" keeps up.
+    // get_epg_info window + how long the stored guide stays fresh. 3h covers now/next comfortably;
+    // re-ingested every 30 min so "now" keeps up. EPG_FLUSH bounds ingest memory to one chunk.
     private const val EPG_PERIOD_HOURS = "3"
     private const val EPG_TTL_MS = 30 * 60 * 1000L
+    private const val EPG_FLUSH = 2_000
     private val SEASON_NAME = Regex("""season\s*(\d+)""", RegexOption.IGNORE_CASE)
 }

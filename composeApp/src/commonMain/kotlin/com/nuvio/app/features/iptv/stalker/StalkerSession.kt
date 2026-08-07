@@ -2,6 +2,7 @@ package com.nuvio.app.features.iptv.stalker
 
 import com.nuvio.app.features.addons.EmptyResponseBodyException
 import com.nuvio.app.features.addons.httpGetTextWithHeaders
+import com.nuvio.app.features.addons.httpStreamLines
 import com.nuvio.app.features.iptv.XtreamAccount
 import io.ktor.http.encodeURLParameter
 import kotlinx.coroutines.sync.Mutex
@@ -37,6 +38,10 @@ internal class StalkerSession(
     // Injectable HTTP seam so the auth/retry logic is unit-testable with a fake portal; production
     // uses the real platform GET (throws on non-2xx / blank body — that throw IS the stale signal).
     private val httpGet: suspend (url: String, headers: Map<String, String>) -> String = ::httpGetTextWithHeaders,
+    // Streaming twin of [httpGet] (bulk EPG): chunks go to the callback, nothing body-sized is
+    // held. Tests inject `{ u, h, c -> c(fakePortal(u, h)) }` so the fake drives BOTH seams.
+    private val httpStream: suspend (url: String, headers: Map<String, String>, onChunk: (String) -> Unit) -> Unit =
+        { u, h, c -> httpStreamLines(u, userAgent = null, dnsProvider = null, headers = h, onLine = c) },
 ) {
     private var token: String? = null
     private var resolvedEndpoint: String? = null   // e.g. "/portal.php"
@@ -113,6 +118,97 @@ internal class StalkerSession(
 
     /** Force re-auth on the next call (used when a create_link/browse hits a hard failure). */
     fun invalidate() { token = null }
+
+    /**
+     * Authenticated GET that STREAMS the body to [onChunk] instead of materializing it — for the
+     * one Stalker response that can be enormous (bulk get_epg_info: 174.5 MB from a real client
+     * trace on our research mock; see research/iptv-catalog-loading.md). Same auth + single
+     * re-auth retry semantics as [request]: the first bytes are sniffed for the portal's
+     * "Authorization failed." sentinel / an empty body, and ONE re-handshake retry runs before
+     * giving up. [onRestart] fires before the retry's first chunk so a consumer that already
+     * swallowed chunks can reset (the EPG ingest re-begins its transaction).
+     *
+     * The sniff window is buffered (few hundred bytes) and flushed to [onChunk] as soon as the
+     * body proves healthy, so memory stays O(chunk).
+     */
+    suspend fun requestStream(
+        params: Map<String, String>,
+        onRestart: () -> Unit,
+        onChunk: (String) -> Unit,
+    ) {
+        ensureAuthenticated()
+        val staleToken = token
+        val first = runCatching { rawRequestStream(params, onChunk) }
+        if (first.isSuccess && first.getOrThrow()) {
+            lastFailedReauthAtMs = 0L
+            return
+        }
+        val authFailure = first.exceptionOrNull() is StalkerAuthException ||
+            first.exceptionOrNull() is EmptyResponseBodyException ||
+            (first.isSuccess && !first.getOrThrow())   // empty body, no throw
+        if (!authFailure) throw first.exceptionOrNull() ?: error("Stalker stream failed")
+        val now = com.nuvio.app.features.streams.epochMs()
+        if (lastFailedReauthAtMs != 0L && now - lastFailedReauthAtMs < REAUTH_COOLDOWN_MS) {
+            error("Stalker session for ${account.name} is held by another device — cooling down")
+        }
+        reauthenticate(staleToken)
+        onRestart()
+        val retried = runCatching { rawRequestStream(params, onChunk) }
+        if (retried.isFailure || !retried.getOrThrow()) {
+            lastFailedReauthAtMs = now
+            error("Stalker portal returned no data for ${params["action"]} — the session is in use elsewhere")
+        }
+        lastFailedReauthAtMs = 0L
+    }
+
+    /** One streamed GET. Returns true when any body bytes arrived; throws [StalkerAuthException]
+     *  when the sniff window contains the rejection sentinel. */
+    private suspend fun rawRequestStream(
+        params: Map<String, String>,
+        onChunk: (String) -> Unit,
+    ): Boolean {
+        val endpointPath = resolvedEndpoint ?: StalkerProtocol.ENDPOINT_CANDIDATES.first()
+        val query = (params + ("JsHttpRequest" to "1-xml")).entries.joinToString("&") { (k, v) ->
+            "${k.encodeURLParameter()}=${v.encodeURLParameter()}"
+        }
+        val url = "$baseUrl$endpointPath?$query"
+        val cookie = buildString {
+            append("mac=").append(StalkerProtocol.encodeMacForCookie(account.macAddress))
+            append("; stb_lang=en; timezone=Europe/London")
+            append("; sn=").append(identity.serialNumber)
+            append("; PHPSESSID=null")
+        }
+        val headers = buildMap {
+            put("User-Agent", USER_AGENT)
+            put("X-User-Agent", X_USER_AGENT)
+            put("Referer", referer)
+            put("Cookie", cookie)
+            token?.takeIf { it.isNotEmpty() }?.let { put("Authorization", "Bearer $it") }
+        }
+        var sniffing = true
+        val sniff = StringBuilder()
+        var sawBytes = false
+        gate.withPermit {
+            httpStream(url, headers) { line ->
+                sawBytes = sawBytes || line.isNotEmpty()
+                if (sniffing) {
+                    sniff.append(line)
+                    if (sniff.contains(AUTH_FAILED_MARKER, ignoreCase = true))
+                        throw StalkerAuthException("Stalker portal rejected this device for ${account.name} — check the MAC address (and Serial / Device ID if the portal requires them)")
+                    if (sniff.length > SNIFF_WINDOW) {
+                        sniffing = false
+                        onChunk(sniff.toString())
+                        sniff.clear()
+                    }
+                } else {
+                    onChunk(line)
+                }
+            }
+        }
+        // Body smaller than the sniff window (tiny/empty responses) — flush what we held.
+        if (sniffing && sniff.isNotEmpty()) onChunk(sniff.toString())
+        return sawBytes
+    }
 
     // --- Auth -----------------------------------------------------------------
 
@@ -259,6 +355,8 @@ internal class StalkerSession(
          * again and the pair would spin — a self-inflicted request storm, and portals ban for that.
          */
         private const val REAUTH_COOLDOWN_MS = 30_000L
+        /** Bytes buffered at stream start to sniff "Authorization failed." before forwarding. */
+        private const val SNIFF_WINDOW = 512
         // ponytail: fixed ceiling, no adaptive backoff. Raise only with evidence a portal tolerates
         // more; add backoff only if we start seeing 429s at this level.
         // Was 4; lowered after tracing TiviMate 5.3.3 against a controlled portal: the category

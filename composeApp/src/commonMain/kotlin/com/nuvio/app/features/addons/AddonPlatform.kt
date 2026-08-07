@@ -100,5 +100,8 @@ expect suspend fun httpStreamLines(
     url: String,
     userAgent: String?,
     dnsProvider: String? = null,
+    // Extra request headers (P5, Stalker bulk-EPG streaming: Cookie/Referer/Authorization —
+    // a MAG portal rejects bare requests). Additive default keeps every existing caller as-is.
+    headers: Map<String, String> = emptyMap(),
     onLine: (String) -> Unit,
 )
