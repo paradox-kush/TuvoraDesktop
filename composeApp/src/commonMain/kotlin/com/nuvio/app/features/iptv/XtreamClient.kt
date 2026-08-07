@@ -102,6 +102,22 @@ object XtreamClient : IptvClient {
         streamArray(acc, playerApi(acc, "get_series")) { o -> parseSeriesIndexItem(o) }
     }
 
+    /**
+     * [vodIndexItems], streamed: each parsed row goes straight to [onItem] and is then garbage —
+     * the full catalog never exists in heap as one list. This is the index build's path: the list
+     * variant peaked at the whole catalog (~40-50 MB of IndexedItem for a 175k panel) on exactly
+     * the devices whose heap can't take it. Returns the delivered-row count; throws (like the list
+     * variant) on a truncated body, so a partial catalog can't finalize a sync.
+     */
+    internal suspend fun vodIndexItemsInto(acc: XtreamAccount, onItem: (IndexedItem) -> Unit): Result<Int> = call {
+        streamArrayInto(acc, playerApi(acc, "get_vod_streams"), { o -> parseVodIndexItem(o) }, onItem)
+    }
+
+    /** Series half of [vodIndexItemsInto]. */
+    internal suspend fun seriesIndexItemsInto(acc: XtreamAccount, onItem: (IndexedItem) -> Unit): Result<Int> = call {
+        streamArrayInto(acc, playerApi(acc, "get_series"), { o -> parseSeriesIndexItem(o) }, onItem)
+    }
+
     /** One VOD list entry -> index row, skipping the domain model entirely. internal for tests. */
     internal fun parseVodIndexItem(o: JsonObject): IndexedItem? {
         val id = o["stream_id"].asIntOrNull() ?: return null
@@ -309,6 +325,18 @@ object XtreamClient : IptvClient {
         val parser = XtreamCatalogIndexParser(json, map)
         httpStreamLines(url, userAgent = null, dnsProvider = acc.dnsProvider) { parser.accept(it) }
         return parser.finish()
+    }
+
+    /** [streamArray] in sink mode: rows go to [onItem] as they parse; returns the count. */
+    private suspend fun <T> streamArrayInto(
+        acc: XtreamAccount,
+        url: String,
+        map: (JsonObject) -> T?,
+        onItem: (T) -> Unit,
+    ): Int {
+        val parser = XtreamCatalogIndexParser(json, map, sink = onItem)
+        httpStreamLines(url, userAgent = null, dnsProvider = acc.dnsProvider) { parser.accept(it) }
+        return parser.finishCount()
     }
 
     private fun playerApi(acc: XtreamAccount, action: String? = null, categoryId: String? = null): String {

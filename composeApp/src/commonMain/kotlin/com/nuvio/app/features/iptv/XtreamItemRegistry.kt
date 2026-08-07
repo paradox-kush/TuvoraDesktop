@@ -3,8 +3,8 @@ package com.nuvio.app.features.iptv
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.home.PosterShape
 import com.nuvio.app.features.streams.StreamItem
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.update
+import kotlinx.atomicfu.locks.SynchronizedObject
+import kotlinx.atomicfu.locks.synchronized
 
 /**
  * Maps a namespaced `xtream:{accountId}:{kind}:{id}` content id back to a directly
@@ -18,7 +18,17 @@ import kotlinx.coroutines.flow.update
  */
 object XtreamItemRegistry {
 
-    private val _items = MutableStateFlow<Map<String, XtreamResolvedItem>>(emptyMap())
+    /**
+     * Resolved items by content id. A plain mutable map behind a lock, NOT a StateFlow of an
+     * immutable map: `map + pair` allocates a whole new map per insert, and [register] is called
+     * once per item while a category fills, so a 10k-item category copied ~50M entries and threw
+     * away 10k maps — quadratic allocation churn, which is what gets a low-RAM TV
+     * lowmemorykilled. Nothing ever collected this as a flow (only [get] reads it), so the
+     * StateFlow bought nothing. Same idiom as [XtreamHubRepository]'s category cache, and the TV
+     * twin's ConcurrentHashMap.
+     */
+    private val itemsLock = SynchronizedObject()
+    private val items = mutableMapOf<String, XtreamResolvedItem>()
 
     fun isXtreamId(id: String?): Boolean = id != null && id.startsWith("$PREFIX:")
 
@@ -52,22 +62,33 @@ object XtreamItemRegistry {
     }
 
     fun register(item: XtreamResolvedItem) {
-        _items.update { it + (item.contentId to item) }
+        synchronized(itemsLock) { items[item.contentId] = item }
     }
 
-    fun registerMovie(accountId: String, movie: XtreamMovie) = register(
+    /** Registers a whole category in one lock acquisition — the browse path's hot loop. */
+    fun registerAll(batch: List<XtreamResolvedItem>) {
+        if (batch.isEmpty()) return
+        synchronized(itemsLock) { for (item in batch) items[item.contentId] = item }
+    }
+
+    // Pure builders, so a caller filling a whole category can map first and [registerAll] once
+    // instead of taking the lock per item.
+    fun resolvedMovie(accountId: String, movie: XtreamMovie) =
         XtreamResolvedItem(vodId(accountId, movie.streamId), accountId, XtreamKind.VOD, movie.name, movie.streamUrl, movie.poster)
-    )
 
-    fun registerChannel(accountId: String, channel: XtreamChannel) = register(
+    fun resolvedChannel(accountId: String, channel: XtreamChannel) =
         XtreamResolvedItem(liveId(accountId, channel.streamId), accountId, XtreamKind.LIVE, channel.name, channel.streamUrl, channel.logo, streamType = "live")
-    )
 
-    fun registerSeries(accountId: String, series: XtreamSeriesItem) = register(
+    fun resolvedSeries(accountId: String, series: XtreamSeriesItem) =
         XtreamResolvedItem(seriesId(accountId, series.seriesId), accountId, XtreamKind.SERIES, series.name, null, series.poster)
-    )
 
-    fun get(contentId: String): XtreamResolvedItem? = _items.value[contentId]
+    fun registerMovie(accountId: String, movie: XtreamMovie) = register(resolvedMovie(accountId, movie))
+
+    fun registerChannel(accountId: String, channel: XtreamChannel) = register(resolvedChannel(accountId, channel))
+
+    fun registerSeries(accountId: String, series: XtreamSeriesItem) = register(resolvedSeries(accountId, series))
+
+    fun get(contentId: String): XtreamResolvedItem? = synchronized(itemsLock) { items[contentId] }
 
     fun isLiveId(contentId: String): Boolean = parseId(contentId)?.kind == XtreamKind.LIVE
 
@@ -141,7 +162,7 @@ object XtreamItemRegistry {
 
     /** Clears everything — call on profile switch so accounts don't leak across profiles. */
     fun resetForProfile() {
-        _items.value = emptyMap()
+        synchronized(itemsLock) { items.clear() }
     }
 
     private const val PREFIX = "xtream"

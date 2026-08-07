@@ -34,9 +34,20 @@ import kotlinx.serialization.json.JsonObject
 internal class XtreamCatalogIndexParser<T>(
     private val json: Json,
     private val map: (JsonObject) -> T?,
+    /**
+     * When set, each parsed element is handed here instead of accumulated — [finish] then returns an
+     * empty list and [finishCount] carries the tally. This is what keeps a 175k-item catalog from
+     * ever existing in heap as one list: the index build streams elements straight into the
+     * SQLite session ([XtreamMatchIndex.beginSync]) the way the M3U ingest streams lines.
+     */
+    private val sink: ((T) -> Unit)? = null,
 ) {
     private val out = ArrayList<T>()
     private val element = StringBuilder()
+
+    /** Elements delivered (to [sink] or [out]) — the streamed replacement for `finish().size`. */
+    var deliveredCount: Int = 0
+        private set
 
     private var started = false     // consumed the array's opening '['
     private var finished = false    // consumed its closing ']'
@@ -112,12 +123,26 @@ internal class XtreamCatalogIndexParser<T>(
         return out
     }
 
-    /** Parses one collected element and appends its mapping. Blank/garbage elements are skipped. */
+    /**
+     * [finish] for sink mode: same truncation guards (a body that ends mid-array still throws —
+     * a streamed consumer has already applied its elements, but the caller must NOT finalize
+     * (delete vanished rows / bump built_at) on a partial catalog), returning the tally instead
+     * of a list.
+     */
+    fun finishCount(): Int {
+        check(started) { "expected a catalog array, got an empty response" }
+        check(finished) { "catalog response ended mid-array" }
+        return deliveredCount
+    }
+
+    /** Parses one collected element and delivers its mapping. Blank/garbage elements are skipped. */
     private fun flush() {
         val text = element.toString().trim()
         element.clear()
         if (text.isEmpty()) return
         val obj = runCatching { json.parseToJsonElement(text) as? JsonObject }.getOrNull() ?: return
-        map(obj)?.let(out::add)
+        val mapped = map(obj) ?: return
+        deliveredCount++
+        sink?.invoke(mapped) ?: out.add(mapped)
     }
 }

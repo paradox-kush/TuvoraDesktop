@@ -54,6 +54,18 @@ object XtreamHubRepository {
     private val categoryLoadGate = Semaphore(MAX_CONCURRENT_CATEGORY_LOADS)
 
     /**
+     * How many categories keep their loaded items in memory at once.
+     *
+     * [cache] used to only ever grow: nothing but a profile switch or a playlist edit emptied it,
+     * so a session that browsed several sections across two playlists retained every item it had
+     * ever seen — and each of those items is retained a second time by [XtreamItemRegistry].
+     * Past this cap the least-recently-loaded category drops its items and reloads if the user
+     * scrolls back to it, which is a cheap category fetch (or a local DB read for M3U).
+     */
+    private const val MAX_LOADED_CATEGORIES = 40
+    private val loadedOrder = ArrayDeque<CategoryKey>()
+
+    /**
      * Categories with a fetch claimed (queued or running). This — not XtreamHubCategory.loading —
      * is the single-flight guard: the lookahead means several rows ask for the same category, and a
      * category-list refresh rebuilds the list with `loading` cleared, so that flag alone can be
@@ -191,18 +203,25 @@ object XtreamHubRepository {
                 categoryLoadGate.withPermit {
                     val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == accountId }
                     val client = account?.let { IptvClient.forAccount(it) }
+                    // Register the whole category in ONE batch. This loop is the browse hot path —
+                    // a category can be tens of thousands of items, and registering per-item took
+                    // the registry lock once per item.
                     val items = if (account == null || client == null) emptyList() else when (section) {
-                        XtreamHubSection.LIVE -> client.liveChannels(account, categoryId).getOrDefault(emptyList()).map { ch ->
-                            XtreamItemRegistry.registerChannel(accountId, ch); ch.toMetaPreview(accountId)
+                        XtreamHubSection.LIVE -> client.liveChannels(account, categoryId).getOrDefault(emptyList()).let { rows ->
+                            XtreamItemRegistry.registerAll(rows.map { XtreamItemRegistry.resolvedChannel(accountId, it) })
+                            rows.map { it.toMetaPreview(accountId) }
                         }
-                        XtreamHubSection.MOVIES -> client.vodMovies(account, categoryId).getOrDefault(emptyList()).map { m ->
-                            XtreamItemRegistry.registerMovie(accountId, m); m.toMetaPreview(accountId)
+                        XtreamHubSection.MOVIES -> client.vodMovies(account, categoryId).getOrDefault(emptyList()).let { rows ->
+                            XtreamItemRegistry.registerAll(rows.map { XtreamItemRegistry.resolvedMovie(accountId, it) })
+                            rows.map { it.toMetaPreview(accountId) }
                         }
-                        XtreamHubSection.SERIES -> client.series(account, categoryId).getOrDefault(emptyList()).map { s ->
-                            XtreamItemRegistry.registerSeries(accountId, s); s.toMetaPreview(accountId)
+                        XtreamHubSection.SERIES -> client.series(account, categoryId).getOrDefault(emptyList()).let { rows ->
+                            XtreamItemRegistry.registerAll(rows.map { XtreamItemRegistry.resolvedSeries(accountId, it) })
+                            rows.map { it.toMetaPreview(accountId) }
                         }
                     }
                     updateCategory(accountId, section, categoryId) { it.copy(items = items, loaded = true, loading = false) }
+                    noteLoadedAndEvict(key)
                     completed = true
                 }
             } finally {
@@ -264,8 +283,27 @@ object XtreamHubRepository {
         }
     }
 
+    /**
+     * Marks [key] most-recently-loaded and drops the items of anything past [MAX_LOADED_CATEGORIES].
+     * The eviction happens OUTSIDE the lock because [updateCategory] takes it itself.
+     */
+    private fun noteLoadedAndEvict(key: CategoryKey) {
+        val evicted = synchronized(categoryLock) {
+            loadedOrder.remove(key)
+            loadedOrder.addLast(key)
+            val out = ArrayList<CategoryKey>()
+            while (loadedOrder.size > MAX_LOADED_CATEGORIES) out.add(loadedOrder.removeFirst())
+            out
+        }
+        for (k in evicted) {
+            updateCategory(k.accountId, k.section, k.categoryId) {
+                it.copy(items = emptyList(), loaded = false, loading = false)
+            }
+        }
+    }
+
     fun resetForProfile() {
-        synchronized(categoryLock) { cache.clear() }
+        synchronized(categoryLock) { cache.clear(); loadedOrder.clear() }
         lastPrefetchMark = null
         epgFetched.clear()
         _epg.value = emptyMap()

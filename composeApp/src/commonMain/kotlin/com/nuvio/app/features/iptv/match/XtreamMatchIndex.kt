@@ -261,6 +261,172 @@ internal object XtreamMatchIndex {
         )
     }
 
+    /**
+     * Opens a streaming sync: the caller feeds catalog rows one at a time as the response parses
+     * ([SyncSession.accept]), and the session flushes to the DB every [SyncSession.FLUSH_CHUNK]
+     * rows — so peak heap is one chunk (~5k items), never the whole catalog. Finalization
+     * (vanished-row deletes + the built_at bump) happens ONLY in [SyncSession.finish], which the
+     * caller must not reach on a truncated body; rows applied before an abort are harmless
+     * (idempotent INSERT OR REPLACE, meta untouched, next sync re-runs).
+     *
+     * Semantics vs [sync]: identical, minus the wholesale-reshuffle rebuild shortcut — streaming
+     * can't know the diff size up front, so a renumbered catalog takes the (correct, chunked)
+     * incremental path instead of a clean rebuild. On an empty index this IS a streamed rebuild:
+     * any leftover rows are wiped here, and every accepted row is an upsert.
+     */
+    suspend fun beginSync(provider: String, kind: MatchKind): SyncSession {
+        var sids = IntArray(4_096)
+        var fps = IntArray(4_096)
+        var count = 0
+        mutex.withLock {
+            connection().prepare(
+                "SELECT sid, name, year, tmdb, ext, poster FROM items WHERE provider = ? AND kind = ? ORDER BY sid"
+            ).use { st ->
+                st.bindText(1, provider); st.bindText(2, kind.slug)
+                while (st.step()) {
+                    if (count == sids.size) {
+                        sids = sids.copyOf(count * 2); fps = fps.copyOf(count * 2)
+                    }
+                    sids[count] = st.getLong(0).toInt()
+                    fps[count] = itemFp(
+                        name = st.getText(1),
+                        year = if (st.isNull(2)) null else st.getLong(2).toInt(),
+                        tmdb = if (st.isNull(3)) null else st.getLong(3).toInt(),
+                        ext = if (st.isNull(4)) null else st.getText(4),
+                        poster = if (st.isNull(5)) null else st.getText(5),
+                    )
+                    count++
+                }
+            }
+        }
+        if (count == 0) {
+            // First build (or a crashed one): clear any leftovers so the stream is a clean rebuild.
+            // Deleting idx_meta here also keeps the caller's "empty list on a first build is OK"
+            // check working — builtAt reads null until finish() writes it.
+            mutex.withLock {
+                val c = connection()
+                c.execSQL("BEGIN IMMEDIATE")
+                try {
+                    for (table in listOf("items", "keys", "idx_meta")) {
+                        c.prepare("DELETE FROM $table WHERE provider = ? AND kind = ?").use { st ->
+                            st.bindText(1, provider); st.bindText(2, kind.slug); st.step()
+                        }
+                    }
+                    c.execSQL("COMMIT")
+                } catch (t: Throwable) {
+                    c.execSQL("ROLLBACK"); throw t
+                }
+            }
+        }
+        return SyncSession(provider, kind, sids.copyOf(count), fps.copyOf(count))
+    }
+
+    /** One in-flight streaming sync. Not thread-safe: feed it from the single response-reader thread. */
+    class SyncSession internal constructor(
+        private val provider: String,
+        private val kind: MatchKind,
+        private val existingSids: IntArray,
+        private val existingFps: IntArray,
+    ) {
+        private val seen = BooleanArray(existingSids.size)
+        private val pending = ArrayList<IndexedItem>(FLUSH_CHUNK)
+        private val pendingChanged = ArrayList<Int>()
+        private var fetched = 0
+        private var added = 0
+        private var changed = 0
+
+        /**
+         * Accepts one parsed catalog row. Non-suspend so the transport's reader callback can call
+         * it directly; a full chunk drains via [kotlinx.coroutines.runBlocking] on that same IO
+         * thread — the exact idiom [com.nuvio.app.features.iptv.M3UClient]'s IngestCollector
+         * established (never the main thread). Duplicate sids: first occurrence decides, like
+         * [diffCatalog].
+         */
+        fun accept(item: IndexedItem) {
+            fetched++
+            val i = existingSids.ascIndexOf(item.sid)
+            if (i < 0) {
+                pending += item
+                added++
+            } else if (!seen[i]) {
+                seen[i] = true
+                if (existingFps[i] != item.fp()) {
+                    pending += item
+                    pendingChanged += item.sid
+                    changed++
+                }
+            }
+            if (pending.size >= FLUSH_CHUNK) kotlinx.coroutines.runBlocking { flush() }
+        }
+
+        private suspend fun flush() {
+            if (pending.isEmpty()) return
+            // Renamed rows' old name-keys must go before their new keys land (same order sync()
+            // guarantees via its up-front delete).
+            if (pendingChanged.isNotEmpty()) {
+                mutex.withLock {
+                    val c = connection()
+                    c.execSQL("BEGIN IMMEDIATE")
+                    try {
+                        for (chunk in pendingChanged.chunked(500)) {
+                            val ph = chunk.joinToString(",") { "?" }
+                            c.prepare("DELETE FROM keys WHERE provider = ? AND kind = ? AND sid IN ($ph)").use { st ->
+                                st.bindText(1, provider); st.bindText(2, kind.slug)
+                                chunk.forEachIndexed { i, sid -> st.bindLong(i + 3, sid.toLong()) }
+                                st.step()
+                            }
+                        }
+                        c.execSQL("COMMIT")
+                    } catch (t: Throwable) {
+                        c.execSQL("ROLLBACK"); throw t
+                    }
+                }
+            }
+            insertItems(provider, kind, pending)
+            pending.clear()
+            pendingChanged.clear()
+        }
+
+        /**
+         * Flushes the tail, deletes rows the fetch no longer contains, and bumps built_at LAST.
+         * An empty fetch against an existing index is treated as a panel glitch — nothing is
+         * deleted and built_at stays stale so the next window retries (mirrors [sync]).
+         */
+        suspend fun finish(): SyncStats {
+            if (fetched == 0 && existingSids.isNotEmpty()) return SyncStats(0, 0, 0, existingSids.size)
+            flush()
+            val gone = ArrayList<Int>()
+            for (i in existingSids.indices) if (!seen[i]) gone += existingSids[i]
+            if (gone.isNotEmpty()) {
+                mutex.withLock {
+                    val c = connection()
+                    c.execSQL("BEGIN IMMEDIATE")
+                    try {
+                        for (chunk in gone.chunked(500)) {
+                            val ph = chunk.joinToString(",") { "?" }
+                            for (table in listOf("keys", "items")) {
+                                c.prepare("DELETE FROM $table WHERE provider = ? AND kind = ? AND sid IN ($ph)").use { st ->
+                                    st.bindText(1, provider); st.bindText(2, kind.slug)
+                                    chunk.forEachIndexed { i, sid -> st.bindLong(i + 3, sid.toLong()) }
+                                    st.step()
+                                }
+                            }
+                        }
+                        c.execSQL("COMMIT")
+                    } catch (t: Throwable) {
+                        c.execSQL("ROLLBACK"); throw t
+                    }
+                }
+            }
+            writeMeta(provider, kind, fetched)
+            return SyncStats(added = added, changed = changed, removed = gone.size, total = fetched)
+        }
+
+        private companion object {
+            const val FLUSH_CHUNK = 5_000
+        }
+    }
+
     private suspend fun insertItems(provider: String, kind: MatchKind, items: List<IndexedItem>) {
         for (chunk in items.chunked(5_000)) {
             mutex.withLock {

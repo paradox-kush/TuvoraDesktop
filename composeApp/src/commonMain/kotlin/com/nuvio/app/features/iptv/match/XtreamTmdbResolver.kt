@@ -1,9 +1,12 @@
 package com.nuvio.app.features.iptv.match
 
 import co.touchlab.kermit.Logger
+import com.nuvio.app.features.iptv.CONTENT_TYPE_MOVIES
+import com.nuvio.app.features.iptv.CONTENT_TYPE_SERIES
 import com.nuvio.app.features.iptv.SOURCE_TYPE_XTREAM
 import com.nuvio.app.features.iptv.XtreamAccount
 import com.nuvio.app.features.iptv.XtreamClient
+import com.nuvio.app.features.iptv.typeEnabled
 import com.nuvio.app.features.tmdb.TmdbTitleBundle
 import com.nuvio.app.features.trakt.TraktPlatformClock
 import kotlinx.coroutines.CompletableDeferred
@@ -74,8 +77,12 @@ internal object XtreamTmdbResolver {
         accounts.filter { it.enabled && it.sourceType == SOURCE_TYPE_XTREAM }.forEach { acc ->
             buildScope.launch {
                 if (startDelayMs > 0) delay(startDelayMs)
-                ensureIndexed(acc, MatchKind.MOVIE)
-                ensureIndexed(acc, MatchKind.SERIES)
+                // Respect the playlist's content types. Xtream's get_vod_streams is the single
+                // largest fetch the app makes (~15 MB on a 60k-title panel, and the whole catalog
+                // in ONE response — the API has no paging), so a user who turned Movies off was
+                // still paying for it in full on every add and every 72h refresh.
+                if (acc.typeEnabled(CONTENT_TYPE_MOVIES)) ensureIndexed(acc, MatchKind.MOVIE)
+                if (acc.typeEnabled(CONTENT_TYPE_SERIES)) ensureIndexed(acc, MatchKind.SERIES)
             }
         }
     }
@@ -227,21 +234,25 @@ internal object XtreamTmdbResolver {
         if (isOwner) {
             buildScope.launch {
                 try {
-                    val items = buildSlot.withPermit {
-                        // One catalog build at a time across ALL accounts. Each build peaks at
-                        // the size of one catalog; warming several accounts concurrently stacked
-                        // those peaks in the same heap, which low-RAM devices can't take.
-                        when (kind) {
-                            MatchKind.MOVIE -> XtreamClient.vodIndexItems(acc).getOrThrow()
-                            MatchKind.SERIES -> XtreamClient.seriesIndexItems(acc).getOrThrow()
+                    val stats = buildSlot.withPermit {
+                        // One catalog build at a time across ALL accounts, and STREAMED: each
+                        // parsed row goes straight into the SQLite session and is then garbage,
+                        // so a build peaks at one 5k flush-chunk instead of the whole catalog
+                        // (~40-50 MB of IndexedItem on a 175k panel — the allocation that used
+                        // to OOM low-RAM devices right after a playlist was added).
+                        val session = XtreamMatchIndex.beginSync(acc.id, kind)
+                        val fetched = when (kind) {
+                            MatchKind.MOVIE -> XtreamClient.vodIndexItemsInto(acc, session::accept).getOrThrow()
+                            MatchKind.SERIES -> XtreamClient.seriesIndexItemsInto(acc, session::accept).getOrThrow()
                         }
+                        // An empty list where we previously indexed content is a panel glitch, not
+                        // a real catalog — fail into the 1h backoff instead of re-fetching every
+                        // resolve. Checked BEFORE finish() so built_at stays untouched.
+                        check(fetched > 0 || XtreamMatchIndex.builtAt(acc.id, kind) == null) {
+                            "panel returned an empty ${kind.slug} list"
+                        }
+                        session.finish()
                     }
-                    // An empty list where we previously indexed content is a panel glitch, not a
-                    // real catalog — fail into the 1h backoff instead of re-fetching every resolve.
-                    check(items.isNotEmpty() || XtreamMatchIndex.builtAt(acc.id, kind) == null) {
-                        "panel returned an empty ${kind.slug} list"
-                    }
-                    val stats = XtreamMatchIndex.sync(acc.id, kind, items)
                     log.i { "synced ${kind.slug} index for ${acc.name}: +${stats.added} ~${stats.changed} -${stats.removed} (${stats.total} total)" }
                     buildLock.withLock { lastFailedBuildMs.remove(key) }
                 } catch (t: Throwable) {
