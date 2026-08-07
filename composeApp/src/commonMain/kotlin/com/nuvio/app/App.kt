@@ -108,6 +108,7 @@ import coil3.compose.setSingletonImageLoaderFactory
 import coil3.request.CachePolicy
 import coil3.request.crossfade
 import coil3.svg.SvgDecoder
+import com.nuvio.app.core.analytics.Breadcrumbs
 import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
@@ -928,6 +929,17 @@ private fun MainAppContent(
             warmProfileBoundRepositories()
         }
         val currentRoute = navBackStack.lastOrNull() as? AppRoute
+        // Crash-context breadcrumbs: the route/tab name is what "screen" means to a person —
+        // autocaptured $screen only ever names the host Activity or hosting controller, which
+        // left every process-death report unattributable to a feature.
+        LaunchedEffect(currentRoute, selectedTab) {
+            val screenName = when (currentRoute) {
+                null -> null
+                TabsRoute -> "Tabs.${selectedTab.name}"
+                else -> currentRoute::class.simpleName
+            }
+            screenName?.let(Breadcrumbs::screenChanged)
+        }
         val liquidGlassNativeTabBarEnabled by remember {
             ThemeSettingsRepository.liquidGlassNativeTabBarEnabled
         }.collectAsStateWithLifecycle()

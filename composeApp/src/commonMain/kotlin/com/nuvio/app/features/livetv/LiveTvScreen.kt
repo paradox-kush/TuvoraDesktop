@@ -53,6 +53,7 @@ import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.PlatformBackHandler
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.iptv.XtreamProgram
+import com.nuvio.app.core.analytics.Breadcrumbs
 import com.nuvio.app.core.analytics.LivePlaybackFreezeReporter
 import com.nuvio.app.core.analytics.LivePlaybackReconnector
 import com.nuvio.app.features.player.EnterImmersivePlayerMode
@@ -124,8 +125,13 @@ fun LiveTvScreen(
     // Keyed on the channel: fires on a channel switch and on leaving the screen, which are the
     // two ways a viewer escapes a frozen picture.
     DisposableEffect(currentContentId) {
-        onDispose { freezeReporter.onLiveSnapshotStopped(snapshot) }
+        onDispose {
+            freezeReporter.onLiveSnapshotStopped(snapshot)
+            Breadcrumbs.playbackStopped()
+        }
     }
+    // Reset per channel: an in-place channel switch is a new playback start.
+    val playbackStartRecorded = remember(currentContentId) { mutableStateOf(false) }
 
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var channels by remember { mutableStateOf<List<LiveGuideChannel>>(emptyList()) }
@@ -281,6 +287,16 @@ fun LiveTvScreen(
                     onControllerReady = { controller = it },
                     onSnapshot = {
                         snapshot = it
+                        if (!playbackStartRecorded.value && (it.positionMs > 0L || it.isPlaying)) {
+                            playbackStartRecorded.value = true
+                            Breadcrumbs.playbackStarted(
+                                kind = "live",
+                                engine = controller?.getStreamInfo()?.playerEngine?.lowercase() ?: "unknown",
+                                surface = LIVE_FREEZE_SURFACE_DOCKED,
+                                container = LivePlaybackFreezeReporter.streamContainerOf(source?.url),
+                                nowMs = TraktPlatformClock.nowEpochMs(),
+                            )
+                        }
                         freezeReporter.onLiveSnapshot(
                             snapshot = it,
                             engine = { controller?.getStreamInfo()?.playerEngine },

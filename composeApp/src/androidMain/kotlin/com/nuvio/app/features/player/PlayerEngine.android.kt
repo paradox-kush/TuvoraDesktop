@@ -380,7 +380,7 @@ private fun ExoPlayerSurface(
         }
 
         val loadControl = DefaultLoadControl.Builder()
-            .setTargetBufferBytes(100 * 1024 * 1024)
+            .setTargetBufferBytes(playerTargetBufferBytes(context))
             .setBufferDurationsMs(
                 15_000,
                 70_000,
@@ -1311,7 +1311,7 @@ private class NuvioLibmpvView(
         mpv.setOptionString("tls-verify", "yes")
         mpv.setOptionString("tls-ca-file", "${context.filesDir.path}/cacert.pem")
         mpv.setOptionString("demuxer-max-bytes", "${libmpvCacheBytes()}").logIfMpvError("demuxer-max-bytes")
-        mpv.setOptionString("demuxer-max-back-bytes", "${libmpvCacheBytes()}").logIfMpvError("demuxer-max-back-bytes")
+        mpv.setOptionString("demuxer-max-back-bytes", "${libmpvCacheBytes() / 2}").logIfMpvError("demuxer-max-back-bytes")
         mpv.setOptionString("vd-lavc-film-grain", "cpu")
         mpv.setPropertyBoolean("keep-open", true)
         mpv.setPropertyBoolean("input-default-bindings", true)
@@ -1618,6 +1618,26 @@ private data class LibmpvTrack(
 
 private fun libmpvCacheBytes(): Int =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) 64 * 1024 * 1024 else 32 * 1024 * 1024
+
+/**
+ * ExoPlayer's media buffer is plain byte[] on the Java heap. A flat 100MB target was ~40% of
+ * the 256MB growth limit most phones grant this app (no largeHeap), and the field showed the
+ * consequence: OutOfMemoryError at the growth limit on flagships and low_memory_kills on
+ * everything else, minutes into a stream. Budget a quarter of the real heap instead, and less
+ * on declared low-RAM devices.
+ */
+private fun playerTargetBufferBytes(context: Context): Int = playerTargetBufferBytes(
+    isLowRamDevice = (context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager)
+        ?.isLowRamDevice == true,
+    maxHeapBytes = Runtime.getRuntime().maxMemory(),
+)
+
+internal fun playerTargetBufferBytes(isLowRamDevice: Boolean, maxHeapBytes: Long): Int {
+    if (isLowRamDevice) return 24 * 1024 * 1024
+    return (maxHeapBytes / 4)
+        .coerceIn(24L * 1024 * 1024, 64L * 1024 * 1024)
+        .toInt()
+}
 
 private fun Int.logIfMpvError(option: String) {
     if (this < 0) Log.w(TAG, "libmpv option failed: $option status=$this")

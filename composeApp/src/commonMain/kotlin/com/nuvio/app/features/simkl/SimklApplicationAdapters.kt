@@ -1,6 +1,7 @@
 package com.nuvio.app.features.simkl
 
 import co.touchlab.kermit.Logger
+import com.nuvio.app.core.analytics.AnalyticsSink
 import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.tracking.TrackingHistoryItem
 import com.nuvio.app.features.tracking.TrackingProviderId
@@ -94,8 +95,17 @@ object SimklWatchedSyncAdapter : TrackingWatchedProvider {
             )
         }
         val result = SimklMutationRepository.addToHistory(profileId = profileId, items = historyItems)
-        check(result.isComplete) {
-            "Simkl could not match ${result.notFoundCount} of ${result.attemptedCount} watched items"
+        // A mismatch is data quality, not a programming error — this was a check() whose
+        // uncaught IllegalStateException crashed the app mid-sync. Record it, keep what matched.
+        if (!result.isComplete) {
+            AnalyticsSink.capture(
+                "simkl_match_failure",
+                mapOf(
+                    "lane" to "history_add",
+                    "not_found" to result.notFoundCount,
+                    "attempted" to result.attemptedCount,
+                ),
+            )
         }
     }
 
@@ -122,8 +132,15 @@ object SimklWatchedSyncAdapter : TrackingWatchedProvider {
             }
         }
         val result = SimklMutationRepository.removeFromHistory(profileId = profileId, items = media)
-        check(result.isComplete) {
-            "Simkl could not match ${result.notFoundCount} of ${result.attemptedCount} watched items"
+        if (!result.isComplete) {
+            AnalyticsSink.capture(
+                "simkl_match_failure",
+                mapOf(
+                    "lane" to "history_remove",
+                    "not_found" to result.notFoundCount,
+                    "attempted" to result.attemptedCount,
+                ),
+            )
         }
     }
 }

@@ -16,6 +16,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import co.touchlab.kermit.Logger
+import androidx.compose.runtime.mutableStateOf
+import com.nuvio.app.core.analytics.Breadcrumbs
 import com.nuvio.app.core.analytics.LivePlaybackFreezeReporter
 import com.nuvio.app.core.analytics.LivePlaybackReconnector
 import com.nuvio.app.core.ui.nuvio
@@ -140,8 +142,14 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     val isLiveStream = activeStreamType.equals("live", ignoreCase = true)
     val freezeReporter = remember { LivePlaybackFreezeReporter() }
     val freezeReconnector = remember { LivePlaybackReconnector(freezeReporter) }
+    // Reset per source so a reconnect or source switch records a fresh start; the persisted
+    // side of the breadcrumb is what says "died while streaming" on the next launch.
+    val playbackStartRecorded = remember(playerSurfaceSourceUrl) { mutableStateOf(false) }
     DisposableEffect(playerSurfaceSourceUrl) {
-        onDispose { if (isLiveStream) freezeReporter.onLiveSnapshotStopped(playbackSnapshot) }
+        onDispose {
+            if (isLiveStream) freezeReporter.onLiveSnapshotStopped(playbackSnapshot)
+            Breadcrumbs.playbackStopped()
+        }
     }
     val openingOverlayWanted = playerSettingsUiState.showLoadingOverlay &&
         !initialLoadCompleted &&
@@ -436,6 +444,16 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                 onSnapshot = { snapshot ->
                     playbackSnapshot = snapshot
                     if (!snapshot.isLoading) initialLoadCompleted = true
+                    if (!playbackStartRecorded.value && (snapshot.positionMs > 0L || snapshot.isPlaying)) {
+                        playbackStartRecorded.value = true
+                        Breadcrumbs.playbackStarted(
+                            kind = if (isLiveStream) "live" else "vod",
+                            engine = playerController?.getStreamInfo()?.playerEngine?.lowercase() ?: "unknown",
+                            surface = LIVE_FREEZE_SURFACE_PLAYER,
+                            container = LivePlaybackFreezeReporter.streamContainerOf(playerSurfaceSourceUrl),
+                            nowMs = com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs(),
+                        )
+                    }
                     if (isLiveStream) {
                         freezeReporter.onLiveSnapshot(
                             snapshot = snapshot,

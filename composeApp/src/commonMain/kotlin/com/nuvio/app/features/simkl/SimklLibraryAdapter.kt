@@ -1,5 +1,6 @@
 package com.nuvio.app.features.simkl
 
+import com.nuvio.app.core.analytics.AnalyticsSink
 import com.nuvio.app.features.library.LibraryItem
 import com.nuvio.app.features.library.LibrarySection
 import com.nuvio.app.features.profiles.ProfileRepository
@@ -116,8 +117,18 @@ object SimklLibraryRepository {
 
             else -> return null
         }
-        check(result.isComplete) {
-            "Simkl could not match ${result.notFoundCount} of ${result.attemptedCount} library items"
+        // A Simkl mismatch is data quality, not a programming error: plenty of catalog items
+        // simply have no Simkl id. This was a check() whose uncaught IllegalStateException took
+        // the whole app down mid-mutation (a fielded TV crash). Record it and keep what matched.
+        if (!result.isComplete) {
+            AnalyticsSink.capture(
+                "simkl_match_failure",
+                mapOf(
+                    "lane" to "library",
+                    "not_found" to result.notFoundCount,
+                    "attempted" to result.attemptedCount,
+                ),
+            )
         }
         val resolution = desiredStatus?.let { requested ->
             result.resolvedListStatuses
