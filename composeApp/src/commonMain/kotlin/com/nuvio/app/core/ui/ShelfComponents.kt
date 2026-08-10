@@ -292,24 +292,26 @@ fun NuvioPosterCard(
             contentAlignment = Alignment.Center,
         ) {
             // Artwork is optional and IPTV panels are full of dead poster links, so the box must
-            // never read as an unlabelled rectangle: the centred title stands in whenever there is
-            // no usable URL *or* the load fails. A successful load is untouched — the title is only
-            // composed once the image reports an error, never while it is still loading.
+            // never read as an unlabelled rectangle — or as a blank flash: the centred title
+            // stands in from the first frame and stays through loading and failure; only a
+            // successful decode replaces it. (Memory-cache hits report success during
+            // composition, so cached artwork never shows the title at all.)
             val hasImageUrl = !imageUrl.isNullOrBlank()
             val imageFailed = remember(imageUrl) { mutableStateOf(false) }
+            val imageLoaded = remember(imageUrl) { mutableStateOf(false) }
             if (hasImageUrl) {
                 NuvioAsyncImage(
                     model = imageUrl,
                     contentDescription = title,
                     modifier = Modifier.matchParentSize(),
                     contentScale = ContentScale.Crop,
-                    onLoading = { imageFailed.value = false },
-                    onSuccess = { imageFailed.value = false },
+                    onLoading = { imageFailed.value = false; imageLoaded.value = false },
+                    onSuccess = { imageFailed.value = false; imageLoaded.value = true },
                     onError = { imageFailed.value = true },
                 )
             }
             // Read after the image composes, so an onError write lands as a forward invalidation.
-            val showsFallbackTitle = !hasImageUrl || imageFailed.value
+            val showsFallbackTitle = !hasImageUrl || imageFailed.value || !imageLoaded.value
             if (showsFallbackTitle) {
                 Text(
                     text = title,

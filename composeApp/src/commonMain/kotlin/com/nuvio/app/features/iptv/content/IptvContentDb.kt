@@ -15,7 +15,12 @@ internal enum class IptvContentKind(val slug: String) { LIVE("live"), VOD("vod")
 
 internal data class IptvCategoryRow(val id: String, val name: String)
 
-/** A live channel or VOD movie row. [ext] = container extension (VOD only). */
+/**
+ * A live channel or VOD movie row. [ext] = container extension (VOD only). [cmd] is the Stalker
+ * create_link handle (P6): stable across sessions — unlike the play URL, which is single-use —
+ * so persisting it is what makes a browsed Stalker item playable after a cold start. [hasArchive]
+ * = Stalker tv_archive (timeshift); M3U rows leave both defaulted.
+ */
 internal data class IptvStreamRow(
     val sid: Int,
     val name: String,
@@ -24,6 +29,8 @@ internal data class IptvStreamRow(
     val categoryId: String?,
     val url: String,
     val ext: String?,
+    val cmd: String? = null,
+    val hasArchive: Boolean = false,
 )
 
 /** A series row (one per distinct series within a playlist). */
@@ -34,7 +41,9 @@ internal data class IptvSeriesRow(
     val categoryId: String?,
 )
 
-/** One episode belonging to a series (grouped by [seriesSid]). */
+/** One episode belonging to a series (grouped by [seriesSid]). [cmd] = the SEASON's create_link
+ *  handle for Stalker (episodes play as season-cmd + series=<n>; the top-level series row's own
+ *  cmd is empty on real portals), denormalized per episode row. */
 internal data class IptvEpisodeRow(
     val seriesSid: Int,
     val episodeId: String,
@@ -44,6 +53,7 @@ internal data class IptvEpisodeRow(
     val logo: String?,
     val url: String,
     val ext: String?,
+    val cmd: String? = null,
 )
 
 internal data class IngestMeta(
@@ -111,6 +121,15 @@ internal object IptvContentDb {
             runCatching { it.execSQL("ALTER TABLE ingest_meta ADD COLUMN epg_url TEXT") }
             it.execSQL("PRAGMA user_version = 2")
         }
+        // v3 (P6 Stalker→SQLite): the stable create_link handle per row + the timeshift flag, so a
+        // browsed Stalker item survives a cold start. Additive columns; M3U rows leave them NULL.
+        if (version < 3) {
+            runCatching { it.execSQL("ALTER TABLE channels ADD COLUMN cmd TEXT") }
+            runCatching { it.execSQL("ALTER TABLE channels ADD COLUMN tv_archive INTEGER") }
+            runCatching { it.execSQL("ALTER TABLE vod ADD COLUMN cmd TEXT") }
+            runCatching { it.execSQL("ALTER TABLE episodes ADD COLUMN cmd TEXT") }
+            it.execSQL("PRAGMA user_version = 3")
+        }
         it.execSQL("CREATE TABLE IF NOT EXISTS epg_programmes(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, title TEXT NOT NULL, desc TEXT)")
         it.execSQL("CREATE INDEX IF NOT EXISTS epg_lookup ON epg_programmes(playlist_id, channel_id, start_ms)")
         // Per-playlist EPG freshness marker (kept separate from the catalog's ingest_meta so an EPG
@@ -170,7 +189,7 @@ internal object IptvContentDb {
         val c = connection()
         c.execSQL("BEGIN IMMEDIATE")
         try {
-            if (channels.isNotEmpty()) c.prepare("INSERT OR REPLACE INTO channels(playlist_id, sid, category_id, name, logo, tvg_id, url) VALUES(?,?,?,?,?,?,?)").use { st ->
+            if (channels.isNotEmpty()) c.prepare("INSERT OR REPLACE INTO channels(playlist_id, sid, category_id, name, logo, tvg_id, url, cmd, tv_archive) VALUES(?,?,?,?,?,?,?,?,?)").use { st ->
                 for (r in channels) {
                     st.reset()
                     st.bindText(1, playlistId); st.bindLong(2, r.sid.toLong())
@@ -179,10 +198,12 @@ internal object IptvContentDb {
                     if (r.logo != null) st.bindText(5, r.logo) else st.bindNull(5)
                     if (r.tvgId != null) st.bindText(6, r.tvgId) else st.bindNull(6)
                     st.bindText(7, r.url)
+                    if (r.cmd != null) st.bindText(8, r.cmd) else st.bindNull(8)
+                    st.bindLong(9, if (r.hasArchive) 1L else 0L)
                     st.step()
                 }
             }
-            if (vod.isNotEmpty()) c.prepare("INSERT OR REPLACE INTO vod(playlist_id, sid, category_id, name, logo, url, ext) VALUES(?,?,?,?,?,?,?)").use { st ->
+            if (vod.isNotEmpty()) c.prepare("INSERT OR REPLACE INTO vod(playlist_id, sid, category_id, name, logo, url, ext, cmd) VALUES(?,?,?,?,?,?,?,?)").use { st ->
                 for (r in vod) {
                     st.reset()
                     st.bindText(1, playlistId); st.bindLong(2, r.sid.toLong())
@@ -191,6 +212,7 @@ internal object IptvContentDb {
                     if (r.logo != null) st.bindText(5, r.logo) else st.bindNull(5)
                     st.bindText(6, r.url)
                     if (r.ext != null) st.bindText(7, r.ext) else st.bindNull(7)
+                    if (r.cmd != null) st.bindText(8, r.cmd) else st.bindNull(8)
                     st.step()
                 }
             }
@@ -204,7 +226,7 @@ internal object IptvContentDb {
                     st.step()
                 }
             }
-            if (episodes.isNotEmpty()) c.prepare("INSERT OR REPLACE INTO episodes(playlist_id, series_sid, episode_id, name, season, episode, logo, url, ext) VALUES(?,?,?,?,?,?,?,?,?)").use { st ->
+            if (episodes.isNotEmpty()) c.prepare("INSERT OR REPLACE INTO episodes(playlist_id, series_sid, episode_id, name, season, episode, logo, url, ext, cmd) VALUES(?,?,?,?,?,?,?,?,?,?)").use { st ->
                 for (r in episodes) {
                     st.reset()
                     st.bindText(1, playlistId); st.bindLong(2, r.seriesSid.toLong()); st.bindText(3, r.episodeId)
@@ -212,6 +234,7 @@ internal object IptvContentDb {
                     if (r.logo != null) st.bindText(7, r.logo) else st.bindNull(7)
                     st.bindText(8, r.url)
                     if (r.ext != null) st.bindText(9, r.ext) else st.bindNull(9)
+                    if (r.cmd != null) st.bindText(10, r.cmd) else st.bindNull(10)
                     st.step()
                 }
             }
@@ -401,6 +424,73 @@ internal object IptvContentDb {
         }
     }
 
+    /**
+     * Windowed reads (item 5): [limit] rows from [offset], name-ordered — the hub loads a first
+     * window and appends on row-end instead of materializing a 10k-row category as one List
+     * (which is how "M3U has a DB" still bloated the heap: storage without paging).
+     */
+    suspend fun pageChannels(playlistId: String, categoryId: String?, offset: Int, limit: Int): List<IptvStreamRow> = mutex.withLock {
+        pagedStreamRows("channels", playlistId, categoryId, hasExt = false, offset = offset, limit = limit)
+    }
+
+    suspend fun pageVod(playlistId: String, categoryId: String?, offset: Int, limit: Int): List<IptvStreamRow> = mutex.withLock {
+        pagedStreamRows("vod", playlistId, categoryId, hasExt = true, offset = offset, limit = limit)
+    }
+
+    suspend fun pageSeries(playlistId: String, categoryId: String?, offset: Int, limit: Int): List<IptvSeriesRow> = mutex.withLock {
+        val sql = if (categoryId == null)
+            "SELECT sid, name, logo, category_id FROM series WHERE playlist_id = ? ORDER BY name LIMIT ? OFFSET ?"
+        else
+            "SELECT sid, name, logo, category_id FROM series WHERE playlist_id = ? AND category_id = ? ORDER BY name LIMIT ? OFFSET ?"
+        connection().prepare(sql).use { st ->
+            st.bindText(1, playlistId)
+            var i = 2
+            if (categoryId != null) st.bindText(i++, categoryId)
+            st.bindLong(i++, limit.toLong()); st.bindLong(i, offset.toLong())
+            val out = ArrayList<IptvSeriesRow>()
+            while (st.step()) out.add(
+                IptvSeriesRow(
+                    sid = st.getLong(0).toInt(),
+                    name = st.getText(1),
+                    logo = if (st.isNull(2)) null else st.getText(2),
+                    categoryId = if (st.isNull(3)) null else st.getText(3),
+                )
+            )
+            out
+        }
+    }
+
+    private fun pagedStreamRows(table: String, playlistId: String, categoryId: String?, hasExt: Boolean, offset: Int, limit: Int): List<IptvStreamRow> {
+        val extCol = if (hasExt) "ext" else "NULL"
+        val tvgCol = if (table == "channels") "tvg_id" else "NULL"
+        val archiveCol = if (table == "channels") "tv_archive" else "NULL"
+        val sql = if (categoryId == null)
+            "SELECT sid, name, logo, $tvgCol, category_id, url, $extCol, cmd, $archiveCol FROM $table WHERE playlist_id = ? ORDER BY name LIMIT ? OFFSET ?"
+        else
+            "SELECT sid, name, logo, $tvgCol, category_id, url, $extCol, cmd, $archiveCol FROM $table WHERE playlist_id = ? AND category_id = ? ORDER BY name LIMIT ? OFFSET ?"
+        return connection().prepare(sql).use { st ->
+            st.bindText(1, playlistId)
+            var i = 2
+            if (categoryId != null) st.bindText(i++, categoryId)
+            st.bindLong(i++, limit.toLong()); st.bindLong(i, offset.toLong())
+            val out = ArrayList<IptvStreamRow>()
+            while (st.step()) out.add(
+                IptvStreamRow(
+                    sid = st.getLong(0).toInt(),
+                    name = st.getText(1),
+                    logo = if (st.isNull(2)) null else st.getText(2),
+                    tvgId = if (st.isNull(3)) null else st.getText(3),
+                    categoryId = if (st.isNull(4)) null else st.getText(4),
+                    url = st.getText(5),
+                    ext = if (st.isNull(6)) null else st.getText(6),
+                    cmd = if (st.isNull(7)) null else st.getText(7),
+                    hasArchive = !st.isNull(8) && st.getLong(8) > 0,
+                )
+            )
+            out
+        }
+    }
+
     suspend fun channelsFor(playlistId: String, categoryId: String?): List<IptvStreamRow> = mutex.withLock {
         streamRows("channels", playlistId, categoryId, hasExt = false)
     }
@@ -412,10 +502,11 @@ internal object IptvContentDb {
     private fun streamRows(table: String, playlistId: String, categoryId: String?, hasExt: Boolean): List<IptvStreamRow> {
         val extCol = if (hasExt) "ext" else "NULL"
         val tvgCol = if (table == "channels") "tvg_id" else "NULL"
+        val archiveCol = if (table == "channels") "tv_archive" else "NULL"
         val sql = if (categoryId == null)
-            "SELECT sid, name, logo, $tvgCol, category_id, url, $extCol FROM $table WHERE playlist_id = ? ORDER BY name"
+            "SELECT sid, name, logo, $tvgCol, category_id, url, $extCol, cmd, $archiveCol FROM $table WHERE playlist_id = ? ORDER BY name"
         else
-            "SELECT sid, name, logo, $tvgCol, category_id, url, $extCol FROM $table WHERE playlist_id = ? AND category_id = ? ORDER BY name"
+            "SELECT sid, name, logo, $tvgCol, category_id, url, $extCol, cmd, $archiveCol FROM $table WHERE playlist_id = ? AND category_id = ? ORDER BY name"
         return connection().prepare(sql).use { st ->
             st.bindText(1, playlistId)
             if (categoryId != null) st.bindText(2, categoryId)
@@ -429,6 +520,8 @@ internal object IptvContentDb {
                     categoryId = if (st.isNull(4)) null else st.getText(4),
                     url = st.getText(5),
                     ext = if (st.isNull(6)) null else st.getText(6),
+                    cmd = if (st.isNull(7)) null else st.getText(7),
+                    hasArchive = !st.isNull(8) && st.getLong(8) > 0,
                 )
             )
             out
@@ -458,7 +551,7 @@ internal object IptvContentDb {
 
     /** All episodes of one series, ordered season→episode — backs synthetic get_series_info. */
     suspend fun episodesFor(playlistId: String, seriesSid: Int): List<IptvEpisodeRow> = mutex.withLock {
-        connection().prepare("SELECT series_sid, episode_id, name, season, episode, logo, url, ext FROM episodes WHERE playlist_id = ? AND series_sid = ? ORDER BY season, episode").use { st ->
+        connection().prepare("SELECT series_sid, episode_id, name, season, episode, logo, url, ext, cmd FROM episodes WHERE playlist_id = ? AND series_sid = ? ORDER BY season, episode").use { st ->
             st.bindText(1, playlistId); st.bindLong(2, seriesSid.toLong())
             val out = ArrayList<IptvEpisodeRow>()
             while (st.step()) out.add(
@@ -471,9 +564,62 @@ internal object IptvContentDb {
                     logo = if (st.isNull(5)) null else st.getText(5),
                     url = st.getText(6),
                     ext = if (st.isNull(7)) null else st.getText(7),
+                    cmd = if (st.isNull(8)) null else st.getText(8),
                 )
             )
             out
+        }
+    }
+
+    /**
+     * Replaces one playlist's LIVE lineup + live categories in a single transaction, leaving the
+     * VOD/series write-through rows and the EPG untouched — the Stalker mirror path (P6): the
+     * whole lineup arrives in one get_all_channels, so it refreshes wholesale, while VOD can only
+     * ever accumulate page by page. The ingest_meta row doubles as the lineup freshness marker
+     * (Stalker playlists never run the M3U ingest, so there is no collision).
+     */
+    suspend fun replaceLiveLineup(
+        playlistId: String,
+        channels: List<IptvStreamRow>,
+        categories: List<Pair<String, String>>, // (id, name), type = live
+    ) = mutex.withLock {
+        val c = connection()
+        c.execSQL("BEGIN IMMEDIATE")
+        try {
+            c.prepare("DELETE FROM channels WHERE playlist_id = ?").use { st -> st.bindText(1, playlistId); st.step() }
+            c.prepare("DELETE FROM categories WHERE playlist_id = ? AND type = ?").use { st ->
+                st.bindText(1, playlistId); st.bindText(2, IptvContentKind.LIVE.slug); st.step()
+            }
+            c.prepare("INSERT OR REPLACE INTO channels(playlist_id, sid, category_id, name, logo, tvg_id, url, cmd, tv_archive) VALUES(?,?,?,?,?,?,?,?,?)").use { st ->
+                for (r in channels) {
+                    st.reset()
+                    st.bindText(1, playlistId); st.bindLong(2, r.sid.toLong())
+                    if (r.categoryId != null) st.bindText(3, r.categoryId) else st.bindNull(3)
+                    st.bindText(4, r.name)
+                    if (r.logo != null) st.bindText(5, r.logo) else st.bindNull(5)
+                    if (r.tvgId != null) st.bindText(6, r.tvgId) else st.bindNull(6)
+                    st.bindText(7, r.url)
+                    if (r.cmd != null) st.bindText(8, r.cmd) else st.bindNull(8)
+                    st.bindLong(9, if (r.hasArchive) 1L else 0L)
+                    st.step()
+                }
+            }
+            c.prepare("INSERT OR REPLACE INTO categories(playlist_id, type, id, name) VALUES(?,?,?,?)").use { st ->
+                for ((id, name) in categories) {
+                    st.reset()
+                    st.bindText(1, playlistId); st.bindText(2, IptvContentKind.LIVE.slug)
+                    st.bindText(3, id); st.bindText(4, name)
+                    st.step()
+                }
+            }
+            // Freshness marker LAST, inside the same transaction: present+fresh = lineup usable.
+            c.prepare("INSERT OR REPLACE INTO ingest_meta(playlist_id, built_at, live_count, vod_count, series_count, epg_url) VALUES(?,?,?,0,0,NULL)").use { st ->
+                st.bindText(1, playlistId); st.bindLong(2, now()); st.bindLong(3, channels.size.toLong())
+                st.step()
+            }
+            c.execSQL("COMMIT")
+        } catch (t: Throwable) {
+            c.execSQL("ROLLBACK"); throw t
         }
     }
 
@@ -498,9 +644,9 @@ internal object IptvContentDb {
         }
     }
 
-    /** A single VOD row by sid — rebuilds a movie's stream URL after a cold launch (registry empty). */
+    /** A single VOD row by sid — rebuilds a movie's stream URL (or Stalker cmd) after a cold launch. */
     suspend fun vodRow(playlistId: String, sid: Int): IptvStreamRow? = mutex.withLock {
-        connection().prepare("SELECT sid, name, logo, NULL, category_id, url, ext FROM vod WHERE playlist_id = ? AND sid = ?").use { st ->
+        connection().prepare("SELECT sid, name, logo, NULL, category_id, url, ext, cmd FROM vod WHERE playlist_id = ? AND sid = ?").use { st ->
             st.bindText(1, playlistId); st.bindLong(2, sid.toLong())
             if (st.step()) IptvStreamRow(
                 sid = st.getLong(0).toInt(),
@@ -510,13 +656,14 @@ internal object IptvContentDb {
                 categoryId = if (st.isNull(4)) null else st.getText(4),
                 url = st.getText(5),
                 ext = if (st.isNull(6)) null else st.getText(6),
+                cmd = if (st.isNull(7)) null else st.getText(7),
             ) else null
         }
     }
 
-    /** A single channel row by sid — rebuilds a favorited channel's URL after a cold launch. */
+    /** A single channel row by sid — rebuilds a favorited channel's URL (or Stalker cmd) after a cold launch. */
     suspend fun channelRow(playlistId: String, sid: Int): IptvStreamRow? = mutex.withLock {
-        connection().prepare("SELECT sid, name, logo, tvg_id, category_id, url, NULL FROM channels WHERE playlist_id = ? AND sid = ?").use { st ->
+        connection().prepare("SELECT sid, name, logo, tvg_id, category_id, url, NULL, cmd, tv_archive FROM channels WHERE playlist_id = ? AND sid = ?").use { st ->
             st.bindText(1, playlistId); st.bindLong(2, sid.toLong())
             if (st.step()) IptvStreamRow(
                 sid = st.getLong(0).toInt(),
@@ -526,6 +673,8 @@ internal object IptvContentDb {
                 categoryId = if (st.isNull(4)) null else st.getText(4),
                 url = st.getText(5),
                 ext = null,
+                cmd = if (st.isNull(7)) null else st.getText(7),
+                hasArchive = !st.isNull(8) && st.getLong(8) > 0,
             ) else null
         }
     }

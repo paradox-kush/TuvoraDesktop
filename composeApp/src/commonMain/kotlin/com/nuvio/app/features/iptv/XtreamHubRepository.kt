@@ -1,5 +1,9 @@
 package com.nuvio.app.features.iptv
 
+import com.nuvio.app.features.home.MetaPreview
+import com.nuvio.app.features.iptv.match.MatchKind
+import com.nuvio.app.features.iptv.match.XtreamMatchIndex
+import com.nuvio.app.features.iptv.match.XtreamTmdbResolver
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
 import kotlinx.coroutines.CoroutineScope
@@ -40,6 +44,14 @@ object XtreamHubRepository {
     // this map from a background dispatcher.
     private val categoryLock = SynchronizedObject()
     private val cache = mutableMapOf<Pair<String, XtreamHubSection>, List<XtreamHubCategory>>()
+
+    init {
+        // Lazily enriched posters (PosterEnricher) patch loaded rows in place — the DB row is
+        // already updated, this just repaints cards that are on screen right now.
+        scope.launch {
+            com.nuvio.app.features.iptv.match.PosterEnricher.updates.collect { applyPosterUpdate(it) }
+        }
+    }
     private var lastPrefetchMark: TimeMark? = null
     private val REFRESH_TTL = 6.hours
 
@@ -49,6 +61,13 @@ object XtreamHubRepository {
     // once, and best-effort prefetches are dropped as soon as MAX_OUTSTANDING_CATEGORY_LOADS
     // fetches are already claimed (which also makes prefetch back off by itself while the user
     // flings and the visible rows are hogging the pipe).
+    /**
+     * Rows per category window (item 5). A category is loaded window-by-window — first window on
+     * row-compose, the next appended when the row nears its end — instead of materializing a
+     * 10k-item category as one List (the reason "M3U has a DB" still bloated the heap).
+     */
+    private const val PAGE_SIZE = 400
+
     private const val MAX_CONCURRENT_CATEGORY_LOADS = 3
     private const val MAX_OUTSTANDING_CATEGORY_LOADS = 6
     private val categoryLoadGate = Semaphore(MAX_CONCURRENT_CATEGORY_LOADS)
@@ -137,6 +156,28 @@ object XtreamHubRepository {
 
     private suspend fun fetchCategoryList(accountId: String, section: XtreamHubSection) {
         val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == accountId } ?: return
+        // Xtream reads its section rows from the local catalog once it's built (P7, item 4) —
+        // no per-session category fetch. Index absent (first run): fall through to the live
+        // API below and kick the build so the NEXT visit is local.
+        if (account.sourceType == SOURCE_TYPE_XTREAM) {
+            val stored = runCatching { XtreamMatchIndex.categoriesFor(account.id, section.matchKind) }.getOrDefault(emptyList())
+            if (stored.isNotEmpty()) {
+                val merged = synchronized(categoryLock) {
+                    val previous = cache[accountId to section].orEmpty().associateBy { it.id }
+                    val next = stored.map { (id, name) ->
+                        val old = previous[id]
+                        XtreamHubCategory(id, name, items = old?.items ?: emptyList(), loaded = old?.loaded ?: false, hasMore = old?.hasMore ?: false)
+                    }
+                    cache[accountId to section] = next
+                    next
+                }
+                if (isCurrent(accountId, section)) {
+                    _uiState.update { it.copy(categories = merged, loadingCategories = false, loadError = false) }
+                }
+                return
+            }
+            XtreamTmdbResolver.warmUp(listOf(account))
+        }
         val client = IptvClient.forAccount(account)   // xtream -> XtreamClient, m3u_url -> M3UClient
         val fresh = when (section) {
             XtreamHubSection.LIVE -> client.liveCategories(account)
@@ -203,24 +244,9 @@ object XtreamHubRepository {
                 categoryLoadGate.withPermit {
                     val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == accountId }
                     val client = account?.let { IptvClient.forAccount(it) }
-                    // Register the whole category in ONE batch. This loop is the browse hot path —
-                    // a category can be tens of thousands of items, and registering per-item took
-                    // the registry lock once per item.
-                    val items = if (account == null || client == null) emptyList() else when (section) {
-                        XtreamHubSection.LIVE -> client.liveChannels(account, categoryId).getOrDefault(emptyList()).let { rows ->
-                            XtreamItemRegistry.registerAll(rows.map { XtreamItemRegistry.resolvedChannel(accountId, it) })
-                            rows.map { it.toMetaPreview(accountId) }
-                        }
-                        XtreamHubSection.MOVIES -> client.vodMovies(account, categoryId).getOrDefault(emptyList()).let { rows ->
-                            XtreamItemRegistry.registerAll(rows.map { XtreamItemRegistry.resolvedMovie(accountId, it) })
-                            rows.map { it.toMetaPreview(accountId) }
-                        }
-                        XtreamHubSection.SERIES -> client.series(account, categoryId).getOrDefault(emptyList()).let { rows ->
-                            XtreamItemRegistry.registerAll(rows.map { XtreamItemRegistry.resolvedSeries(accountId, it) })
-                            rows.map { it.toMetaPreview(accountId) }
-                        }
-                    }
-                    updateCategory(accountId, section, categoryId) { it.copy(items = items, loaded = true, loading = false) }
+                    val (items, hasMore) = if (account == null || client == null) emptyList<MetaPreview>() to false
+                    else fetchWindow(account, section, categoryId, offset = 0, prefetch = prefetch)
+                    updateCategory(accountId, section, categoryId) { it.copy(items = items, loaded = true, loading = false, hasMore = hasMore) }
                     noteLoadedAndEvict(key)
                     completed = true
                 }
@@ -228,6 +254,146 @@ object XtreamHubRepository {
                 synchronized(categoryLock) { inFlightCategories.remove(key) }
                 // Never strand a row as permanently "loading" if the fetch was cancelled.
                 if (!completed) updateCategory(accountId, section, categoryId) { it.copy(loading = false) }
+            }
+        }
+    }
+
+    /**
+     * Appends the next window to an already-loaded category (item 5) — called by the row when it
+     * nears its end. Single-flight per key, best-effort.
+     */
+    fun loadMore(categoryId: String) {
+        val state = _uiState.value
+        val accountId = state.selectedAccountId ?: return
+        val section = state.section
+        val category = cachedCategories(accountId, section)?.firstOrNull { it.id == categoryId } ?: return
+        if (!category.loaded || !category.hasMore || category.loading) return
+        val key = CategoryKey(accountId, section, categoryId)
+        val claimed = synchronized(categoryLock) {
+            if (key in inFlightCategories) false else inFlightCategories.add(key)
+        }
+        if (!claimed) return
+        scope.launch {
+            try {
+                val account = accountFor(accountId) ?: return@launch
+                val offset = cachedCategories(accountId, section)
+                    ?.firstOrNull { it.id == categoryId }?.items?.size ?: return@launch
+                val (more, hasMore) = fetchWindow(account, section, categoryId, offset)
+                updateCategory(accountId, section, categoryId) {
+                    it.copy(items = it.items + more, hasMore = hasMore)
+                }
+            } finally {
+                synchronized(categoryLock) { inFlightCategories.remove(key) }
+            }
+        }
+    }
+
+    /**
+     * One window of a category's items, per source (item 4+5), registered as a batch:
+     *  - Xtream w/ built catalog: local index window; stream URLs rebuilt from creds.
+     *  - Xtream first-run (no index yet): the old full network fetch, once.
+     *  - M3U + the Stalker live lineup: paged reads over IptvContentDb.
+     *  - Stalker VOD/series: the portal's bounded page (70) — the protocol's own window.
+     */
+    private suspend fun fetchWindow(
+        account: XtreamAccount,
+        section: XtreamHubSection,
+        categoryId: String,
+        offset: Int,
+        prefetch: Boolean = false,
+    ): Pair<List<MetaPreview>, Boolean> {
+        val accountId = account.id
+        when (account.sourceType) {
+            SOURCE_TYPE_XTREAM -> {
+                val kind = section.matchKind
+                if (XtreamMatchIndex.builtAt(accountId, kind) != null) {
+                    val rows = XtreamMatchIndex.itemsFor(accountId, kind, categoryId, offset, PAGE_SIZE + 1)
+                    val page = rows.take(PAGE_SIZE)
+                    // Panels that ship no icons in the bulk list (or rows indexed before artwork
+                    // was known) get filled lazily: ask get_vod_info per null row, in list order,
+                    // while the user is on this window. Results land in the DB + patch in via
+                    // the PosterEnricher.updates collector below.
+                    page.filter { it.poster == null }.map { it.sid }
+                        .takeIf { it.isNotEmpty() }
+                        ?.let { com.nuvio.app.features.iptv.match.PosterEnricher.enqueue(account, kind, it, prioritize = !prefetch) }
+                    val resolved = page.map { r ->
+                        when (section) {
+                            XtreamHubSection.LIVE -> XtreamResolvedItem(
+                                XtreamItemRegistry.liveId(accountId, r.sid), accountId, XtreamKind.LIVE,
+                                r.name, XtreamClient.liveStreamUrl(account, r.sid), logo = r.poster, streamType = "live",
+                            )
+                            XtreamHubSection.MOVIES -> XtreamResolvedItem(
+                                XtreamItemRegistry.vodId(accountId, r.sid), accountId, XtreamKind.VOD,
+                                r.name, XtreamClient.movieStreamUrl(account, r.sid, r.ext ?: "mp4"), poster = r.poster,
+                            )
+                            XtreamHubSection.SERIES -> XtreamResolvedItem(
+                                XtreamItemRegistry.seriesId(accountId, r.sid), accountId, XtreamKind.SERIES,
+                                r.name, null, poster = r.poster,
+                            )
+                        }
+                    }
+                    XtreamItemRegistry.registerAll(resolved)
+                    return resolved.map { it.toMetaPreview() } to (rows.size > PAGE_SIZE)
+                }
+                // No index yet (first run): the old whole-category fetch — the build is warming.
+                if (offset > 0) return emptyList<MetaPreview>() to false
+                val client = IptvClient.forAccount(account)
+                return when (section) {
+                    XtreamHubSection.LIVE -> client.liveChannels(account, categoryId).getOrDefault(emptyList()).let { rows ->
+                        XtreamItemRegistry.registerAll(rows.map { XtreamItemRegistry.resolvedChannel(accountId, it) })
+                        rows.map { it.toMetaPreview(accountId) }
+                    }
+                    XtreamHubSection.MOVIES -> client.vodMovies(account, categoryId).getOrDefault(emptyList()).let { rows ->
+                        XtreamItemRegistry.registerAll(rows.map { XtreamItemRegistry.resolvedMovie(accountId, it) })
+                        rows.map { it.toMetaPreview(accountId) }
+                    }
+                    XtreamHubSection.SERIES -> client.series(account, categoryId).getOrDefault(emptyList()).let { rows ->
+                        XtreamItemRegistry.registerAll(rows.map { XtreamItemRegistry.resolvedSeries(accountId, it) })
+                        rows.map { it.toMetaPreview(accountId) }
+                    }
+                } to false
+            }
+            SOURCE_TYPE_STALKER -> {
+                if (section == XtreamHubSection.LIVE) {
+                    val rows = com.nuvio.app.features.iptv.stalker.StalkerClient
+                        .liveChannelsPage(account, categoryId, offset, PAGE_SIZE + 1)
+                    val page = rows.take(PAGE_SIZE)
+                    XtreamItemRegistry.registerAll(page.map { XtreamItemRegistry.resolvedChannel(accountId, it) })
+                    return page.map { it.toMetaPreview(accountId) } to (rows.size > PAGE_SIZE)
+                }
+                if (offset > 0) return emptyList<MetaPreview>() to false
+                val client = IptvClient.forAccount(account)
+                return when (section) {
+                    XtreamHubSection.MOVIES -> client.vodMovies(account, categoryId).getOrDefault(emptyList()).let { rows ->
+                        XtreamItemRegistry.registerAll(rows.map { XtreamItemRegistry.resolvedMovie(accountId, it) })
+                        rows.map { it.toMetaPreview(accountId) }
+                    }
+                    else -> client.series(account, categoryId).getOrDefault(emptyList()).let { rows ->
+                        XtreamItemRegistry.registerAll(rows.map { XtreamItemRegistry.resolvedSeries(accountId, it) })
+                        rows.map { it.toMetaPreview(accountId) }
+                    }
+                } to false
+            }
+            else -> {
+                // M3U: ensure the catalog, then a paged indexed read.
+                M3UClient.ensureIngested(account)
+                return when (section) {
+                    XtreamHubSection.LIVE -> M3UClient.liveChannelsPage(account, categoryId, offset, PAGE_SIZE + 1).let { rows ->
+                        val page = rows.take(PAGE_SIZE)
+                        XtreamItemRegistry.registerAll(page.map { XtreamItemRegistry.resolvedChannel(accountId, it) })
+                        page.map { it.toMetaPreview(accountId) } to (rows.size > PAGE_SIZE)
+                    }
+                    XtreamHubSection.MOVIES -> M3UClient.vodMoviesPage(account, categoryId, offset, PAGE_SIZE + 1).let { rows ->
+                        val page = rows.take(PAGE_SIZE)
+                        XtreamItemRegistry.registerAll(page.map { XtreamItemRegistry.resolvedMovie(accountId, it) })
+                        page.map { it.toMetaPreview(accountId) } to (rows.size > PAGE_SIZE)
+                    }
+                    XtreamHubSection.SERIES -> M3UClient.seriesPage(account, categoryId, offset, PAGE_SIZE + 1).let { rows ->
+                        val page = rows.take(PAGE_SIZE)
+                        XtreamItemRegistry.registerAll(page.map { XtreamItemRegistry.resolvedSeries(accountId, it) })
+                        page.map { it.toMetaPreview(accountId) } to (rows.size > PAGE_SIZE)
+                    }
+                }
             }
         }
     }
@@ -251,6 +417,13 @@ object XtreamHubRepository {
         if (account == null || account.typeEnabled(wanted.contentKey)) return wanted
         return XtreamHubSection.entries.firstOrNull { account.typeEnabled(it.contentKey) } ?: wanted
     }
+
+    private val XtreamHubSection.matchKind: MatchKind
+        get() = when (this) {
+            XtreamHubSection.LIVE -> MatchKind.LIVE
+            XtreamHubSection.MOVIES -> MatchKind.MOVIE
+            XtreamHubSection.SERIES -> MatchKind.SERIES
+        }
 
     private fun accountFor(accountId: String?): XtreamAccount? =
         XtreamRepository.uiState.value.accounts.firstOrNull { it.id == accountId }
@@ -308,6 +481,40 @@ object XtreamHubRepository {
         epgFetched.clear()
         _epg.value = emptyMap()
         _uiState.value = XtreamHubUiState()
+    }
+
+    /**
+     * Repaints one lazily-enriched poster on every loaded copy of its row. The index row is
+     * already written by PosterEnricher; this touches the in-memory copies: the registry
+     * (detail/play path), the category cache (rows on the backstack), and the visible state.
+     */
+    private fun applyPosterUpdate(u: com.nuvio.app.features.iptv.match.PosterEnricher.PosterUpdate) {
+        val section = when (u.kind) {
+            MatchKind.MOVIE -> XtreamHubSection.MOVIES
+            MatchKind.SERIES -> XtreamHubSection.SERIES
+            MatchKind.LIVE -> return
+        }
+        val cardId = when (section) {
+            XtreamHubSection.MOVIES -> XtreamItemRegistry.vodId(u.accountId, u.sid)
+            else -> XtreamItemRegistry.seriesId(u.accountId, u.sid)
+        }
+        XtreamItemRegistry.get(cardId)?.let { XtreamItemRegistry.register(it.copy(poster = u.poster)) }
+        val key = u.accountId to section
+        val updated = synchronized(categoryLock) {
+            val current = cache[key] ?: return
+            var touched = false
+            val next = current.map { cat ->
+                if (cat.items.none { it.id == cardId && it.poster == null }) cat
+                else {
+                    touched = true
+                    cat.copy(items = cat.items.map { if (it.id == cardId) it.copy(poster = u.poster) else it })
+                }
+            }
+            if (!touched) return
+            cache[key] = next
+            next
+        }
+        if (isCurrent(u.accountId, section)) _uiState.update { it.copy(categories = updated) }
     }
 
     private fun isCurrent(accountId: String, section: XtreamHubSection): Boolean =

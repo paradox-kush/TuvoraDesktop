@@ -10,9 +10,15 @@ import kotlinx.coroutines.sync.withLock
 private inline fun <R> SQLiteStatement.use(block: (SQLiteStatement) -> R): R =
     try { block(this) } finally { close() }
 
-internal enum class MatchKind(val slug: String) { MOVIE("movie"), SERIES("series") }
+internal enum class MatchKind(val slug: String) { MOVIE("movie"), SERIES("series"), LIVE("live") }
 
-/** One catalog entry as stored in the index. [ext] = container extension (movies only). */
+/**
+ * One catalog entry as stored in the index. [ext] = container extension (movies only).
+ * P7 (items 4-5): the index doubles as the Xtream BROWSE catalog — [categoryId] scopes hub rows,
+ * [epgId]/[hasArchive] carry the live-channel fields the guide needs. The download was always
+ * paid for (this index re-fetches the full catalog every 72h); now the hub reads it back instead
+ * of re-fetching per category per session.
+ */
 internal data class IndexedItem(
     val sid: Int,
     val name: String,
@@ -20,6 +26,11 @@ internal data class IndexedItem(
     val tmdb: Int?,
     val ext: String?,
     val poster: String? = null,
+    val categoryId: String? = null,
+    val epgId: String? = null,
+    val hasArchive: Boolean = false,
+    /** Arrival index in the panel's bulk list — categories serve in THE PANEL'S order, never sorted. */
+    val pos: Int = 0,
 )
 
 /** A confirmed (or confirmed-absent when [sid] is null) TMDB->stream mapping. */
@@ -35,17 +46,29 @@ internal data class CatalogDiff(val upserts: List<IndexedItem>, val changedSids:
  * Row fingerprint for change detection between an indexed row and its fresh fetch.
  * ponytail: a 32-bit hash can collide (~2^-32 per changed row) leaving one stale row;
  * exact field comparison would need all 175k names in heap — accepted ceiling.
+ *
+ * Poster is deliberately NOT part of the fingerprint: lazily enriched artwork (written by
+ * PosterEnricher for panels whose bulk lists ship no icons) must not read as a "change" on
+ * the next sync — the bulk row's empty icon would win and wipe the enrichment. Bulk icon
+ * updates still land on any row the diff rewrites (the write coalesces incoming nulls).
  */
-internal fun itemFp(name: String, year: Int?, tmdb: Int?, ext: String?, poster: String?): Int {
+internal fun itemFp(
+    name: String, year: Int?, tmdb: Int?, ext: String?,
+    categoryId: String? = null, epgId: String? = null, hasArchive: Boolean = false,
+    pos: Int = 0,
+): Int {
     var h = name.hashCode()
     h = 31 * h + (year ?: -1)
     h = 31 * h + (tmdb ?: -1)
     h = 31 * h + (ext?.hashCode() ?: 0)
-    h = 31 * h + (poster?.hashCode() ?: 0)
+    h = 31 * h + (categoryId?.hashCode() ?: 0)
+    h = 31 * h + (epgId?.hashCode() ?: 0)
+    h = 31 * h + if (hasArchive) 1 else 0
+    h = 31 * h + pos
     return h
 }
 
-private fun IndexedItem.fp(): Int = itemFp(name, year, tmdb, ext, poster)
+private fun IndexedItem.fp(): Int = itemFp(name, year, tmdb, ext, categoryId, epgId, hasArchive, pos)
 
 /**
  * Diffs a fresh catalog fetch against the indexed rows. [existingSids] MUST be ascending
@@ -109,8 +132,25 @@ internal object XtreamMatchIndex {
             it.execSQL("DROP TABLE IF EXISTS idx_meta"); it.execSQL("DROP TABLE IF EXISTS tmdb_map")
             it.execSQL("PRAGMA user_version = 2")
         }
-        it.execSQL("CREATE TABLE IF NOT EXISTS items(provider TEXT NOT NULL, kind TEXT NOT NULL, sid INTEGER NOT NULL, name TEXT NOT NULL, year INTEGER, tmdb INTEGER, ext TEXT, poster TEXT, PRIMARY KEY(provider, kind, sid)) WITHOUT ROWID")
+        // v3 (P7, items 4-5): the index becomes the Xtream browse catalog — category_id/epg_id/
+        // tv_archive on items, a categories table, and a LIVE kind. Index tables are rebuildable
+        // (next warm-up refills); tmdb_map (the synced mappings) is untouched.
+        if (version < 3) {
+            it.execSQL("DROP TABLE IF EXISTS items"); it.execSQL("DROP TABLE IF EXISTS keys")
+            it.execSQL("DROP TABLE IF EXISTS idx_meta"); it.execSQL("DROP TABLE IF EXISTS cats")
+            it.execSQL("PRAGMA user_version = 3")
+        }
+        // v4: items.pos — categories browse in the PANEL'S list order, never alphabetized.
+        // Same drop+recreate policy (rebuildable caches; tmdb_map untouched).
+        if (version < 4) {
+            it.execSQL("DROP TABLE IF EXISTS items"); it.execSQL("DROP TABLE IF EXISTS keys")
+            it.execSQL("DROP TABLE IF EXISTS idx_meta"); it.execSQL("DROP TABLE IF EXISTS cats")
+            it.execSQL("PRAGMA user_version = 4")
+        }
+        it.execSQL("CREATE TABLE IF NOT EXISTS items(provider TEXT NOT NULL, kind TEXT NOT NULL, sid INTEGER NOT NULL, name TEXT NOT NULL, year INTEGER, tmdb INTEGER, ext TEXT, poster TEXT, category_id TEXT, epg_id TEXT, tv_archive INTEGER NOT NULL DEFAULT 0, pos INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, kind, sid)) WITHOUT ROWID")
         it.execSQL("CREATE INDEX IF NOT EXISTS items_tmdb ON items(provider, kind, tmdb)")
+        it.execSQL("CREATE INDEX IF NOT EXISTS items_cat ON items(provider, kind, category_id, pos)")
+        it.execSQL("CREATE TABLE IF NOT EXISTS cats(provider TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, sort INTEGER NOT NULL, PRIMARY KEY(provider, kind, id)) WITHOUT ROWID")
         it.execSQL("CREATE TABLE IF NOT EXISTS keys(provider TEXT NOT NULL, kind TEXT NOT NULL, k TEXT NOT NULL, sid INTEGER NOT NULL, PRIMARY KEY(provider, kind, k, sid)) WITHOUT ROWID")
         it.execSQL("CREATE TABLE IF NOT EXISTS idx_meta(provider TEXT NOT NULL, kind TEXT NOT NULL, built_at INTEGER NOT NULL, item_count INTEGER NOT NULL, PRIMARY KEY(provider, kind)) WITHOUT ROWID")
         it.execSQL("CREATE TABLE IF NOT EXISTS tmdb_map(provider TEXT NOT NULL, kind TEXT NOT NULL, tmdb INTEGER NOT NULL, sid INTEGER, matched_name TEXT, updated_at INTEGER NOT NULL, synced INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, kind, tmdb)) WITHOUT ROWID")
@@ -128,7 +168,7 @@ internal object XtreamMatchIndex {
             val c = connection()
             c.execSQL("BEGIN IMMEDIATE")
             try {
-                for (t in listOf("items", "keys", "idx_meta", "tmdb_map")) {
+                for (t in listOf("items", "keys", "idx_meta", "tmdb_map", "cats")) {
                     c.prepare("DELETE FROM $t WHERE provider = ?").use { st ->
                         st.bindText(1, provider); st.step()
                     }
@@ -148,11 +188,85 @@ internal object XtreamMatchIndex {
     }
 
     /**
+     * Indexed item count for a provider+kind, or null when never built — the playlist settings
+     * sheet's catalog counts (item 8): the numbers already exist locally, zero API calls, exactly
+     * how the reference client shows "Movies: 60000" (from data it already has).
+     */
+    suspend fun indexedCount(provider: String, kind: MatchKind): Int? = mutex.withLock {
+        connection().prepare("SELECT item_count FROM idx_meta WHERE provider = ? AND kind = ?").use { st ->
+            st.bindText(1, provider); st.bindText(2, kind.slug)
+            if (st.step()) st.getLong(0).toInt() else null
+        }
+    }
+
+    // --- browse catalog (P7, items 4-5): the hub reads Xtream sections from here --------------
+
+    /** Replaces one provider+kind's category list (fetched alongside the catalog build). */
+    suspend fun replaceCategories(provider: String, kind: MatchKind, categories: List<Pair<String, String>>) = mutex.withLock {
+        val c = connection()
+        c.execSQL("BEGIN IMMEDIATE")
+        try {
+            c.prepare("DELETE FROM cats WHERE provider = ? AND kind = ?").use { st ->
+                st.bindText(1, provider); st.bindText(2, kind.slug); st.step()
+            }
+            c.prepare("INSERT OR REPLACE INTO cats(provider, kind, id, name, sort) VALUES(?,?,?,?,?)").use { st ->
+                categories.forEachIndexed { i, (id, name) ->
+                    st.reset()
+                    st.bindText(1, provider); st.bindText(2, kind.slug)
+                    st.bindText(3, id); st.bindText(4, name); st.bindLong(5, i.toLong())
+                    st.step()
+                }
+            }
+            c.execSQL("COMMIT")
+        } catch (t: Throwable) {
+            c.execSQL("ROLLBACK"); throw t
+        }
+    }
+
+    /** The stored category list in panel order. Empty when the catalog was never built. */
+    suspend fun categoriesFor(provider: String, kind: MatchKind): List<Pair<String, String>> = mutex.withLock {
+        connection().prepare("SELECT id, name FROM cats WHERE provider = ? AND kind = ? ORDER BY sort").use { st ->
+            st.bindText(1, provider); st.bindText(2, kind.slug)
+            val out = ArrayList<Pair<String, String>>()
+            while (st.step()) out.add(st.getText(0) to st.getText(1))
+            out
+        }
+    }
+
+    /**
+     * One window of a category (or the whole kind when [categoryId] is null), name-ordered.
+     * THE item-5 read: the hub asks for [limit] rows from [offset] instead of materializing a
+     * whole category — the covering items_cat index makes it a range scan.
+     */
+    suspend fun itemsFor(provider: String, kind: MatchKind, categoryId: String?, offset: Int, limit: Int): List<IndexedItem> = mutex.withLock {
+        val sql = if (categoryId == null)
+            "SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive FROM items WHERE provider = ? AND kind = ? ORDER BY pos LIMIT ? OFFSET ?"
+        else
+            "SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive FROM items WHERE provider = ? AND kind = ? AND category_id = ? ORDER BY pos LIMIT ? OFFSET ?"
+        connection().prepare(sql).use { st ->
+            st.bindText(1, provider); st.bindText(2, kind.slug)
+            var i = 3
+            if (categoryId != null) st.bindText(i++, categoryId)
+            st.bindLong(i++, limit.toLong()); st.bindLong(i, offset.toLong())
+            readItems(st)
+        }
+    }
+
+    /** A single item row by sid — the registry's cold-start fallback (item 5). */
+    suspend fun itemRow(provider: String, kind: MatchKind, sid: Int): IndexedItem? = mutex.withLock {
+        connection().prepare("SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive FROM items WHERE provider = ? AND kind = ? AND sid = ?").use { st ->
+            st.bindText(1, provider); st.bindText(2, kind.slug); st.bindLong(3, sid.toLong())
+            readItems(st).firstOrNull()
+        }
+    }
+
+    /**
      * Replaces the whole index for one provider+kind. Chunked transactions keep the write
      * lock short so concurrent probes interleave; meta row is written LAST so a crashed
      * rebuild reads as stale, not as complete.
      */
-    suspend fun rebuild(provider: String, kind: MatchKind, items: List<IndexedItem>) {
+    suspend fun rebuild(provider: String, kind: MatchKind, itemsIn: List<IndexedItem>) {
+        val items = itemsIn.mapIndexed { i, raw -> if (raw.pos == i) raw else raw.copy(pos = i) }
         mutex.withLock {
             val c = connection()
             c.execSQL("BEGIN IMMEDIATE")
@@ -182,7 +296,8 @@ internal object XtreamMatchIndex {
      * the catalog reshuffled wholesale. built_at is bumped LAST so a crashed sync reads as
      * stale and re-runs (idempotent).
      */
-    suspend fun sync(provider: String, kind: MatchKind, items: List<IndexedItem>): SyncStats {
+    suspend fun sync(provider: String, kind: MatchKind, itemsIn: List<IndexedItem>): SyncStats {
+        val items = itemsIn.mapIndexed { i, raw -> if (raw.pos == i) raw else raw.copy(pos = i) }
         // One streaming pass over the existing rows -> primitive (sid, fingerprint) arrays,
         // PK-ordered. ~1.4MB for a 175k catalog; never materializes the old names in heap.
         var sids = IntArray(4_096)
@@ -190,7 +305,7 @@ internal object XtreamMatchIndex {
         var count = 0
         mutex.withLock {
             connection().prepare(
-                "SELECT sid, name, year, tmdb, ext, poster FROM items WHERE provider = ? AND kind = ? ORDER BY sid"
+                "SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive, pos FROM items WHERE provider = ? AND kind = ? ORDER BY sid"
             ).use { st ->
                 st.bindText(1, provider); st.bindText(2, kind.slug)
                 while (st.step()) {
@@ -203,7 +318,10 @@ internal object XtreamMatchIndex {
                         year = if (st.isNull(2)) null else st.getLong(2).toInt(),
                         tmdb = if (st.isNull(3)) null else st.getLong(3).toInt(),
                         ext = if (st.isNull(4)) null else st.getText(4),
-                        poster = if (st.isNull(5)) null else st.getText(5),
+                        categoryId = if (st.isNull(6)) null else st.getText(6),
+                        epgId = if (st.isNull(7)) null else st.getText(7),
+                        hasArchive = st.getLong(8) > 0,
+                        pos = st.getLong(9).toInt(),
                     )
                     count++
                 }
@@ -280,7 +398,7 @@ internal object XtreamMatchIndex {
         var count = 0
         mutex.withLock {
             connection().prepare(
-                "SELECT sid, name, year, tmdb, ext, poster FROM items WHERE provider = ? AND kind = ? ORDER BY sid"
+                "SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive, pos FROM items WHERE provider = ? AND kind = ? ORDER BY sid"
             ).use { st ->
                 st.bindText(1, provider); st.bindText(2, kind.slug)
                 while (st.step()) {
@@ -293,7 +411,10 @@ internal object XtreamMatchIndex {
                         year = if (st.isNull(2)) null else st.getLong(2).toInt(),
                         tmdb = if (st.isNull(3)) null else st.getLong(3).toInt(),
                         ext = if (st.isNull(4)) null else st.getText(4),
-                        poster = if (st.isNull(5)) null else st.getText(5),
+                        categoryId = if (st.isNull(6)) null else st.getText(6),
+                        epgId = if (st.isNull(7)) null else st.getText(7),
+                        hasArchive = st.getLong(8) > 0,
+                        pos = st.getLong(9).toInt(),
                     )
                     count++
                 }
@@ -342,8 +463,10 @@ internal object XtreamMatchIndex {
          * established (never the main thread). Duplicate sids: first occurrence decides, like
          * [diffCatalog].
          */
-        fun accept(item: IndexedItem) {
+        fun accept(raw: IndexedItem) {
             fetched++
+            // Stamp arrival order — the panel's list order IS the browse order (never sorted).
+            val item = raw.copy(pos = fetched - 1)
             val i = existingSids.ascIndexOf(item.sid)
             if (i < 0) {
                 pending += item
@@ -433,16 +556,44 @@ internal object XtreamMatchIndex {
                 val c = connection()
                 c.execSQL("BEGIN IMMEDIATE")
                 try {
-                    c.prepare("INSERT OR REPLACE INTO items(provider, kind, sid, name, year, tmdb, ext, poster) VALUES(?,?,?,?,?,?,?,?)").use { st ->
-                        for (it in chunk) {
-                            st.reset()
-                            st.bindText(1, provider); st.bindText(2, kind.slug); st.bindLong(3, it.sid.toLong())
-                            st.bindText(4, it.name)
-                            if (it.year != null) st.bindLong(5, it.year.toLong()) else st.bindNull(5)
-                            if (it.tmdb != null) st.bindLong(6, it.tmdb.toLong()) else st.bindNull(6)
-                            if (it.ext != null) st.bindText(7, it.ext) else st.bindNull(7)
-                            if (it.poster != null) st.bindText(8, it.poster) else st.bindNull(8)
-                            st.step()
+                    // UPDATE-then-INSERT rather than INSERT OR REPLACE: an existing row's poster
+                    // must survive an incoming null (B-style panels ship empty bulk icons; the
+                    // stored value may be PosterEnricher's work). COALESCE keeps non-null incoming
+                    // icons flowing. Same two-step shape as the TV twin.
+                    c.prepare("UPDATE items SET name=?, year=?, tmdb=?, ext=?, poster=COALESCE(?, poster), category_id=?, epg_id=?, tv_archive=?, pos=? WHERE provider=? AND kind=? AND sid=?").use { upd ->
+                        c.prepare("SELECT changes()").use { chg ->
+                            c.prepare("INSERT OR REPLACE INTO items(provider, kind, sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive, pos) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").use { ins ->
+                                for (it in chunk) {
+                                    upd.reset()
+                                    upd.bindText(1, it.name)
+                                    if (it.year != null) upd.bindLong(2, it.year.toLong()) else upd.bindNull(2)
+                                    if (it.tmdb != null) upd.bindLong(3, it.tmdb.toLong()) else upd.bindNull(3)
+                                    if (it.ext != null) upd.bindText(4, it.ext) else upd.bindNull(4)
+                                    if (it.poster != null) upd.bindText(5, it.poster) else upd.bindNull(5)
+                                    if (it.categoryId != null) upd.bindText(6, it.categoryId) else upd.bindNull(6)
+                                    if (it.epgId != null) upd.bindText(7, it.epgId) else upd.bindNull(7)
+                                    upd.bindLong(8, if (it.hasArchive) 1L else 0L)
+                                    upd.bindLong(9, it.pos.toLong())
+                                    upd.bindText(10, provider); upd.bindText(11, kind.slug); upd.bindLong(12, it.sid.toLong())
+                                    upd.step()
+                                    chg.reset()
+                                    val updated = chg.step() && chg.getLong(0) > 0
+                                    if (!updated) {
+                                        ins.reset()
+                                        ins.bindText(1, provider); ins.bindText(2, kind.slug); ins.bindLong(3, it.sid.toLong())
+                                        ins.bindText(4, it.name)
+                                        if (it.year != null) ins.bindLong(5, it.year.toLong()) else ins.bindNull(5)
+                                        if (it.tmdb != null) ins.bindLong(6, it.tmdb.toLong()) else ins.bindNull(6)
+                                        if (it.ext != null) ins.bindText(7, it.ext) else ins.bindNull(7)
+                                        if (it.poster != null) ins.bindText(8, it.poster) else ins.bindNull(8)
+                                        if (it.categoryId != null) ins.bindText(9, it.categoryId) else ins.bindNull(9)
+                                        if (it.epgId != null) ins.bindText(10, it.epgId) else ins.bindNull(10)
+                                        ins.bindLong(11, if (it.hasArchive) 1L else 0L)
+                                        ins.bindLong(12, it.pos.toLong())
+                                        ins.step()
+                                    }
+                                }
+                            }
                         }
                     }
                     c.prepare("INSERT OR REPLACE INTO keys(provider, kind, k, sid) VALUES(?,?,?,?)").use { st ->
@@ -462,6 +613,20 @@ internal object XtreamMatchIndex {
         }
     }
 
+    /**
+     * PosterEnricher's write-back: artwork learned from get_vod_info/get_series_info for a row
+     * whose bulk list carried no icon. Survives syncs because [itemFp] ignores poster and the
+     * sync write coalesces incoming nulls over it.
+     */
+    suspend fun updatePoster(provider: String, kind: MatchKind, sid: Int, poster: String) {
+        mutex.withLock {
+            connection().prepare("UPDATE items SET poster = ? WHERE provider = ? AND kind = ? AND sid = ?").use { st ->
+                st.bindText(1, poster); st.bindText(2, provider); st.bindText(3, kind.slug); st.bindLong(4, sid.toLong())
+                st.step()
+            }
+        }
+    }
+
     private suspend fun writeMeta(provider: String, kind: MatchKind, itemCount: Int) {
         mutex.withLock {
             connection().prepare("INSERT OR REPLACE INTO idx_meta(provider, kind, built_at, item_count) VALUES(?,?,?,?)").use { st ->
@@ -474,7 +639,7 @@ internal object XtreamMatchIndex {
     /** Substring name search over the indexed catalog — backs the IPTV rows in Search. */
     suspend fun searchByName(provider: String, kind: MatchKind, query: String, limit: Int): List<IndexedItem> = mutex.withLock {
         connection().prepare(
-            "SELECT sid, name, year, tmdb, ext, poster FROM items WHERE provider = ? AND kind = ? AND name LIKE '%' || ? || '%' LIMIT ?"
+            "SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive FROM items WHERE provider = ? AND kind = ? AND name LIKE '%' || ? || '%' LIMIT ?"
         ).use { st ->
             st.bindText(1, provider); st.bindText(2, kind.slug); st.bindText(3, query); st.bindLong(4, limit.toLong())
             readItems(st)
@@ -493,14 +658,14 @@ internal object XtreamMatchIndex {
 
     /** Tier-1: items whose bulk-list tmdb id already matches. */
     suspend fun byTmdb(provider: String, kind: MatchKind, tmdb: Int): List<IndexedItem> = mutex.withLock {
-        connection().prepare("SELECT sid, name, year, tmdb, ext, poster FROM items WHERE provider = ? AND kind = ? AND tmdb = ?").use { st ->
+        connection().prepare("SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive FROM items WHERE provider = ? AND kind = ? AND tmdb = ?").use { st ->
             st.bindText(1, provider); st.bindText(2, kind.slug); st.bindLong(3, tmdb.toLong())
             readItems(st)
         }
     }
 
     suspend fun item(provider: String, kind: MatchKind, sid: Int): IndexedItem? = mutex.withLock {
-        connection().prepare("SELECT sid, name, year, tmdb, ext, poster FROM items WHERE provider = ? AND kind = ? AND sid = ?").use { st ->
+        connection().prepare("SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive FROM items WHERE provider = ? AND kind = ? AND sid = ?").use { st ->
             st.bindText(1, provider); st.bindText(2, kind.slug); st.bindLong(3, sid.toLong())
             readItems(st).firstOrNull()
         }
@@ -517,6 +682,9 @@ internal object XtreamMatchIndex {
                     tmdb = if (st.isNull(3)) null else st.getLong(3).toInt(),
                     ext = if (st.isNull(4)) null else st.getText(4),
                     poster = if (st.isNull(5)) null else st.getText(5),
+                    categoryId = if (st.isNull(6)) null else st.getText(6),
+                    epgId = if (st.isNull(7)) null else st.getText(7),
+                    hasArchive = st.getLong(8) > 0,
                 )
             )
         }

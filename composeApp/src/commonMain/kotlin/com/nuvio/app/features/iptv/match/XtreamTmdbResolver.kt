@@ -1,6 +1,7 @@
 package com.nuvio.app.features.iptv.match
 
 import co.touchlab.kermit.Logger
+import com.nuvio.app.features.iptv.CONTENT_TYPE_LIVE
 import com.nuvio.app.features.iptv.CONTENT_TYPE_MOVIES
 import com.nuvio.app.features.iptv.CONTENT_TYPE_SERIES
 import com.nuvio.app.features.iptv.SOURCE_TYPE_XTREAM
@@ -81,6 +82,7 @@ internal object XtreamTmdbResolver {
                 // largest fetch the app makes (~15 MB on a 60k-title panel, and the whole catalog
                 // in ONE response — the API has no paging), so a user who turned Movies off was
                 // still paying for it in full on every add and every 72h refresh.
+                if (acc.typeEnabled(CONTENT_TYPE_LIVE)) ensureIndexed(acc, MatchKind.LIVE)
                 if (acc.typeEnabled(CONTENT_TYPE_MOVIES)) ensureIndexed(acc, MatchKind.MOVIE)
                 if (acc.typeEnabled(CONTENT_TYPE_SERIES)) ensureIndexed(acc, MatchKind.SERIES)
             }
@@ -168,6 +170,7 @@ internal object XtreamTmdbResolver {
 
     private suspend fun fetchVerifySignal(acc: XtreamAccount, kind: MatchKind, cand: IndexedItem): VerifySignal =
         when (kind) {
+            MatchKind.LIVE -> VerifySignal(null, null)   // live rows are never TMDB-verified
             MatchKind.MOVIE -> XtreamClient.vodInfo(acc, cand.sid).getOrNull()
                 ?.let { VerifySignal(it.tmdbId, it.releaseDate?.take(4)?.toIntOrNull()) }
                 ?: VerifySignal(null, null)
@@ -240,10 +243,18 @@ internal object XtreamTmdbResolver {
                         // so a build peaks at one 5k flush-chunk instead of the whole catalog
                         // (~40-50 MB of IndexedItem on a 175k panel — the allocation that used
                         // to OOM low-RAM devices right after a playlist was added).
+                        // The category list rides along (P7): stored on success so the hub can
+                        // serve section rows without a per-session network fetch.
+                        val cats = when (kind) {
+                            MatchKind.MOVIE -> XtreamClient.vodCategories(acc)
+                            MatchKind.SERIES -> XtreamClient.seriesCategories(acc)
+                            MatchKind.LIVE -> XtreamClient.liveCategories(acc)
+                        }.getOrNull()
                         val session = XtreamMatchIndex.beginSync(acc.id, kind)
                         val fetched = when (kind) {
                             MatchKind.MOVIE -> XtreamClient.vodIndexItemsInto(acc, session::accept).getOrThrow()
                             MatchKind.SERIES -> XtreamClient.seriesIndexItemsInto(acc, session::accept).getOrThrow()
+                            MatchKind.LIVE -> XtreamClient.liveIndexItemsInto(acc, session::accept).getOrThrow()
                         }
                         // An empty list where we previously indexed content is a panel glitch, not
                         // a real catalog — fail into the 1h backoff instead of re-fetching every
@@ -251,7 +262,9 @@ internal object XtreamTmdbResolver {
                         check(fetched > 0 || XtreamMatchIndex.builtAt(acc.id, kind) == null) {
                             "panel returned an empty ${kind.slug} list"
                         }
-                        session.finish()
+                        val st = session.finish()
+                        cats?.let { XtreamMatchIndex.replaceCategories(acc.id, kind, it.map { c -> c.id to c.name }) }
+                        st
                     }
                     log.i { "synced ${kind.slug} index for ${acc.name}: +${stats.added} ~${stats.changed} -${stats.removed} (${stats.total} total)" }
                     buildLock.withLock { lastFailedBuildMs.remove(key) }

@@ -129,7 +129,29 @@ object XtreamClient : IptvClient {
             tmdb = o["tmdb"].asIntOrNull()?.takeIf { it > 0 },
             ext = o["container_extension"].asStringOrNull()?.takeIf { it.isNotBlank() },
             poster = o["stream_icon"].asStringOrNull()?.takeIf { it.isNotBlank() },
+            categoryId = o["category_id"].asStringOrNull(),
         )
+    }
+
+    /** One live list entry -> index row (P7: the index doubles as the browse catalog). */
+    internal fun parseLiveIndexItem(o: JsonObject): IndexedItem? {
+        val id = o["stream_id"].asIntOrNull() ?: return null
+        return IndexedItem(
+            sid = id,
+            name = o["name"].asStringOrNull() ?: "",
+            year = null,
+            tmdb = null,
+            ext = null,
+            poster = o["stream_icon"].asStringOrNull()?.takeIf { it.isNotBlank() },
+            categoryId = o["category_id"].asStringOrNull(),
+            epgId = o["epg_channel_id"].asStringOrNull(),
+            hasArchive = (o["tv_archive"].asIntOrNull() ?: 0) > 0,
+        )
+    }
+
+    /** Live half of [vodIndexItemsInto]. */
+    internal suspend fun liveIndexItemsInto(acc: XtreamAccount, onItem: (IndexedItem) -> Unit): Result<Int> = call {
+        streamArrayInto(acc, playerApi(acc, "get_live_streams"), { o -> parseLiveIndexItem(o) }, onItem)
     }
 
     /** One series list entry -> index row. internal for tests. */
@@ -144,6 +166,7 @@ object XtreamClient : IptvClient {
             tmdb = o["tmdb"].asIntOrNull()?.takeIf { it > 0 },
             ext = null,
             poster = o["cover"].asStringOrNull()?.takeIf { it.isNotBlank() },
+            categoryId = o["category_id"].asStringOrNull(),
         )
     }
 
@@ -179,6 +202,24 @@ object XtreamClient : IptvClient {
             tmdbId = info?.get("tmdb_id").asIntOrNull(),
             containerExtension = movieData?.get("container_extension").asStringOrNull()
         )
+    }
+
+    /**
+     * Artwork for one VOD item from get_vod_info — the lazy fallback for panels whose bulk
+     * list ships empty stream_icons. null = the panel has no art for it either.
+     */
+    suspend fun vodArtwork(acc: XtreamAccount, vodId: Int): Result<String?> = call {
+        val text = httpGetText(playerApi(acc, "get_vod_info") + "&vod_id=$vodId", acc.dnsProvider)
+        val info = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()?.get("info") as? JsonObject
+        info?.get("movie_image").asStringOrNull()?.takeIf { it.isNotBlank() }
+            ?: info?.get("cover_big").asStringOrNull()?.takeIf { it.isNotBlank() }
+    }
+
+    /** Series half of [vodArtwork] (get_series_info `info.cover`). */
+    suspend fun seriesArtwork(acc: XtreamAccount, seriesId: Int): Result<String?> = call {
+        val text = httpGetText(playerApi(acc, "get_series_info") + "&series_id=$seriesId", acc.dnsProvider)
+        val info = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()?.get("info") as? JsonObject
+        info?.get("cover").asStringOrNull()?.takeIf { it.isNotBlank() }
     }
 
     /**

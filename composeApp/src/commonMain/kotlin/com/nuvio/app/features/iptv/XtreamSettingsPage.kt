@@ -91,14 +91,44 @@ internal fun LazyListScope.xtreamSettingsContent(
     }
 }
 
+/** Catalog sizes from LOCAL data only — zero API calls (item 8; how TiviMate shows its counts). */
+private data class CatalogCounts(val live: Int?, val movies: Int?, val series: Int?) {
+    val isEmpty: Boolean get() = live == null && movies == null && series == null
+}
+
+private suspend fun localCatalogCounts(account: XtreamAccount): CatalogCounts = when {
+    // M3U: the ingest meta row carries all three counts.
+    account.sourceType.isM3u() ->
+        com.nuvio.app.features.iptv.content.IptvContentDb.ingestMeta(account.id)
+            ?.let { CatalogCounts(it.liveCount, it.vodCount, it.seriesCount) }
+            ?: CatalogCounts(null, null, null)
+    // Stalker: the mirrored lineup gives the live count; VOD/series are write-through partials, so
+    // showing them would understate the catalog — skip.
+    account.sourceType == SOURCE_TYPE_STALKER ->
+        CatalogCounts(
+            live = com.nuvio.app.features.iptv.content.IptvContentDb.ingestMeta(account.id)
+                ?.liveCount?.takeIf { it > 0 },
+            movies = null,
+            series = null,
+        )
+    // Xtream: the match index already holds the full movie/series catalogs (live isn't indexed).
+    else -> CatalogCounts(
+        live = null,
+        movies = com.nuvio.app.features.iptv.match.XtreamMatchIndex.indexedCount(account.id, com.nuvio.app.features.iptv.match.MatchKind.MOVIE),
+        series = com.nuvio.app.features.iptv.match.XtreamMatchIndex.indexedCount(account.id, com.nuvio.app.features.iptv.match.MatchKind.SERIES),
+    )
+}
+
 /** Live account status pulled from the source's own panel API: state, connections, and expiry. */
 @Composable
 private fun XtreamAccountDetails(account: XtreamAccount) {
     var info by remember(account.id) { mutableStateOf<XtreamAccountInfo?>(null) }
     var loading by remember(account.id) { mutableStateOf(true) }
+    var counts by remember(account.id) { mutableStateOf(CatalogCounts(null, null, null)) }
     // M3U has no panel to ask — skip the fetch instead of showing a phantom "couldn't reach".
     val hasPanel = !account.sourceType.isM3u()
     LaunchedEffect(account.id) {
+        counts = runCatching { localCatalogCounts(account) }.getOrDefault(CatalogCounts(null, null, null))
         if (!hasPanel) { loading = false; return@LaunchedEffect }
         loading = true
         info = IptvClient.forAccount(account).accountInfo(account).getOrNull()
@@ -107,6 +137,11 @@ private fun XtreamAccountDetails(account: XtreamAccount) {
     Column {
         Text(account.baseUrl, style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(8.dp))
+        if (!counts.isEmpty) {
+            counts.live?.let { AccountDetailLine("Channels", it.toString()) }
+            counts.movies?.let { AccountDetailLine("Movies", it.toString()) }
+            counts.series?.let { AccountDetailLine("Series", it.toString()) }
+        }
         val i = info
         when {
             !hasPanel -> {}

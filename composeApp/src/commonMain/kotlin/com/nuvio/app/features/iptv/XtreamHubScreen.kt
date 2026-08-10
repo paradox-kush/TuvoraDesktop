@@ -346,6 +346,11 @@ private fun XtreamHubCategoryRow(
             viewAllPillSize = NuvioViewAllPillSize.Compact,
             key = { it.id },
         ) { item ->
+            // Item-5 window append: composing the LAST loaded tile of a longer category pulls
+            // the next window in — endless-scroll inside the row, no whole-category List ever.
+            if (category.hasMore && item === category.items.last()) {
+                LaunchedEffect(category.id, category.items.size) { XtreamHubRepository.loadMore(category.id) }
+            }
             if (live) {
                 // Live channel: card + now/next EPG line, fetched lazily as it appears.
                 LaunchedEffect(item.id) { XtreamHubRepository.ensureEpg(item.id) }

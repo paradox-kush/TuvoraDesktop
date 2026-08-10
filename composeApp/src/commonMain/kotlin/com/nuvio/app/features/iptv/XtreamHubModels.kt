@@ -34,6 +34,8 @@ data class XtreamHubCategory(
     val items: List<MetaPreview> = emptyList(),
     val loaded: Boolean = false,
     val loading: Boolean = false,
+    /** More rows exist past [items] (item 5): the row's end-trigger calls loadMore. */
+    val hasMore: Boolean = false,
 )
 
 fun XtreamMovie.toMetaPreview(accountId: String): MetaPreview = MetaPreview(

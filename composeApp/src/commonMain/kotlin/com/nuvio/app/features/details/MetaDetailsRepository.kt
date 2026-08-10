@@ -603,7 +603,7 @@ object MetaDetailsRepository {
     ): MetaDetails? {
         if (streamId == null) return null
         val client = com.nuvio.app.features.iptv.IptvClient.forAccount(account)
-        val registered = XtreamItemRegistry.get(id)
+        val registered = XtreamItemRegistry.getOrLoad(id)
         val detail = client.vodInfo(account, streamId).getOrNull()
         val name = detail?.name ?: registered?.name ?: "Movie"
         val poster = registered?.poster
@@ -655,7 +655,7 @@ object MetaDetailsRepository {
         // [forceFresh] skips the cache short-circuit: Stalker create_link URLs are single-use /
         // short-TTL, so a replay (or a mid-playback 401) must mint a NEW link even though the
         // registry still holds the previous, already-consumed one.
-        val existing = XtreamItemRegistry.get(id)
+        val existing = XtreamItemRegistry.getOrLoad(id)
         if (!forceFresh && existing != null && !existing.streamUrl.isNullOrBlank()) return true
         XtreamRepository.ensureLoaded()
         val parsed = XtreamItemRegistry.parseId(id) ?: return false
@@ -714,7 +714,7 @@ object MetaDetailsRepository {
         if (seriesId == null) return null
         val isM3u = account.sourceType == com.nuvio.app.features.iptv.SOURCE_TYPE_M3U_URL
         val client = com.nuvio.app.features.iptv.IptvClient.forAccount(account)
-        val registered = XtreamItemRegistry.get(id)
+        val registered = XtreamItemRegistry.getOrLoad(id)
         val detail = client.seriesInfo(account, seriesId).getOrNull()
         val videos = detail?.episodes.orEmpty().map { ep ->
             val episodeContentId = XtreamItemRegistry.episodeId(accountId, ep.episodeId)

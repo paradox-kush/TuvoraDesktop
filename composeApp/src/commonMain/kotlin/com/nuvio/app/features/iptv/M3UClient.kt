@@ -276,6 +276,17 @@ object M3UClient : IptvClient {
     suspend fun movieUrlFor(acc: XtreamAccount, streamId: Int): String? = IptvContentDb.vodRow(acc.id, streamId)?.url
     suspend fun episodeUrlFor(acc: XtreamAccount, episodeId: String): String? = IptvContentDb.episodeUrl(acc.id, episodeId)?.first
 
+    // --- windowed browse reads (item 5) — also serve the Stalker lineup, which lives in the
+    // same channels table. ensure* is the caller's job (hub does it before the first window).
+    suspend fun liveChannelsPage(acc: XtreamAccount, categoryId: String?, offset: Int, limit: Int): List<XtreamChannel> =
+        IptvContentDb.pageChannels(acc.id, categoryId, offset, limit).map { it.toChannel() }
+
+    suspend fun vodMoviesPage(acc: XtreamAccount, categoryId: String?, offset: Int, limit: Int): List<XtreamMovie> =
+        IptvContentDb.pageVod(acc.id, categoryId, offset, limit).map { it.toMovie() }
+
+    suspend fun seriesPage(acc: XtreamAccount, categoryId: String?, offset: Int, limit: Int): List<XtreamSeriesItem> =
+        IptvContentDb.pageSeries(acc.id, categoryId, offset, limit).map { it.toSeriesItem() }
+
     /** Whether a playlist has a completed ingest. */
     suspend fun isIngested(acc: XtreamAccount): Boolean = IptvContentDb.ingestMeta(acc.id) != null
 

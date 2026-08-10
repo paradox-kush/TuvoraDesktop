@@ -90,6 +90,58 @@ object XtreamItemRegistry {
 
     fun get(contentId: String): XtreamResolvedItem? = synchronized(itemsLock) { items[contentId] }
 
+    /**
+     * [get] with a cold-start fallback (item 5): a map miss rebuilds the item from the LOCAL
+     * stores — the Xtream browse catalog, the M3U rows, or the Stalker write-through rows — and
+     * registers it. This is what lets the in-memory map be a cache instead of the source of
+     * truth: a Library/Continue-Watching open after a process death resolves without any
+     * network fetch. Returns null only when the account is gone or the item was never stored.
+     */
+    suspend fun getOrLoad(contentId: String): XtreamResolvedItem? {
+        get(contentId)?.let { return it }
+        val parsed = parseId(contentId) ?: return null
+        val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == parsed.accountId } ?: return null
+        val sid = parsed.id.toIntOrNull()
+        val built: XtreamResolvedItem? = when (account.sourceType) {
+            SOURCE_TYPE_XTREAM -> {
+                if (sid == null) null else when (parsed.kind) {
+                    XtreamKind.LIVE -> com.nuvio.app.features.iptv.match.XtreamMatchIndex
+                        .itemRow(account.id, com.nuvio.app.features.iptv.match.MatchKind.LIVE, sid)?.let {
+                            XtreamResolvedItem(contentId, account.id, XtreamKind.LIVE, it.name,
+                                XtreamClient.liveStreamUrl(account, sid), logo = it.poster, streamType = "live")
+                        }
+                    XtreamKind.VOD -> com.nuvio.app.features.iptv.match.XtreamMatchIndex
+                        .itemRow(account.id, com.nuvio.app.features.iptv.match.MatchKind.MOVIE, sid)?.let {
+                            XtreamResolvedItem(contentId, account.id, XtreamKind.VOD, it.name,
+                                XtreamClient.movieStreamUrl(account, sid, it.ext ?: "mp4"), poster = it.poster)
+                        }
+                    XtreamKind.SERIES -> com.nuvio.app.features.iptv.match.XtreamMatchIndex
+                        .itemRow(account.id, com.nuvio.app.features.iptv.match.MatchKind.SERIES, sid)?.let {
+                            XtreamResolvedItem(contentId, account.id, XtreamKind.SERIES, it.name, null, poster = it.poster)
+                        }
+                    XtreamKind.EPISODE -> null   // episodes resolve via the detail/play seams
+                }
+            }
+            SOURCE_TYPE_STALKER, SOURCE_TYPE_M3U_URL, SOURCE_TYPE_M3U_FILE -> {
+                if (sid == null) null else when (parsed.kind) {
+                    XtreamKind.LIVE -> com.nuvio.app.features.iptv.content.IptvContentDb.channelRow(account.id, sid)?.let {
+                        XtreamResolvedItem(contentId, account.id, XtreamKind.LIVE, it.name, it.url, logo = it.logo, streamType = "live")
+                    }
+                    XtreamKind.VOD -> com.nuvio.app.features.iptv.content.IptvContentDb.vodRow(account.id, sid)?.let {
+                        XtreamResolvedItem(contentId, account.id, XtreamKind.VOD, it.name, it.url, poster = it.logo)
+                    }
+                    XtreamKind.SERIES -> com.nuvio.app.features.iptv.content.IptvContentDb.seriesRow(account.id, sid)?.let {
+                        XtreamResolvedItem(contentId, account.id, XtreamKind.SERIES, it.name, null, poster = it.logo)
+                    }
+                    XtreamKind.EPISODE -> null
+                }
+            }
+            else -> null
+        }
+        built?.let { register(it) }
+        return built
+    }
+
     fun isLiveId(contentId: String): Boolean = parseId(contentId)?.kind == XtreamKind.LIVE
 
     /**

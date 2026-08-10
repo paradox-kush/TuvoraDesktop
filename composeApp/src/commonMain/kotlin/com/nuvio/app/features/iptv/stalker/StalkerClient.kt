@@ -13,6 +13,10 @@ import com.nuvio.app.features.iptv.XtreamSeriesItem
 import com.nuvio.app.features.iptv.XtreamVodDetail
 import com.nuvio.app.features.iptv.content.EpgProgrammeRow
 import com.nuvio.app.features.iptv.content.IptvContentDb
+import com.nuvio.app.features.iptv.content.IptvContentKind
+import com.nuvio.app.features.iptv.content.IptvEpisodeRow
+import com.nuvio.app.features.iptv.content.IptvSeriesRow
+import com.nuvio.app.features.iptv.content.IptvStreamRow
 import com.nuvio.app.features.trakt.TraktPlatformClock
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -46,10 +50,10 @@ object StalkerClient : IptvClient {
     // re-paging the whole catalog (the request storm that got a live portal to block us).
     private val rowCache = mutableMapOf<String, JsonObject>()
 
-    // The live lineup per account (one get_all_channels request, filtered client-side) + each
-    // channel's create_link `cmd`. Mapped to the domain model so the raw 13MB JSON isn't retained.
-    private val liveCache = mutableMapOf<String, List<XtreamChannel>>()
-    private val liveCmds = mutableMapOf<String, String>()
+    // The live lineup lives in IptvContentDb (P6): one get_all_channels per [LINEUP_TTL_MS],
+    // replaced wholesale via replaceLiveLineup, every browse a local indexed read. That kills the
+    // 13MB re-download every cold start AND makes a favorited channel playable offline — the cmd
+    // (create_link's stable input) is persisted per row; only the single-use play URL never is.
     private val liveMutex = Mutex()
 
     // Bulk EPG lands in IptvContentDb.epg_programmes (streamed, chunk-inserted — see
@@ -66,6 +70,12 @@ object StalkerClient : IptvClient {
     /** Test seam: lets a test drive the whole client against a fake portal (StalkerRequestCountTest). */
     internal var sessionFactory: (XtreamAccount) -> StalkerSession = { StalkerSession(it) }
 
+    /** Test seam: simulates a process death — in-memory caches gone, the SQLite store intact. */
+    internal fun clearMemoryCachesForTest() {
+        rowCache.clear()
+        seasonCache.clear()
+    }
+
     private suspend fun sessionFor(acc: XtreamAccount): StalkerSession = sessionsMutex.withLock {
         // Fingerprint mirrors NuvioTV's StalkerSessionManager: serial/device-id/login edits don't
         // change acc.id (it's portal+MAC), so a cached session must be dropped when they change or
@@ -75,8 +85,6 @@ object StalkerClient : IptvClient {
         if (existing != null && existing.fingerprint == fp) return@withLock existing.session
         // Config changed (or first use) — the cached rows/cmds belong to the OLD portal identity.
         rowCache.keys.removeAll { it.startsWith("${acc.id}:") }
-        liveCmds.keys.removeAll { it.startsWith("${acc.id}:") }
-        liveCache.remove(acc.id)
         epgUnsupported.remove(acc.id)
         seasonCache.keys.removeAll { it.startsWith("${acc.id}:") }
         sessionFactory(acc).also { sessions[acc.id] = Entry(it, fp) }
@@ -107,8 +115,13 @@ object StalkerClient : IptvClient {
         )
     }
 
-    override suspend fun liveCategories(acc: XtreamAccount): Result<List<XtreamCategory>> =
-        categories(acc, "itv", "get_genres")
+    override suspend fun liveCategories(acc: XtreamAccount): Result<List<XtreamCategory>> = runCatching {
+        if (ensureLineup(acc)) {
+            return@runCatching IptvContentDb.categoriesFor(acc.id, IptvContentKind.LIVE).map { XtreamCategory(it.id, it.name) }
+        }
+        // Mirror unavailable (portal down mid-refresh with no stored lineup): live portal call.
+        categories(acc, "itv", "get_genres").getOrThrow()
+    }
 
     override suspend fun vodCategories(acc: XtreamAccount): Result<List<XtreamCategory>> =
         categories(acc, "vod", "get_categories")
@@ -117,68 +130,129 @@ object StalkerClient : IptvClient {
         categories(acc, "series", "get_categories")
 
     override suspend fun liveChannels(acc: XtreamAccount, categoryId: String?): Result<List<XtreamChannel>> = runCatching {
-        val all = allLiveChannels(acc)
-        if (categoryId == null) all else all.filter { it.categoryId == categoryId }
+        if (!ensureLineup(acc)) return@runCatching emptyList()
+        IptvContentDb.channelsFor(acc.id, categoryId).map { it.toChannel(acc) }
     }
+
+    /** Windowed lineup read for the hub (item 5). Ensures the mirror, then a paged indexed read. */
+    suspend fun liveChannelsPage(acc: XtreamAccount, categoryId: String?, offset: Int, limit: Int): List<XtreamChannel> {
+        if (!ensureLineup(acc)) return emptyList()
+        return IptvContentDb.pageChannels(acc.id, categoryId, offset, limit).map { it.toChannel(acc) }
+    }
+
+    private fun com.nuvio.app.features.iptv.content.IptvStreamRow.toChannel(acc: XtreamAccount) = XtreamChannel(
+        streamId = sid,
+        name = name,
+        logo = logo?.takeIf { it.isNotBlank() }?.let { absolutize(acc, it) },
+        epgChannelId = tvgId,
+        categoryId = categoryId,
+        hasArchive = hasArchive,
+        streamUrl = ""   // create_link resolves the real single-use URL at play time
+    )
 
     /**
-     * The WHOLE live lineup in ONE request, fetched once per account and filtered client-side.
+     * Ensures a fresh (≤[LINEUP_TTL_MS]) live lineup for [acc] is stored in [IptvContentDb],
+     * mirroring it when stale: genres + the WHOLE lineup in ONE `get_all_channels` (what every real
+     * MAG client uses — stalkerhek / magplex / stalker-to-m3u; TiviMate's playlist add does exactly
+     * this, measured in research/iptv-catalog-loading.md). Portals without get_all_channels fall
+     * back to the bounded paged fetch, persisted the same way.
      *
-     * `get_all_channels` is what every real MAG client uses (stalkerhek / magplex / stalker-to-m3u all
-     * do this). We used to page `get_ordered_list` instead, which this portal serves **14 rows a page**
-     * — 11,286 channels = ~800 requests, so it both hammered the portal into a Cloudflare ban AND
-     * silently truncated at MAX_PAGES (we only ever saw ~25% of the lineup).
-     *
-     * Rows are mapped straight to the domain model and the raw 13MB JSON is dropped — only the `cmd`
-     * per channel is kept ([liveCmds]), which is all create_link needs at play time.
+     * The lineup used to live in an in-memory map — 13 MB re-downloaded every cold start, and a
+     * favorited channel unplayable from Library until the hub happened to be browsed. Now every
+     * browse is an indexed read, and the refresh only ever runs from a FOREGROUND browse — never a
+     * background worker, because a Stalker handshake evicts the other device on a shared MAC.
+     * Returns true when a usable lineup is stored.
      */
-    private suspend fun allLiveChannels(acc: XtreamAccount): List<XtreamChannel> = liveMutex.withLock {
-        liveCache[acc.id]?.let { return@withLock it }
-        val js = runCatching {
-            sessionFor(acc).request(mapOf("type" to "itv", "action" to "get_all_channels"))
-        }.getOrNull()
-        val rows = ((js as? JsonObject)?.get("data") as? JsonArray ?: js as? JsonArray)
-            ?.mapNotNull { it as? JsonObject }.orEmpty()
-        val channels = rows.mapNotNull { item ->
-            val id = item.int("id")?.takeIf { it > 0 } ?: return@mapNotNull null
-            item.str("cmd")?.let { liveCmds["${acc.id}:$id"] = it }
-            XtreamChannel(
-                streamId = id,
-                name = item.str("name").orEmpty(),
-                logo = item.str("logo")?.takeIf { it.isNotBlank() }?.let { absolutize(acc, it) },
-                epgChannelId = item.str("xmltv_id")?.takeIf { it.isNotBlank() },
-                categoryId = item.str("tv_genre_id") ?: item.str("genre_id"),
-                hasArchive = (item.int("tv_archive") ?: 0) > 0,
-                streamUrl = ""   // create_link resolves the real single-use URL at play time
-            )
+    private suspend fun ensureLineup(acc: XtreamAccount, force: Boolean = false): Boolean {
+        val now = TraktPlatformClock.nowEpochMs()
+        if (!force) {
+            IptvContentDb.ingestMeta(acc.id)?.takeIf { now - it.builtAtMs < LINEUP_TTL_MS }
+                ?.let { return it.liveCount > 0 }
         }
-        // A portal without get_all_channels falls back to the (expensive) paged path — don't cache an
-        // empty lineup, or one bad response would strand the playlist for the session.
-        if (channels.isEmpty()) return@withLock pagedLiveChannels(acc)
-        channels.also { liveCache[acc.id] = it }
+        return liveMutex.withLock {
+            IptvContentDb.ingestMeta(acc.id)?.takeIf { !force && now - it.builtAtMs < LINEUP_TTL_MS }
+                ?.let { return@withLock it.liveCount > 0 }   // raced: another caller mirrored
+            val cats = runCatching { categories(acc, "itv", "get_genres").getOrThrow() }.getOrNull()
+            val js = runCatching {
+                sessionFor(acc).request(mapOf("type" to "itv", "action" to "get_all_channels"))
+            }.getOrNull()
+            var items = ((js as? JsonObject)?.get("data") as? JsonArray ?: js as? JsonArray)
+                ?.mapNotNull { it as? JsonObject }.orEmpty()
+            // A portal without get_all_channels: bounded paged fetch (rowCache keeps the raw rows).
+            if (items.isEmpty()) items = orderedList(acc, "itv", null)
+            val rows = items.mapNotNull { item ->
+                val id = item.int("id")?.takeIf { it > 0 } ?: return@mapNotNull null
+                com.nuvio.app.features.iptv.content.IptvStreamRow(
+                    sid = id,
+                    name = item.str("name").orEmpty(),
+                    logo = item.str("logo")?.takeIf { it.isNotBlank() },
+                    tvgId = item.str("xmltv_id")?.takeIf { it.isNotBlank() },
+                    categoryId = item.str("tv_genre_id") ?: item.str("genre_id"),
+                    url = "",
+                    ext = null,
+                    cmd = item.str("cmd"),
+                    hasArchive = (item.int("tv_archive") ?: 0) > 0,
+                )
+            }
+            // Nothing usable fetched: keep whatever lineup is already stored (stale beats empty),
+            // and don't stamp freshness — the next browse retries.
+            if (rows.isEmpty()) {
+                return@withLock (IptvContentDb.ingestMeta(acc.id)?.liveCount ?: 0) > 0
+            }
+            IptvContentDb.replaceLiveLineup(acc.id, rows, cats.orEmpty().map { it.id to it.name })
+            true
+        }
     }
 
-    /** Legacy paged live browse — only for portals that don't answer get_all_channels. */
-    private suspend fun pagedLiveChannels(acc: XtreamAccount): List<XtreamChannel> =
-        orderedList(acc, "itv", null).mapNotNull { item ->
-            val id = item.int("id")?.takeIf { it > 0 } ?: return@mapNotNull null
-            XtreamChannel(
-                streamId = id,
-                name = item.str("name").orEmpty(),
-                logo = item.str("logo")?.takeIf { it.isNotBlank() }?.let { absolutize(acc, it) },
-                epgChannelId = item.str("xmltv_id")?.takeIf { it.isNotBlank() },
-                categoryId = item.str("tv_genre_id") ?: item.str("genre_id"),
-                hasArchive = (item.int("tv_archive") ?: 0) > 0,
-                streamUrl = ""
-            )
-        }
-
     override suspend fun vodMovies(acc: XtreamAccount, categoryId: String?): Result<List<XtreamMovie>> = runCatching {
-        orderedList(acc, "vod", categoryId, maxItems = CATEGORY_ITEMS).map { movieOf(acc, it) }.filter { it.streamId > 0 }
+        val items = orderedList(acc, "vod", categoryId, maxItems = CATEGORY_ITEMS)
+        writeThroughVod(acc, items)
+        items.map { movieOf(acc, it) }.filter { it.streamId > 0 }
     }
 
     override suspend fun series(acc: XtreamAccount, categoryId: String?): Result<List<XtreamSeriesItem>> = runCatching {
-        orderedList(acc, "series", categoryId, maxItems = CATEGORY_ITEMS).map { seriesOf(acc, it) }.filter { it.seriesId > 0 }
+        val items = orderedList(acc, "series", categoryId, maxItems = CATEGORY_ITEMS)
+        writeThroughSeries(acc, items)
+        items.map { seriesOf(acc, it) }.filter { it.seriesId > 0 }
+    }
+
+    /**
+     * Write-through cache (P6): every VOD/series page browsed is upserted into [IptvContentDb] with
+     * its `cmd`, so anything the user has EVER seen on this device stays playable after a cold
+     * start (Library / Continue Watching) without re-finding it on the portal. Deliberately
+     * best-effort and NEVER a reason for extra requests — a full Stalker VOD mirror is impossible
+     * (14 rows/page, thousands of pages; measured in research/iptv-catalog-loading.md).
+     */
+    private suspend fun writeThroughVod(acc: XtreamAccount, items: List<JsonObject>) {
+        if (items.isEmpty()) return
+        val rows = items.mapNotNull { item ->
+            val id = item.int("id")?.takeIf { it > 0 } ?: return@mapNotNull null
+            IptvStreamRow(
+                sid = id,
+                name = item.str("name").orEmpty(),
+                logo = (item.str("screenshot_uri") ?: item.str("cover"))?.takeIf { it.isNotBlank() },
+                tvgId = null,
+                categoryId = item.str("category_id"),
+                url = "",
+                ext = null,
+                cmd = item.str("cmd"),
+            )
+        }
+        runCatching { IptvContentDb.insertChunk(acc.id, channels = emptyList(), vod = rows, series = emptyList(), episodes = emptyList(), categories = emptyList()) }
+    }
+
+    private suspend fun writeThroughSeries(acc: XtreamAccount, items: List<JsonObject>) {
+        if (items.isEmpty()) return
+        val rows = items.mapNotNull { item ->
+            val id = item.int("id")?.takeIf { it > 0 } ?: return@mapNotNull null
+            IptvSeriesRow(
+                sid = id,
+                name = item.str("name").orEmpty(),
+                logo = (item.str("screenshot_uri") ?: item.str("cover"))?.takeIf { it.isNotBlank() },
+                categoryId = item.str("category_id"),
+            )
+        }
+        runCatching { IptvContentDb.insertChunk(acc.id, channels = emptyList(), vod = emptyList(), series = rows, episodes = emptyList(), categories = emptyList()) }
     }
 
     /**
@@ -187,13 +261,15 @@ object StalkerClient : IptvClient {
      * just fail into backoff), so the search screen queries the portal directly. Never throws.
      */
     suspend fun searchMovies(acc: XtreamAccount, query: String): List<XtreamMovie> = runCatching {
-        orderedList(acc, "vod", null, search = query, maxItems = SEARCH_ITEMS)
-            .map { movieOf(acc, it) }.filter { it.streamId > 0 }
+        val items = orderedList(acc, "vod", null, search = query, maxItems = SEARCH_ITEMS)
+        writeThroughVod(acc, items)   // a searched-then-favorited movie must survive a cold start too
+        items.map { movieOf(acc, it) }.filter { it.streamId > 0 }
     }.getOrDefault(emptyList())
 
     suspend fun searchSeries(acc: XtreamAccount, query: String): List<XtreamSeriesItem> = runCatching {
-        orderedList(acc, "series", null, search = query, maxItems = SEARCH_ITEMS)
-            .map { seriesOf(acc, it) }.filter { it.seriesId > 0 }
+        val items = orderedList(acc, "series", null, search = query, maxItems = SEARCH_ITEMS)
+        writeThroughSeries(acc, items)
+        items.map { seriesOf(acc, it) }.filter { it.seriesId > 0 }
     }.getOrDefault(emptyList())
 
     private fun movieOf(acc: XtreamAccount, item: JsonObject) = XtreamMovie(
@@ -219,7 +295,24 @@ object StalkerClient : IptvClient {
     )
 
     override suspend fun vodInfo(acc: XtreamAccount, vodId: Int): Result<XtreamVodDetail?> = runCatching {
-        val row = row(acc, "vod", vodId) ?: return@runCatching null
+        // Rich detail from this session's browse row when we have it; else the write-through store
+        // gives a name-only detail (like M3U's vodInfo) WITHOUT the bounded portal scan — TMDB
+        // enrichment upstream fills the rest.
+        val cached = rowCache[rowKey(acc.id, "vod", vodId)]
+        if (cached == null) {
+            IptvContentDb.vodRow(acc.id, vodId)?.let { db ->
+                return@runCatching XtreamVodDetail(
+                    name = db.name,
+                    plot = null,
+                    genres = emptyList(),
+                    rating = null,
+                    releaseDate = null,
+                    tmdbId = null,
+                    containerExtension = null
+                )
+            }
+        }
+        val row = cached ?: row(acc, "vod", vodId) ?: return@runCatching null
         XtreamVodDetail(
             name = row.str("name"),
             plot = row.str("description"),
@@ -241,6 +334,36 @@ object StalkerClient : IptvClient {
      * returns Season 2..5 rows, each carrying its own episode numbers + cmd).
      */
     override suspend fun seriesInfo(acc: XtreamAccount, seriesId: Int): Result<XtreamSeriesDetail?> = runCatching {
+        // Cold start (Library detail, portal not yet browsed this session): serve the write-through
+        // rows — name/poster + the stored episode list — without the portal scan. Falls through to
+        // the live path when nothing (or no episodes) is stored yet.
+        if (rowCache[rowKey(acc.id, "series", seriesId)] == null) {
+            IptvContentDb.seriesRow(acc.id, seriesId)?.let { db ->
+                val eps = IptvContentDb.episodesFor(acc.id, seriesId).map { ep ->
+                    XtreamEpisode(
+                        episodeId = ep.episodeId,
+                        season = ep.season,
+                        episodeNum = ep.episode,
+                        title = ep.name,
+                        plot = null,
+                        still = null,
+                        containerExtension = null
+                    )
+                }
+                if (eps.isNotEmpty()) {
+                    return@runCatching XtreamSeriesDetail(
+                        name = db.name,
+                        poster = db.logo?.takeIf { it.isNotBlank() }?.let { absolutize(acc, it) },
+                        tmdbId = null,
+                        plot = null,
+                        genres = emptyList(),
+                        rating = null,
+                        releaseDate = null,
+                        episodes = eps
+                    )
+                }
+            }
+        }
         val row = row(acc, "series", seriesId) ?: return@runCatching null
         val episodes = seasonsOf(acc, seriesId).flatMap { season ->
             season.episodeNums.map { n ->
@@ -434,10 +557,17 @@ object StalkerClient : IptvClient {
      * before seasons were modelled; fall back to the first season we find.
      */
     suspend fun resolveEpisodeUrl(acc: XtreamAccount, seriesId: Int, season: Int?, episodeNum: Int): String? {
-        val seasons = seasonsOf(acc, seriesId)
-        val target = (season?.let { s -> seasons.firstOrNull { it.number == s } } ?: seasons.firstOrNull())
+        // Season cmd resolution, cheapest first: this session's cache -> the write-through rows
+        // (cold-start Continue Watching plays with ZERO portal requests before create_link) ->
+        // the portal's season fetch.
+        val cmd = seasonCache["${acc.id}:$seriesId"]
+            ?.let { s -> (season?.let { n -> s.firstOrNull { it.number == n } } ?: s.firstOrNull())?.cmd }
+            ?: IptvContentDb.episodesFor(acc.id, seriesId)
+                .let { rows -> (season?.let { n -> rows.firstOrNull { it.season == n } } ?: rows.firstOrNull())?.cmd }
+            ?: seasonsOf(acc, seriesId)
+                .let { s -> (season?.let { n -> s.firstOrNull { it.number == n } } ?: s.firstOrNull())?.cmd }
             ?: return null
-        return createLink(acc, "vod", target.cmd, extraParams = mapOf("series" to episodeNum.toString()))
+        return createLink(acc, "vod", cmd, extraParams = mapOf("series" to episodeNum.toString()))
     }
 
     private class StalkerSeason(val number: Int, val cmd: String, val episodeNums: List<Int>)
@@ -467,7 +597,28 @@ object StalkerClient : IptvClient {
                     ?.sorted().orEmpty()
                 StalkerSeason(num, cmd, eps)
             }.sortedBy { it.number }
-            if (seasons.isNotEmpty()) seasonCache["${acc.id}:$seriesId"] = seasons
+            if (seasons.isNotEmpty()) {
+                seasonCache["${acc.id}:$seriesId"] = seasons
+                // Write-through (P6): each episode row carries its SEASON's cmd, so an episode in
+                // Continue Watching resumes after a cold start with zero portal requests before
+                // the create_link itself.
+                val epRows = seasons.flatMap { s ->
+                    s.episodeNums.map { n ->
+                        IptvEpisodeRow(
+                            seriesSid = seriesId,
+                            episodeId = "${seriesId}_${s.number}_$n",
+                            name = "Episode $n",
+                            season = s.number,
+                            episode = n,
+                            logo = null,
+                            url = "",
+                            ext = null,
+                            cmd = s.cmd,
+                        )
+                    }
+                }
+                runCatching { IptvContentDb.insertChunk(acc.id, channels = emptyList(), vod = emptyList(), series = emptyList(), episodes = epRows, categories = emptyList()) }
+            }
             seasons
         }
 
@@ -492,14 +643,19 @@ object StalkerClient : IptvClient {
     // --- cmd lookup (browse-time cmd needed for create_link) ------------------
 
     private suspend fun liveCmd(acc: XtreamAccount, streamId: Int): String? {
-        // The lineup fetch (one request, cached) carries every channel's cmd — so playing a channel
-        // costs nothing but the create_link itself.
-        allLiveChannels(acc)
-        return liveCmds["${acc.id}:$streamId"] ?: row(acc, "itv", streamId)?.str("cmd")
+        // The mirrored lineup carries every channel's cmd — playing a channel costs nothing but
+        // the create_link itself, even on a cold start with the portal briefly unreachable.
+        ensureLineup(acc)
+        return IptvContentDb.channelRow(acc.id, streamId)?.cmd ?: row(acc, "itv", streamId)?.str("cmd")
     }
 
     private suspend fun vodCmd(acc: XtreamAccount, streamId: Int, nameHint: String? = null): String? =
-        row(acc, "vod", streamId, nameHint)?.str("cmd")
+        // Hot browse rows first, then the write-through store (anything EVER browsed on this
+        // device — the cold-start Library play that used to fall into a hopeless 280-item scan),
+        // then the portal's own search / bounded scan as the true cold miss.
+        rowCache[rowKey(acc.id, "vod", streamId)]?.str("cmd")
+            ?: IptvContentDb.vodRow(acc.id, streamId)?.cmd
+            ?: row(acc, "vod", streamId, nameHint)?.str("cmd")
 
     private suspend fun seriesCmd(acc: XtreamAccount, seriesId: Int, nameHint: String? = null): String? =
         row(acc, "series", seriesId, nameHint)?.str("cmd")
@@ -619,5 +775,10 @@ object StalkerClient : IptvClient {
     private const val EPG_PERIOD_HOURS = "3"
     private const val EPG_TTL_MS = 30 * 60 * 1000L
     private const val EPG_FLUSH = 2_000
+
+    // How long the mirrored live lineup stays fresh. Refreshed ONLY from a foreground browse
+    // (a background Stalker sync would evict the other device on a shared MAC); 12h matches the
+    // M3U catalog's cadence.
+    private const val LINEUP_TTL_MS = 12L * 60 * 60 * 1000
     private val SEASON_NAME = Regex("""season\s*(\d+)""", RegexOption.IGNORE_CASE)
 }
