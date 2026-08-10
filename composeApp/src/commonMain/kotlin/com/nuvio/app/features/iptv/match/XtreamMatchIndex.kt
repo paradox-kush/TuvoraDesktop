@@ -147,12 +147,20 @@ internal object XtreamMatchIndex {
             it.execSQL("DROP TABLE IF EXISTS idx_meta"); it.execSQL("DROP TABLE IF EXISTS cats")
             it.execSQL("PRAGMA user_version = 4")
         }
+        // v5: idx_meta.last_added_at — negatives in tmdb_map are only trusted if they postdate
+        // the catalog's newest addition (a "not on this provider" verdict is falsified the
+        // moment the provider adds titles). ALTER fails harmlessly when the v<4 step just
+        // dropped the table — the CREATE below builds it with the column.
+        if (version < 5) {
+            runCatching { it.execSQL("ALTER TABLE idx_meta ADD COLUMN last_added_at INTEGER NOT NULL DEFAULT 0") }
+            it.execSQL("PRAGMA user_version = 5")
+        }
         it.execSQL("CREATE TABLE IF NOT EXISTS items(provider TEXT NOT NULL, kind TEXT NOT NULL, sid INTEGER NOT NULL, name TEXT NOT NULL, year INTEGER, tmdb INTEGER, ext TEXT, poster TEXT, category_id TEXT, epg_id TEXT, tv_archive INTEGER NOT NULL DEFAULT 0, pos INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, kind, sid)) WITHOUT ROWID")
         it.execSQL("CREATE INDEX IF NOT EXISTS items_tmdb ON items(provider, kind, tmdb)")
         it.execSQL("CREATE INDEX IF NOT EXISTS items_cat ON items(provider, kind, category_id, pos)")
         it.execSQL("CREATE TABLE IF NOT EXISTS cats(provider TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, sort INTEGER NOT NULL, PRIMARY KEY(provider, kind, id)) WITHOUT ROWID")
         it.execSQL("CREATE TABLE IF NOT EXISTS keys(provider TEXT NOT NULL, kind TEXT NOT NULL, k TEXT NOT NULL, sid INTEGER NOT NULL, PRIMARY KEY(provider, kind, k, sid)) WITHOUT ROWID")
-        it.execSQL("CREATE TABLE IF NOT EXISTS idx_meta(provider TEXT NOT NULL, kind TEXT NOT NULL, built_at INTEGER NOT NULL, item_count INTEGER NOT NULL, PRIMARY KEY(provider, kind)) WITHOUT ROWID")
+        it.execSQL("CREATE TABLE IF NOT EXISTS idx_meta(provider TEXT NOT NULL, kind TEXT NOT NULL, built_at INTEGER NOT NULL, item_count INTEGER NOT NULL, last_added_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, kind)) WITHOUT ROWID")
         it.execSQL("CREATE TABLE IF NOT EXISTS tmdb_map(provider TEXT NOT NULL, kind TEXT NOT NULL, tmdb INTEGER NOT NULL, sid INTEGER, matched_name TEXT, updated_at INTEGER NOT NULL, synced INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, kind, tmdb)) WITHOUT ROWID")
         conn = it
     }
@@ -286,7 +294,7 @@ internal object XtreamMatchIndex {
             }
         }
         insertItems(provider, kind, items)
-        writeMeta(provider, kind, items.size)
+        writeMeta(provider, kind, items.size, addedCount = items.size)
     }
 
     /**
@@ -370,7 +378,7 @@ internal object XtreamMatchIndex {
             }
         }
         insertItems(provider, kind, diff.upserts)
-        writeMeta(provider, kind, items.size)
+        writeMeta(provider, kind, items.size, addedCount = diff.upserts.size - diff.changedSids.size)
         return SyncStats(
             added = diff.upserts.size - diff.changedSids.size,
             changed = diff.changedSids.size,
@@ -541,7 +549,7 @@ internal object XtreamMatchIndex {
                     }
                 }
             }
-            writeMeta(provider, kind, fetched)
+            writeMeta(provider, kind, fetched, addedCount = added)
             return SyncStats(added = added, changed = changed, removed = gone.size, total = fetched)
         }
 
@@ -627,12 +635,39 @@ internal object XtreamMatchIndex {
         }
     }
 
-    private suspend fun writeMeta(provider: String, kind: MatchKind, itemCount: Int) {
+    private suspend fun writeMeta(provider: String, kind: MatchKind, itemCount: Int, addedCount: Int) {
         mutex.withLock {
-            connection().prepare("INSERT OR REPLACE INTO idx_meta(provider, kind, built_at, item_count) VALUES(?,?,?,?)").use { st ->
-                st.bindText(1, provider); st.bindText(2, kind.slug); st.bindLong(3, now()); st.bindLong(4, itemCount.toLong())
+            val c = connection()
+            val previousLastAdded = c.prepare("SELECT last_added_at FROM idx_meta WHERE provider = ? AND kind = ?").use { st ->
+                st.bindText(1, provider); st.bindText(2, kind.slug)
+                if (st.step()) st.getLong(0) else 0L
+            }
+            // Catalog gained titles -> every older negative verdict is suspect (see lastAddedAt).
+            val lastAdded = if (addedCount > 0) now() else previousLastAdded
+            c.prepare("INSERT OR REPLACE INTO idx_meta(provider, kind, built_at, item_count, last_added_at) VALUES(?,?,?,?,?)").use { st ->
+                st.bindText(1, provider); st.bindText(2, kind.slug); st.bindLong(3, now()); st.bindLong(4, itemCount.toLong()); st.bindLong(5, lastAdded)
                 st.step()
             }
+        }
+    }
+
+    /**
+     * When this provider+kind last GAINED catalog items (0 = never observed). Tier-2 negative
+     * mappings ("not on this provider") are only honored when they postdate this — a panel that
+     * added titles invalidates every older miss, locally AND ones synced from other devices.
+     */
+    suspend fun lastAddedAt(provider: String, kind: MatchKind): Long = mutex.withLock {
+        connection().prepare("SELECT last_added_at FROM idx_meta WHERE provider = ? AND kind = ?").use { st ->
+            st.bindText(1, provider); st.bindText(2, kind.slug)
+            if (st.step()) st.getLong(0) else 0L
+        }
+    }
+
+    /** Manual re-match reset: distrust every negative verdict recorded before now. */
+    suspend fun distrustNegativeMappings(provider: String) = mutex.withLock {
+        connection().prepare("UPDATE idx_meta SET last_added_at = ? WHERE provider = ?").use { st ->
+            st.bindLong(1, now()); st.bindText(2, provider)
+            st.step()
         }
     }
 
@@ -649,7 +684,7 @@ internal object XtreamMatchIndex {
     /** All items indexed under a normalized key. */
     suspend fun probe(provider: String, kind: MatchKind, key: String): List<IndexedItem> = mutex.withLock {
         connection().prepare(
-            "SELECT i.sid, i.name, i.year, i.tmdb, i.ext, i.poster FROM keys x JOIN items i ON i.provider = x.provider AND i.kind = x.kind AND i.sid = x.sid WHERE x.provider = ? AND x.kind = ? AND x.k = ?"
+            "SELECT i.sid, i.name, i.year, i.tmdb, i.ext, i.poster, i.category_id, i.epg_id, i.tv_archive FROM keys x JOIN items i ON i.provider = x.provider AND i.kind = x.kind AND i.sid = x.sid WHERE x.provider = ? AND x.kind = ? AND x.k = ?"
         ).use { st ->
             st.bindText(1, provider); st.bindText(2, kind.slug); st.bindText(3, key)
             readItems(st)

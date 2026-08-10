@@ -113,8 +113,15 @@ internal object XtreamTmdbResolver {
                     return XtreamMatch(IndexedItem(cached.sid, cached.matchedName ?: "", null, tmdbId, null), "cache-synced")
                 }
                 // else: sid vanished from a built catalog — fall through to re-match
-            } else if (now() - cached.updatedAtMs < NEGATIVE_TTL_MS) {
-                return null // fresh "not on this provider"
+            } else if (now() - cached.updatedAtMs < NEGATIVE_TTL_MS &&
+                cached.updatedAtMs > XtreamMatchIndex.lastAddedAt(provider, kind)
+            ) {
+                // Fresh "not on this provider" — and the catalog hasn't gained titles since the
+                // verdict. A panel that added items (daily on real providers) falsifies every
+                // older miss, so those fall through to a re-match instead of hiding new content
+                // for NEGATIVE_TTL_MS (measured: a title the panel added 3 days after the synced
+                // verdict stayed invisible on every device).
+                return null
             }
         }
 

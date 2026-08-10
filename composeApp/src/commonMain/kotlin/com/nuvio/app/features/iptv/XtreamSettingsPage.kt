@@ -13,10 +13,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.features.settings.SettingsGroup
+import kotlinx.coroutines.launch
 import com.nuvio.app.features.settings.SettingsGroupDivider
 import com.nuvio.app.features.settings.SettingsNavigationRow
 import com.nuvio.app.features.settings.SettingsSection
@@ -35,6 +37,7 @@ internal fun LazyListScope.xtreamSettingsContent(
 ) {
     item {
         var actionsFor by remember { mutableStateOf<XtreamAccount?>(null) }
+        val rematchScope = rememberCoroutineScope()
 
         SettingsSection(title = "IPTV (Xtream Codes)", isTablet = isTablet) {
             SettingsGroup(isTablet = isTablet) {
@@ -72,6 +75,18 @@ internal fun LazyListScope.xtreamSettingsContent(
                             actionsFor = null
                             onOpenContent(account)
                         }) { Text("Content & Categories") }
+                        if (account.sourceType == SOURCE_TYPE_XTREAM) {
+                            // Stale "not on this provider" verdicts hide titles the panel added
+                            // AFTER the verdict (they sync across devices and live up to 7 days).
+                            // Catalog syncs that ADD items reset them automatically; this is the
+                            // do-it-now button.
+                            TextButton(onClick = {
+                                actionsFor = null
+                                rematchScope.launch {
+                                    com.nuvio.app.features.iptv.match.XtreamMatchIndex.distrustNegativeMappings(account.id)
+                                }
+                            }) { Text("Re-match catalog") }
+                        }
                     }
                 },
                 confirmButton = {
