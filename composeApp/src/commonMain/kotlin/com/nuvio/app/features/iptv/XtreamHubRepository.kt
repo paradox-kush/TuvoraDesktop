@@ -28,6 +28,19 @@ import kotlin.time.TimeSource
  * every section's category list so the first switch is already warm; the throttle (a monotonic
  * mark) means rapidly re-foregrounding the app won't hammer the panel.
  */
+/**
+ * Endless-scroll window merge with a hard loop guard. The category row re-triggers loadMore on
+ * every items.size change, so a window that returns rows ALREADY loaded (a stale index, or a tied
+ * ORDER BY overlapping its pages) would append dupes, grow size, re-trigger, and spin forever —
+ * the "category rotating on a loop" bug. Only NEW ids extend the list, and a window that adds
+ * nothing new ends paging (hasMore=false) regardless of what the fetch claimed.
+ */
+internal fun <T> mergePagedWindow(existing: List<T>, more: List<T>, hasMore: Boolean, id: (T) -> String): Pair<List<T>, Boolean> {
+    val seen = existing.mapTo(HashSet(existing.size), id)
+    val fresh = more.filter { id(it) !in seen }
+    return (existing + fresh) to (hasMore && fresh.isNotEmpty())
+}
+
 object XtreamHubRepository {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _uiState = MutableStateFlow(XtreamHubUiState())
@@ -279,8 +292,9 @@ object XtreamHubRepository {
                 val offset = cachedCategories(accountId, section)
                     ?.firstOrNull { it.id == categoryId }?.items?.size ?: return@launch
                 val (more, hasMore) = fetchWindow(account, section, categoryId, offset)
-                updateCategory(accountId, section, categoryId) {
-                    it.copy(items = it.items + more, hasMore = hasMore)
+                updateCategory(accountId, section, categoryId) { cat ->
+                    val (items, more2) = mergePagedWindow(cat.items, more, hasMore) { it.id }
+                    cat.copy(items = items, hasMore = more2)
                 }
             } finally {
                 synchronized(categoryLock) { inFlightCategories.remove(key) }

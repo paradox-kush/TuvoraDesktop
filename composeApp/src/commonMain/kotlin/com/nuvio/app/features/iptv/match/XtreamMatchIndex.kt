@@ -248,9 +248,9 @@ internal object XtreamMatchIndex {
      */
     suspend fun itemsFor(provider: String, kind: MatchKind, categoryId: String?, offset: Int, limit: Int): List<IndexedItem> = mutex.withLock {
         val sql = if (categoryId == null)
-            "SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive FROM items WHERE provider = ? AND kind = ? ORDER BY pos LIMIT ? OFFSET ?"
+            "SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive FROM items WHERE provider = ? AND kind = ? ORDER BY pos, sid LIMIT ? OFFSET ?"
         else
-            "SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive FROM items WHERE provider = ? AND kind = ? AND category_id = ? ORDER BY pos LIMIT ? OFFSET ?"
+            "SELECT sid, name, year, tmdb, ext, poster, category_id, epg_id, tv_archive FROM items WHERE provider = ? AND kind = ? AND category_id = ? ORDER BY pos, sid LIMIT ? OFFSET ?"
         connection().prepare(sql).use { st ->
             st.bindText(1, provider); st.bindText(2, kind.slug)
             var i = 3

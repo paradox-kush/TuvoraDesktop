@@ -439,9 +439,9 @@ internal object IptvContentDb {
 
     suspend fun pageSeries(playlistId: String, categoryId: String?, offset: Int, limit: Int): List<IptvSeriesRow> = mutex.withLock {
         val sql = if (categoryId == null)
-            "SELECT sid, name, logo, category_id FROM series WHERE playlist_id = ? ORDER BY name LIMIT ? OFFSET ?"
+            "SELECT sid, name, logo, category_id FROM series WHERE playlist_id = ? ORDER BY name, sid LIMIT ? OFFSET ?"
         else
-            "SELECT sid, name, logo, category_id FROM series WHERE playlist_id = ? AND category_id = ? ORDER BY name LIMIT ? OFFSET ?"
+            "SELECT sid, name, logo, category_id FROM series WHERE playlist_id = ? AND category_id = ? ORDER BY name, sid LIMIT ? OFFSET ?"
         connection().prepare(sql).use { st ->
             st.bindText(1, playlistId)
             var i = 2
@@ -465,9 +465,9 @@ internal object IptvContentDb {
         val tvgCol = if (table == "channels") "tvg_id" else "NULL"
         val archiveCol = if (table == "channels") "tv_archive" else "NULL"
         val sql = if (categoryId == null)
-            "SELECT sid, name, logo, $tvgCol, category_id, url, $extCol, cmd, $archiveCol FROM $table WHERE playlist_id = ? ORDER BY name LIMIT ? OFFSET ?"
+            "SELECT sid, name, logo, $tvgCol, category_id, url, $extCol, cmd, $archiveCol FROM $table WHERE playlist_id = ? ORDER BY name, sid LIMIT ? OFFSET ?"
         else
-            "SELECT sid, name, logo, $tvgCol, category_id, url, $extCol, cmd, $archiveCol FROM $table WHERE playlist_id = ? AND category_id = ? ORDER BY name LIMIT ? OFFSET ?"
+            "SELECT sid, name, logo, $tvgCol, category_id, url, $extCol, cmd, $archiveCol FROM $table WHERE playlist_id = ? AND category_id = ? ORDER BY name, sid LIMIT ? OFFSET ?"
         return connection().prepare(sql).use { st ->
             st.bindText(1, playlistId)
             var i = 2
