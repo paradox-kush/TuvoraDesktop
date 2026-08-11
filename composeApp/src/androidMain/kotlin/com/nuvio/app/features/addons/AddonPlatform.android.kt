@@ -230,7 +230,7 @@ private suspend fun executeTextRequest(
             error(runBlocking { getString(Res.string.network_request_failed_http, response.code) })
         }
         if (payload.isBlank()) {
-            throw IllegalStateException(runBlocking { getString(Res.string.network_empty_response_body) })
+            throw EmptyResponseBodyException(runBlocking { getString(Res.string.network_empty_response_body) })
         }
         payload
     }
@@ -333,10 +333,12 @@ actual suspend fun httpStreamLines(
     url: String,
     userAgent: String?,
     dnsProvider: String?,
+    headers: Map<String, String>,
     onLine: (String) -> Unit,
 ): Unit = withContext(Dispatchers.IO) {
     val builder = Request.Builder().url(url).get()
     if (!userAgent.isNullOrBlank()) builder.header("User-Agent", userAgent)
+    for ((k, v) in headers) builder.header(k, v)
     // OkHttp transparently gunzips a `Content-Encoding: gzip` response when we don't set
     // Accept-Encoding ourselves — so leave it unset. For a URL that returns a raw .gz body
     // (no Content-Encoding header), we sniff the gzip magic bytes and wrap manually.

@@ -33,8 +33,11 @@ private const val NOW_PLAYING_TAG = "NuvioNowPlaying"
 private const val NOW_PLAYING_CHANNEL_ID = "nuvio_playback"
 private const val NOW_PLAYING_NOTIFICATION_ID = 0x4E55
 private const val SEEK_INTERVAL_MS = 10_000L
-private const val MAX_ARTWORK_DOWNLOAD_BYTES = 12 * 1024 * 1024
-private const val MAX_ARTWORK_EDGE_PX = 1_024
+// Lock-screen/notification art shares the ~256MB heap with ExoPlayer's media buffer and the
+// poster cache, so keep it lean: posters rarely exceed ~1MB compressed (4MB is already
+// generous), and 512px ARGB (1MB decoded) is plenty for every Now Playing surface.
+private const val MAX_ARTWORK_DOWNLOAD_BYTES = 4 * 1024 * 1024
+private const val MAX_ARTWORK_EDGE_PX = 512
 
 private const val ACTION_PLAY = "com.nuvio.app.nowplaying.PLAY"
 private const val ACTION_PAUSE = "com.nuvio.app.nowplaying.PAUSE"
@@ -91,10 +94,10 @@ internal class AndroidPlayerNowPlayingController(
 
     private var metadata: AndroidNowPlayingMetadata? = null
     private var snapshot = PlayerPlaybackSnapshot()
-    private var artworkArt: Bitmap? = null
-    private var artworkAlbumArt: Bitmap? = null
-    private var artworkDisplayIcon: Bitmap? = null
-    private var artworkNotificationIcon: Bitmap? = null
+    // One immutable bitmap serves the session metadata (ART/ALBUM_ART/DISPLAY_ICON) and the
+    // notification large icon. Nothing here ever recycles it, so sharing the instance is safe —
+    // the previous four-field/three-copy scheme just quadrupled the retained bytes.
+    private var artwork: Bitmap? = null
     private var released = false
     private var lastPublishedPositionMs = Long.MIN_VALUE
     private var lastPublishedDurationMs = Long.MIN_VALUE
@@ -132,10 +135,7 @@ internal class AndroidPlayerNowPlayingController(
             mediaSession.isActive = true
 
             if (artworkChanged) {
-                artworkArt = null
-                artworkAlbumArt = null
-                artworkDisplayIcon = null
-                artworkNotificationIcon = null
+                artwork = null
                 loadArtwork(normalized.artworkUrl)
             }
 
@@ -193,10 +193,7 @@ internal class AndroidPlayerNowPlayingController(
         artworkGeneration.incrementAndGet()
         metadata = null
         snapshot = PlayerPlaybackSnapshot()
-        artworkArt = null
-        artworkAlbumArt = null
-        artworkDisplayIcon = null
-        artworkNotificationIcon = null
+        artwork = null
         resetPublishedPlaybackState()
         mediaSession.setMetadata(null)
         mediaSession.setPlaybackState(
@@ -223,15 +220,11 @@ internal class AndroidPlayerNowPlayingController(
         }
 
         val base = builder.build()
-        val withArtwork = artworkArt?.takeIf { !it.isRecycled }?.let { art ->
+        val withArtwork = artwork?.takeIf { !it.isRecycled }?.let { art ->
             MediaMetadata.Builder(base)
                 .putBitmap(MediaMetadata.METADATA_KEY_ART, art)
-                .apply {
-                    artworkAlbumArt?.takeIf { !it.isRecycled }
-                        ?.let { putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, it) }
-                    artworkDisplayIcon?.takeIf { !it.isRecycled }
-                        ?.let { putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, it) }
-                }
+                .putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art)
+                .putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, art)
                 .build()
         }
 
@@ -298,7 +291,7 @@ internal class AndroidPlayerNowPlayingController(
             sessionToken = mediaSession.sessionToken,
             metadata = currentMetadata,
             snapshot = snapshot,
-            artwork = artworkNotificationIcon?.takeIf { !it.isRecycled },
+            artwork = artwork?.takeIf { !it.isRecycled },
         )
         PlayerNowPlayingService.publish(appContext, notification)
     }
@@ -316,10 +309,7 @@ internal class AndroidPlayerNowPlayingController(
                 if (released || generation != artworkGeneration.get() || metadata?.artworkUrl != urlString) {
                     return@post
                 }
-                artworkArt = bitmap
-                artworkAlbumArt = bitmap?.let(::copyArtwork)
-                artworkDisplayIcon = bitmap?.let(::copyArtwork)
-                artworkNotificationIcon = bitmap?.let(::copyArtwork)
+                artwork = bitmap
                 publishMetadata()
                 publishNotification()
             }
@@ -541,8 +531,12 @@ private fun downloadArtwork(urlString: String): Bitmap? {
     return try {
         connection.connect()
         if (connection.responseCode !in 200..299) return null
+        val declaredLength = connection.contentLength
+        if (declaredLength > MAX_ARTWORK_DOWNLOAD_BYTES) return null
         val bytes = connection.inputStream.use { input ->
-            val output = ByteArrayOutputStream()
+            // Presize from Content-Length when the server sends one, so the buffer doesn't
+            // grow-and-copy its way up (each doubling briefly holds both arrays).
+            val output = ByteArrayOutputStream(if (declaredLength > 0) declaredLength else 128 * 1024)
             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
             var total = 0
             while (true) {
@@ -559,9 +553,6 @@ private fun downloadArtwork(urlString: String): Bitmap? {
         connection.disconnect()
     }
 }
-
-private fun copyArtwork(bitmap: Bitmap): Bitmap? =
-    if (bitmap.isRecycled) null else runCatching { bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false) }.getOrNull()
 
 private fun decodeSampledBitmap(bytes: ByteArray, maxEdgePx: Int): Bitmap? {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

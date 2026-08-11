@@ -305,7 +305,7 @@ object XtreamHubRepository {
     /**
      * One window of a category's items, per source (item 4+5), registered as a batch:
      *  - Xtream w/ built catalog: local index window; stream URLs rebuilt from creds.
-     *  - Xtream first-run (no index yet): the old full network fetch, once.
+     *  - Xtream first-run (no index yet): the old full network fetch, once, kept to one window.
      *  - M3U + the Stalker live lineup: paged reads over IptvContentDb.
      *  - Stalker VOD/series: the portal's bounded page (70) — the protocol's own window.
      */
@@ -350,18 +350,22 @@ object XtreamHubRepository {
                     return resolved.map { it.toMetaPreview() } to (rows.size > PAGE_SIZE)
                 }
                 // No index yet (first run): the old whole-category fetch — the build is warming.
+                // Keep only the first window of it: registering a 10k-item category (rows +
+                // registry + Compose state) was a first-launch heap spike, and the index that is
+                // building right now serves the full set with real paging once categories reload
+                // (eviction, section switch, or next visit).
                 if (offset > 0) return emptyList<MetaPreview>() to false
                 val client = IptvClient.forAccount(account)
                 return when (section) {
-                    XtreamHubSection.LIVE -> client.liveChannels(account, categoryId).getOrDefault(emptyList()).let { rows ->
+                    XtreamHubSection.LIVE -> client.liveChannels(account, categoryId).getOrDefault(emptyList()).take(PAGE_SIZE).let { rows ->
                         XtreamItemRegistry.registerAll(rows.map { XtreamItemRegistry.resolvedChannel(accountId, it) })
                         rows.map { it.toMetaPreview(accountId) }
                     }
-                    XtreamHubSection.MOVIES -> client.vodMovies(account, categoryId).getOrDefault(emptyList()).let { rows ->
+                    XtreamHubSection.MOVIES -> client.vodMovies(account, categoryId).getOrDefault(emptyList()).take(PAGE_SIZE).let { rows ->
                         XtreamItemRegistry.registerAll(rows.map { XtreamItemRegistry.resolvedMovie(accountId, it) })
                         rows.map { it.toMetaPreview(accountId) }
                     }
-                    XtreamHubSection.SERIES -> client.series(account, categoryId).getOrDefault(emptyList()).let { rows ->
+                    XtreamHubSection.SERIES -> client.series(account, categoryId).getOrDefault(emptyList()).take(PAGE_SIZE).let { rows ->
                         XtreamItemRegistry.registerAll(rows.map { XtreamItemRegistry.resolvedSeries(accountId, it) })
                         rows.map { it.toMetaPreview(accountId) }
                     }
