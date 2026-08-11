@@ -305,7 +305,7 @@
     <string name="collections_header">Collections</string>
     <string name="collections_import_header">Import Collections</string>
     <string name="collections_import_json_placeholder">JSON</string>
-    <string name="collections_import_paste_description">Paste your collections JSON below.</string>
+    <string name="collections_import_paste_description">Paste your collections JSON or a direct link to it below.</string>
     <string name="collections_import">Import</string>
     <string name="collections_new">New Collection</string>
     <string name="collections_pinned">Pinned</string>

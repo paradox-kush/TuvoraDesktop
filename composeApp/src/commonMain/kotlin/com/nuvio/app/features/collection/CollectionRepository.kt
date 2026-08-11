@@ -4,6 +4,9 @@ import co.touchlab.kermit.Logger
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.ManagedAddon
 import com.nuvio.app.features.addons.enabledAddons
+import io.ktor.client.HttpClient
+import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -145,6 +148,26 @@ object CollectionRepository {
             _collections.value = CollectionMobileSettingsRepository.applyToCollections(imported)
             persist()
             imported
+        }
+    }
+
+    suspend fun resolveImportInput(input: String): Result<String> = runCatching {
+        val trimmed = input.trim()
+        if (!trimmed.startsWith("http://", ignoreCase = true) &&
+            !trimmed.startsWith("https://", ignoreCase = true)
+        ) {
+            return@runCatching trimmed
+        }
+
+        val client = HttpClient()
+        try {
+            val response = client.get(trimmed)
+            if (response.status.value !in 200..299) {
+                throw IllegalArgumentException("Could not download JSON (HTTP ${response.status.value}).")
+            }
+            response.bodyAsText()
+        } finally {
+            client.close()
         }
     }
 

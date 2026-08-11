@@ -37,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,6 +59,7 @@ import com.nuvio.app.core.ui.NuvioSurfaceCard
 import com.nuvio.app.core.ui.withDuplicateSafeLazyKeys
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
+import kotlinx.coroutines.launch
 import sh.calvin.reorderable.ReorderableCollectionItemScope
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
@@ -73,6 +75,8 @@ fun CollectionManagementScreen(
     var showImportDialog by remember { mutableStateOf(false) }
     var importText by remember { mutableStateOf("") }
     var importError by remember { mutableStateOf<String?>(null) }
+    var isImporting by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
     var showDeleteConfirm by remember { mutableStateOf<String?>(null) }
 
     NuvioScreen {
@@ -172,14 +176,24 @@ fun CollectionManagementScreen(
                 importError = null
             },
             onConfirm = {
-                val result = CollectionRepository.validateJson(importText)
-                if (result.valid) {
-                    CollectionRepository.importFromJson(importText)
-                    showImportDialog = false
-                    importText = ""
-                    importError = null
-                } else {
-                    importError = result.error
+                if (!isImporting) coroutineScope.launch {
+                    isImporting = true
+                    CollectionRepository.resolveImportInput(importText)
+                        .onSuccess { json ->
+                            val validation = CollectionRepository.validateJson(json)
+                            if (validation.valid) {
+                                CollectionRepository.importFromJson(json)
+                                showImportDialog = false
+                                importText = ""
+                                importError = null
+                            } else {
+                                importError = validation.error
+                            }
+                        }
+                        .onFailure { error ->
+                            importError = error.message ?: "Could not download JSON."
+                        }
+                    isImporting = false
                 }
             },
             onDismiss = {
