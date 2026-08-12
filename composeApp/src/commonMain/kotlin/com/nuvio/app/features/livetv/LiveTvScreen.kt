@@ -61,12 +61,13 @@ import com.nuvio.app.features.player.LIVE_FREEZE_SURFACE_DOCKED
 import com.nuvio.app.features.player.onLiveSnapshot
 import com.nuvio.app.features.player.onLiveSnapshotStopped
 import com.nuvio.app.features.player.PlatformPlayerSurface
+import com.nuvio.app.features.player.PlayerControlsAction
+import com.nuvio.app.features.player.PlayerControlsState
 import com.nuvio.app.features.player.PlayerEngineController
 import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.player.PlayerStreamInfo
 import com.nuvio.app.features.player.StreamInfoOverlay
 import com.nuvio.app.features.player.rememberStreamInfoLines
-import kotlinx.coroutines.delay
 import com.nuvio.app.features.player.PlayerPlaybackSnapshot
 import com.nuvio.app.features.player.PlayerResizeMode
 import com.nuvio.app.features.trakt.TraktPlatformClock
@@ -236,7 +237,13 @@ fun LiveTvScreen(
         }
 
         // Back in fullscreen exits fullscreen instead of leaving the screen.
-        PlatformBackHandler(enabled = fullscreen) { setFullscreen(false) }
+        //
+        // Desktop keeps the handler armed even when docked: Escape is its only back key, and the
+        // Compose overlay's back button is buried under the native video layer (see the player
+        // surface below), so without this there is no keyboard way off the screen either.
+        PlatformBackHandler(enabled = fullscreen || !LiveTvFullscreenFollowsWindowAspect) {
+            if (fullscreen) setFullscreen(false) else onBack()
+        }
         // Immersive mode hides the system bars, so on a phone it belongs to fullscreen alone. On
         // desktop it is only a display-sleep inhibitor and docked is the normal way to watch, so
         // it stays on there whenever the screen is up — otherwise the monitor sleeps mid-channel.
@@ -284,6 +291,22 @@ fun LiveTvScreen(
             ) {
                 LivePlayerSurface(
                     source = source,
+                    title = currentTitle,
+                    // Desktop renders its player controls in a native layer ON TOP of Compose, so
+                    // every overlay below is invisible there and the native close button is the
+                    // only exit a desktop viewer can see. It does nothing unless this screen
+                    // answers the action, which is how Live TV became a room with no door on
+                    // macOS/Windows. Inert on Android/iOS: they ignore both parameters.
+                    onControlsAction = { action ->
+                        if (action == PlayerControlsAction.Back) {
+                            if (fullscreen) setFullscreen(false) else onBack()
+                            true
+                        } else {
+                            // Everything else falls through to the engine's own handling
+                            // (play/pause, seek, speed, volume).
+                            false
+                        }
+                    },
                     onControllerReady = { controller = it },
                     onSnapshot = {
                         snapshot = it
@@ -549,11 +572,17 @@ private fun FullscreenControls(
 @Composable
 private fun LivePlayerSurface(
     source: LiveChannelSource?,
+    title: String,
+    onControlsAction: (PlayerControlsAction) -> Boolean,
     onControllerReady: (PlayerEngineController) -> Unit,
     onSnapshot: (PlayerPlaybackSnapshot) -> Unit,
     onError: (String?) -> Unit,
 ) {
     val current = source ?: return
+    // Only the platforms whose controls are drawn natively read this; the channel name is what
+    // their header would otherwise leave blank. Kept stable so the 500ms snapshot poll doesn't
+    // push a new state on every tick.
+    val controlsState = remember(title) { PlayerControlsState(title = title) }
     // Key by url so a channel switch cleanly re-initialises the engine.
     androidx.compose.runtime.key(current.url) {
         PlatformPlayerSurface(
@@ -564,6 +593,8 @@ private fun LivePlayerSurface(
             playWhenReady = true,
             resizeMode = PlayerResizeMode.Fit,
             useNativeController = false,
+            playerControlsState = controlsState,
+            onPlayerControlsAction = onControlsAction,
             onControllerReady = onControllerReady,
             onSnapshot = onSnapshot,
             onError = onError,

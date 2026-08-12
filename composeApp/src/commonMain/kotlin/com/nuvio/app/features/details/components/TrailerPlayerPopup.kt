@@ -37,6 +37,7 @@ import com.nuvio.app.core.ui.NuvioModalBottomSheet
 import com.nuvio.app.core.ui.dismissNuvioBottomSheet
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
 import com.nuvio.app.features.player.PlatformPlayerSurface
+import com.nuvio.app.features.player.PlayerControlsAction
 import com.nuvio.app.features.player.PlayerResizeMode
 import com.nuvio.app.features.trailer.TrailerPlaybackSource
 import kotlinx.coroutines.launch
@@ -178,6 +179,17 @@ fun TrailerPlayerPopup(
                             playWhenReady = true,
                             resizeMode = PlayerResizeMode.Fit,
                             useNativeController = true,
+                            // Where the controls are native they cover this box, so their close
+                            // button — not the sheet header's — is the one under the pointer.
+                            // Unanswered it does nothing; the rest falls through to the engine.
+                            onPlayerControlsAction = { action ->
+                                if (action == PlayerControlsAction.Back) {
+                                    dismissSheet()
+                                    true
+                                } else {
+                                    false
+                                }
+                            },
                             onControllerReady = {},
                             onSnapshot = {},
                             onError = { playerError = it },
