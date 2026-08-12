@@ -543,31 +543,40 @@ private fun ExoPlayerSurface(
                         val probedMime = withContext(Dispatchers.IO) {
                             probeMimeType(sourceUrl, sanitizedSourceHeaders)
                         }
-                        if (probedMime != null) {
-                            Log.d(TAG, "Playback failed with source error. Probed MIME type: $probedMime. Retrying...")
-                            resolvedMediaItem = MediaItem.Builder()
-                                .setUri(sourceUrl)
-                                .setMimeType(probedMime)
-                                .setMediaId(sourceUrl)
-                                .apply {
-                                    val subtitleConfigs = externalSubtitles.mapNotNull { subtitle ->
-                                        val mimeType = resolveSubtitleMimeType(subtitle.url, subtitle.headers)
-                                        MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitle.url))
-                                            .setMimeType(mimeType)
-                                            .setLanguage(subtitle.language)
-                                            .setLabel(subtitle.name ?: subtitle.language)
-                                            .setRoleFlags(C.ROLE_FLAG_SUBTITLE)
-                                            .build()
-                                    }
-                                    if (subtitleConfigs.isNotEmpty()) {
-                                        setSubtitleConfigurations(subtitleConfigs)
-                                    }
+                        // The probe can come back empty — the panel refuses a second request, or on
+                        // Stalker the single-use create_link token was already spent by the attempt
+                        // that just failed. Retry as HLS anyway: a source that doesn't hand back
+                        // real MPEG-TS on a `.ts` path is redirecting to an m3u8.
+                        val retryMime = probedMime ?: MimeTypes.APPLICATION_M3U8
+                        // Only a probed type is a fact; the blind guess doesn't earn a memory.
+                        if (probedMime != null) rememberContainerMimeType(sourceUrl, probedMime)
+                        Log.d(
+                            TAG,
+                            "Playback failed with source error. Retrying as $retryMime " +
+                                "(probed=${probedMime ?: "none"})...",
+                        )
+                        resolvedMediaItem = MediaItem.Builder()
+                            .setUri(sourceUrl)
+                            .setMimeType(retryMime)
+                            .setMediaId(sourceUrl)
+                            .apply {
+                                val subtitleConfigs = externalSubtitles.mapNotNull { subtitle ->
+                                    val mimeType = resolveSubtitleMimeType(subtitle.url, subtitle.headers)
+                                    MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitle.url))
+                                        .setMimeType(mimeType)
+                                        .setLanguage(subtitle.language)
+                                        .setLabel(subtitle.name ?: subtitle.language)
+                                        .setRoleFlags(C.ROLE_FLAG_SUBTITLE)
+                                        .build()
                                 }
-                                .build()
-                            latestOnError.value(null)
-                            return@launch
-                        }
-                        reportPlayerError(error)
+                                if (subtitleConfigs.isNotEmpty()) {
+                                    setSubtitleConfigurations(subtitleConfigs)
+                                }
+                            }
+                            .build()
+                        // A retry that also fails re-enters here with probeAttempted set, and the
+                        // error is reported then.
+                        latestOnError.value(null)
                     }
                     return
                 }

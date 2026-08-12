@@ -27,7 +27,44 @@ private fun inferPlaybackMimeType(
 ): String? =
     inferMimeTypeFromStreamType(streamType)
         ?: inferMimeTypeFromResponseHeaders(responseHeaders)
+        ?: learnedContainerMimeType(url)
         ?: inferMimeTypeFromPath(url)
+
+// --- What a host actually serves, once we've had to find out the hard way -----------------------
+//
+// Panels routinely 302 an Xtream `.ts` live URL to an HLS playlist, and the extension is all we have
+// to go on before the first byte arrives — so ExoPlayer commits to the progressive TS path and dies
+// on `#EXTM3U`. [probeMimeType] learns the truth on that first failure; remembering it means only
+// the FIRST tune on a provider pays a failed attempt instead of every channel switch.
+//
+// Ranked below the response headers (those are the real thing, captured at resolve time) and above
+// the path (which is exactly the guess that just proved wrong). Keyed on host + requested extension
+// rather than host alone: one panel serves real `.mp4` VOD beside redirect-to-HLS `.ts` live, and
+// those must not learn from each other. An extension-less URL — a Stalker create_link is typically
+// `http://host/ch/12345_`, with a token that rotates per play — gets its own bucket on the host.
+private val learnedContainerMimeTypes = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+private fun learnedContainerKey(url: String): String? {
+    val withoutQuery = url.substringBefore('#').substringBefore('?')
+    val host = withoutQuery
+        .substringAfter("://", missingDelimiterValue = "")
+        .substringBefore('/')
+        .substringAfterLast('@')
+        .lowercase(Locale.US)
+        .takeIf { it.isNotBlank() }
+        ?: return null
+    val extension = withoutQuery.substringAfterLast('/', missingDelimiterValue = "")
+        .substringAfterLast('.', missingDelimiterValue = "")
+        .lowercase(Locale.US)
+    return "$host|$extension"
+}
+
+internal fun learnedContainerMimeType(url: String): String? =
+    learnedContainerKey(url)?.let(learnedContainerMimeTypes::get)
+
+internal fun rememberContainerMimeType(url: String, mimeType: String) {
+    learnedContainerKey(url)?.let { learnedContainerMimeTypes[it] = mimeType }
+}
 
 private fun inferMimeTypeFromStreamType(streamType: String?): String? {
     val normalized = streamType
