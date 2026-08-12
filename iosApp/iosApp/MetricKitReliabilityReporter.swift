@@ -32,10 +32,34 @@ final class MetricKitReliabilityReporter: NSObject, MXMetricManagerSubscriber {
                 max(0, min(168, payload.timeStampEnd.timeIntervalSince(payload.timeStampBegin) / 3_600)).rounded()
             )
 
-            capture(payload.crashDiagnostics, category: "crash", windowHours: windowHours)
+            captureCrashes(payload.crashDiagnostics, windowHours: windowHours)
             capture(payload.hangDiagnostics, category: "hang", windowHours: windowHours)
             capture(payload.cpuExceptionDiagnostics, category: "cpu_exception", windowHours: windowHours)
             capture(payload.diskWriteExceptionDiagnostics, category: "disk_write_exception", windowHours: windowHours)
+        }
+    }
+
+    private func captureCrashes(_ diagnostics: [MXCrashDiagnostic]?, windowHours: Int) {
+        guard let diagnostics, !diagnostics.isEmpty else { return }
+
+        let grouped = Dictionary(grouping: diagnostics) { diagnostic in
+            CrashKey(
+                appVersion: diagnostic.applicationVersion,
+                terminationReason: safeLabel(diagnostic.terminationReason)
+            )
+        }
+        for (key, crashes) in grouped {
+            PostHogSDK.shared.capture(
+                "ios_metric_diagnostic",
+                properties: [
+                    "diagnostic_type": "crash",
+                    "diagnostic_count": crashes.count,
+                    "diagnostic_app_version": key.appVersion,
+                    "termination_reason": key.terminationReason,
+                    "payload_window_hours": windowHours,
+                    "diagnostic_source": "metrickit"
+                ]
+            )
         }
     }
 
@@ -63,5 +87,17 @@ final class MetricKitReliabilityReporter: NSObject, MXMetricManagerSubscriber {
                 ]
             )
         }
+    }
+
+    private struct CrashKey: Hashable {
+        let appVersion: String
+        let terminationReason: String
+    }
+
+    private func safeLabel(_ value: String?) -> String {
+        let raw = value?.lowercased() ?? "unknown"
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-"))
+        let normalized = raw.unicodeScalars.map { allowed.contains($0) ? Character($0) : "_" }
+        return String(normalized).prefix(64).description
     }
 }
