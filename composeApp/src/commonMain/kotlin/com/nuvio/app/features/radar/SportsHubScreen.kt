@@ -59,13 +59,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.foundation.border
+import androidx.compose.ui.unit.Dp
 import coil3.compose.AsyncImage
+import coil3.compose.AsyncImagePainter
 import com.nuvio.app.core.ui.NuvioModalBottomSheet
 import com.nuvio.app.core.ui.NuvioPrimaryButton
+import com.nuvio.app.core.ui.NuvioShelfSection
 import com.nuvio.app.core.ui.NuvioSurfaceCard
 import com.nuvio.app.core.ui.NuvioTokens
+import com.nuvio.app.core.ui.NuvioViewAllPillSize
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
 import com.nuvio.app.core.ui.nuvio
+import com.nuvio.app.features.home.components.homeSectionHorizontalPaddingForWidth
+import com.nuvio.app.features.home.components.rememberHomeSkeletonBrush
 import com.nuvio.app.features.iptv.XtreamRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -178,18 +185,43 @@ private fun SportsOverview(
             .distinctBy { it.id ?: "${it.leagueId}/${it.event}/${it.ts}" }
             .sortedBy { it.startEpochMs }
     }
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = nuvioSafeBottomPadding(NuvioTokens.Space.s24)),
-    ) {
-        if (featured.isNotEmpty()) {
-            item(key = "featured") {
-                SectionTitle("Featured Events")
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = NuvioTokens.Space.s16),
-                    horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s10),
-                ) {
-                    items(featured, key = { it.id }) { event ->
+    // Row lists are pre-filtered: with spacedBy on the LazyColumn an item that renders
+    // nothing would still contribute a stray gap.
+    val teamRows = remember(state, nowMs) {
+        state.followedTeams.mapNotNull { team ->
+            state.upcomingForTeams(listOf(team.id), nowMs, cap = 12)
+                .takeIf { it.isNotEmpty() }?.let { team to it }
+        }
+    }
+    val leagueRows = remember(state, nowMs) {
+        state.follows.mapNotNull { follow ->
+            val league = state.leagueById(follow.leagueId) ?: return@mapNotNull null
+            state.upcoming(listOf(league.id), nowMs, cap = 12)
+                .takeIf { it.isNotEmpty() }?.let { league to it }
+        }
+    }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val sectionPadding = homeSectionHorizontalPaddingForWidth(maxWidth.value)
+        val tokens = MaterialTheme.nuvio
+        val rowPadding = PaddingValues(horizontal = sectionPadding)
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(tokens.spacing.listGap),
+            contentPadding = PaddingValues(
+                top = NuvioTokens.Space.s4,
+                bottom = nuvioSafeBottomPadding(tokens.spacing.screenBottom),
+            ),
+        ) {
+            if (featured.isNotEmpty()) {
+                item(key = "featured") {
+                    NuvioShelfSection(
+                        title = "Featured Events",
+                        entries = featured,
+                        headerHorizontalPadding = sectionPadding,
+                        rowContentPadding = rowPadding,
+                        viewAllPillSize = NuvioViewAllPillSize.Compact,
+                        key = { it.id },
+                    ) { event ->
                         val fixtures = state.fixturesByLeague[event.leagueId].orEmpty()
                         FeaturedBannerCard(
                             event = event,
@@ -202,81 +234,120 @@ private fun SportsOverview(
                     }
                 }
             }
-        }
-        if (upcoming.isNotEmpty()) {
-            item(key = "upcoming") {
-                SectionTitle("Live & Upcoming")
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = NuvioTokens.Space.s16),
-                    horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s10),
-                ) {
-                    items(upcoming, key = { it.id ?: it.hashCode().toString() }) { fx ->
-                        MatchCard(fx, live = state.isLive(fx, nowMs), onClick = { onFixtureClick(fx) })
+            if (upcoming.isNotEmpty()) {
+                item(key = "upcoming") {
+                    NuvioShelfSection(
+                        title = "Live & Upcoming",
+                        entries = upcoming,
+                        headerHorizontalPadding = sectionPadding,
+                        rowContentPadding = rowPadding,
+                        viewAllPillSize = NuvioViewAllPillSize.Compact,
+                        key = { it.id ?: "${it.leagueId}/${it.event}/${it.ts}" },
+                    ) { fx ->
+                        MatchCard(
+                            fx,
+                            live = state.isLive(fx, nowMs),
+                            onClick = { onFixtureClick(fx) },
+                            liveScore = fx.id?.let { state.liveScores[it] },
+                        )
+                    }
+                }
+            } else if (state.loadingFixtures && (state.follows.isNotEmpty() || featured.isNotEmpty())) {
+                item(key = "loading") {
+                    MatchRowSkeleton(sectionPadding = sectionPadding)
+                }
+            }
+            items(teamRows, key = { "team-${it.first.id}" }) { (team, fixtures) ->
+                NuvioShelfSection(
+                    title = team.name,
+                    entries = fixtures,
+                    headerHorizontalPadding = sectionPadding,
+                    rowContentPadding = rowPadding,
+                    viewAllPillSize = NuvioViewAllPillSize.Compact,
+                    headerLeading = team.badge?.takeIf { it.isNotBlank() }?.let { badge ->
+                        { ShelfHeaderBadge(badge) }
+                    },
+                    key = { "team-${team.id}-${it.id ?: it.hashCode()}" },
+                ) { fx ->
+                    MatchCard(
+                        fx,
+                        live = state.isLive(fx, nowMs),
+                        onClick = { onFixtureClick(fx) },
+                        liveScore = fx.id?.let { state.liveScores[it] },
+                    )
+                }
+            }
+            if (state.follows.isEmpty() && state.teamFollows.isEmpty()) {
+                item(key = "follow-cta") { FollowCta(onOpenBrowse) }
+            } else {
+                items(leagueRows, key = { "league-${it.first.id}" }) { (league, fixtures) ->
+                    NuvioShelfSection(
+                        title = league.name,
+                        entries = fixtures,
+                        headerHorizontalPadding = sectionPadding,
+                        rowContentPadding = rowPadding,
+                        viewAllPillSize = NuvioViewAllPillSize.Compact,
+                        onViewAllClick = { onOpenLeague(league) },
+                        headerLeading = league.badge?.takeIf { it.isNotBlank() }?.let { badge ->
+                            { ShelfHeaderBadge(badge) }
+                        },
+                        key = { "league-${league.id}-${it.id ?: it.hashCode()}" },
+                    ) { fx ->
+                        MatchCard(
+                            fx,
+                            live = state.isLive(fx, nowMs),
+                            onClick = { onFixtureClick(fx) },
+                            liveScore = fx.id?.let { state.liveScores[it] },
+                        )
                     }
                 }
             }
-        } else if (state.loadingFixtures && (state.follows.isNotEmpty() || featured.isNotEmpty())) {
-            item(key = "loading") {
-                Box(Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(strokeWidth = 2.dp)
-                }
-            }
-        }
-        items(state.followedTeams, key = { "team-${it.id}" }) { team ->
-            val fixtures = state.upcomingForTeams(listOf(team.id), nowMs, cap = 12)
-            if (fixtures.isNotEmpty()) {
-                SectionTitle(team.name)
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = NuvioTokens.Space.s16),
-                    horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s10),
-                ) {
-                    items(fixtures, key = { "team-${team.id}-${it.id ?: it.hashCode()}" }) { fx ->
-                        MatchCard(fx, live = state.isLive(fx, nowMs), onClick = { onFixtureClick(fx) })
-                    }
-                }
-            }
-        }
-        if (state.follows.isEmpty() && state.teamFollows.isEmpty()) {
-            item(key = "follow-cta") { FollowCta(onOpenBrowse) }
-        } else {
-            items(state.follows, key = { "league-${it.leagueId}" }) { follow ->
-                val league = state.leagueById(follow.leagueId) ?: return@items
-                val fixtures = state.upcoming(listOf(league.id), nowMs, cap = 12)
-                if (fixtures.isNotEmpty()) {
-                    SectionTitle(league.name, onClick = { onOpenLeague(league) })
-                    LazyRow(
-                        contentPadding = PaddingValues(horizontal = NuvioTokens.Space.s16),
-                        horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s10),
-                    ) {
-                        items(fixtures, key = { "league-${league.id}-${it.id ?: it.hashCode()}" }) { fx ->
-                            MatchCard(fx, live = state.isLive(fx, nowMs), onClick = { onFixtureClick(fx) })
+            item(key = "browse") {
+                // Sport tiles + the add-your-own escape hatches, as one shelf. The add tiles sit
+                // last so the popular sports stay first.
+                val browseEntries: List<Any> =
+                    state.catalog.categories + listOf(AddLeagueTileMarker, AddTeamTileMarker)
+                NuvioShelfSection(
+                    title = "Browse sports",
+                    entries = browseEntries,
+                    headerHorizontalPadding = sectionPadding,
+                    rowContentPadding = rowPadding,
+                    key = { entry ->
+                        when (entry) {
+                            is RadarCategory -> "cat-${entry.name}"
+                            AddLeagueTileMarker -> "add-league"
+                            else -> "add-team"
                         }
+                    },
+                ) { entry ->
+                    when (entry) {
+                        is RadarCategory -> {
+                            val followedCount = entry.leagues.count { it.id in state.followedLeagueIds }
+                            SportTile(
+                                badge = entry.leagues.firstOrNull()?.badge,
+                                name = entry.name,
+                                subtitle = if (followedCount > 0) "$followedCount followed"
+                                else "${entry.leagues.size} to track",
+                                // Straight into the sport that was tapped — never the generic
+                                // "pick a sport" list of these very same categories.
+                                onClick = { onOpenCategory(entry) },
+                            )
+                        }
+                        AddLeagueTileMarker -> AddTile(
+                            name = "Add a league",
+                            subtitle = if (state.customLeagues.isEmpty()) "Search any sport"
+                            else "${state.customLeagues.size} added",
+                            onClick = { addLeagueSport = "" },
+                        )
+                        else -> AddTile(
+                            name = "Add a team",
+                            subtitle = if (state.teamFollows.isEmpty()) "Follow your club"
+                            else "${state.teamFollows.size} followed",
+                            onClick = { addingTeam = true },
+                        )
                     }
                 }
             }
-        }
-        item(key = "browse") {
-            SectionTitle("Browse sports")
-            state.catalog.categories.forEach { category ->
-                CategoryRowItem(
-                    category = category,
-                    followedCount = category.leagues.count { it.id in state.followedLeagueIds },
-                    // Straight into the sport that was tapped. This used to open the generic
-                    // browse list, which is a screen of the very same categories — so tapping
-                    // Football landed on "pick a sport" and you had to pick Football again.
-                    onClick = { onOpenCategory(category) },
-                )
-            }
-            // Anything we didn't curate. Last in the list so the popular sports stay first —
-            // this is the escape hatch, not the main path.
-            AddLeagueRowItem(
-                customCount = state.customLeagues.size,
-                onClick = { addLeagueSport = "" },
-            )
-            AddTeamRowItem(
-                followedCount = state.teamFollows.size,
-                onClick = { addingTeam = true },
-            )
         }
     }
 
@@ -564,6 +635,7 @@ private fun LeagueFixturesPage(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s4),
+                        liveScore = fx.id?.let { state.liveScores[it] },
                     )
                 }
             }
@@ -634,73 +706,388 @@ private fun FeaturedBannerCard(event: RadarFeaturedEvent, matchCount: Int, onCli
     }
 }
 
+internal val MatchCardWidth = 280.dp
+private val MatchCardTeamsMinHeight = 64.dp
+private val MatchPillShape = RoundedCornerShape(percent = 50)
+
+private object AddLeagueTileMarker
+private object AddTeamTileMarker
+
+/**
+ * A fixture card in the home/IPTV shelf vocabulary: league line + status pill on top,
+ * one row per team with its crest and (live/final) score, kickoff + venue below. Works
+ * both as a fixed-width rail tile and stretched fillMaxWidth in the league page list.
+ */
 @Composable
 internal fun MatchCard(
     fixture: RadarFixture,
     live: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier.width(240.dp),
+    modifier: Modifier = Modifier.width(MatchCardWidth),
+    liveScore: RadarLiveScore? = null,
 ) {
-    Card(
-        modifier = modifier,
-        onClick = onClick,
-        colors = CardDefaults.cardColors(),
+    val tokens = MaterialTheme.nuvio
+    val cardShape = RoundedCornerShape(NuvioTokens.Radius.xl)
+    Column(
+        modifier = modifier
+            .clip(cardShape)
+            .background(tokens.colors.surface)
+            // Hairline so the card never vanishes into AMOLED pure-black backgrounds.
+            .border(1.dp, tokens.colors.borderSubtle, cardShape)
+            .clickable(onClick = onClick)
+            .padding(NuvioTokens.Space.s14),
     ) {
-        Column(Modifier.padding(NuvioTokens.Space.s12)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    fixture.roundLabel ?: fixture.league ?: "",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            fixture.leagueBadge?.takeIf { it.isNotBlank() }?.let { badge ->
+                AsyncImage(
+                    model = badge,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.size(NuvioTokens.Space.s16),
                 )
-                if (live) LiveBadge()
+                Spacer(Modifier.width(NuvioTokens.Space.s6))
             }
-            Spacer(Modifier.height(NuvioTokens.Space.s6))
             Text(
-                fixture.displayTitle,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
+                fixture.roundLabel ?: fixture.league ?: "",
+                style = MaterialTheme.typography.labelSmall,
+                color = tokens.colors.textMuted,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
             )
-            Spacer(Modifier.height(NuvioTokens.Space.s6))
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Spacer(Modifier.width(NuvioTokens.Space.s8))
+            MatchStatusPill(fixture, live, liveScore)
+        }
+        Spacer(Modifier.height(NuvioTokens.Space.s10))
+        val home = fixture.home?.takeIf { it.isNotBlank() }
+        val away = fixture.away?.takeIf { it.isNotBlank() }
+        Column(Modifier.heightIn(min = MatchCardTeamsMinHeight)) {
+            if (home != null && away != null) {
+                val homeScore = (liveScore?.homeScore ?: fixture.homeScore)?.takeIf { it.isNotBlank() }
+                val awayScore = (liveScore?.awayScore ?: fixture.awayScore)?.takeIf { it.isNotBlank() }
+                TeamRow(home, fixture.homeBadge, homeScore, dimScore = scoreTrails(homeScore, awayScore))
+                TeamRow(away, fixture.awayBadge, awayScore, dimScore = scoreTrails(awayScore, homeScore))
+            } else {
+                // Motorsport/golf-style events have no team pair — the event name carries the card.
                 Text(
-                    fixture.startEpochMs?.let { radarWhenLabel(it) } ?: "Time TBC",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f, fill = false),
+                    fixture.displayTitle,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = tokens.colors.textPrimary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                fixture.scoreLabel?.let { score ->
-                    Spacer(Modifier.width(NuvioTokens.Space.s8))
+            }
+        }
+        Spacer(Modifier.height(NuvioTokens.Space.s10))
+        val startMs = fixture.startEpochMs
+        val whenLabel = when {
+            live -> null
+            startMs != null -> radarWhenLabel(startMs)
+            else -> "Time TBC"
+        }
+        val hot = !live && startMs != null &&
+            RadarTime.dayLabel(startMs).let { it == "Today" || it == "Tomorrow" }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.heightIn(min = 18.dp),
+        ) {
+            if (whenLabel != null) {
+                Text(
+                    whenLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (hot) tokens.colors.accent else tokens.colors.textSecondary,
+                    maxLines = 1,
+                )
+            }
+            fixture.venue?.takeIf { it.isNotBlank() }?.let { venue ->
+                if (whenLabel != null) {
                     Text(
-                        score,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        " · ",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = tokens.colors.textMuted,
                     )
                 }
+                Text(
+                    venue,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = tokens.colors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
             }
         }
     }
 }
 
 @Composable
-internal fun LiveBadge() {
+private fun TeamRow(name: String, badge: String?, score: String?, dimScore: Boolean) {
+    val tokens = MaterialTheme.nuvio
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(vertical = NuvioTokens.Space.s2),
+    ) {
+        TeamBadge(name = name, badge = badge)
+        Spacer(Modifier.width(NuvioTokens.Space.s10))
+        Text(
+            name,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = tokens.colors.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (!score.isNullOrBlank()) {
+            Spacer(Modifier.width(NuvioTokens.Space.s8))
+            Text(
+                score,
+                style = MaterialTheme.typography.titleMedium,
+                color = if (dimScore) tokens.colors.textMuted else tokens.colors.textPrimary,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/** Team crest with a monogram-circle fallback so badge-less teams never leave a hole. */
+@Composable
+private fun TeamBadge(name: String, badge: String?) {
+    val tokens = MaterialTheme.nuvio
+    val failed = remember(badge) { mutableStateOf(false) }
+    Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+        if (!badge.isNullOrBlank() && !failed.value) {
+            AsyncImage(
+                model = badge,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize(),
+                onState = { state -> if (state is AsyncImagePainter.State.Error) failed.value = true },
+            )
+        } else {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .clip(CircleShape)
+                    .background(tokens.colors.surfaceElevated)
+                    .border(1.dp, tokens.colors.borderSubtle, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    teamMonogram(name),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = tokens.colors.textMuted,
+                )
+            }
+        }
+    }
+}
+
+private fun teamMonogram(name: String): String {
+    val words = name.split(' ', '-').filter { it.firstOrNull()?.isLetter() == true }
+    return when {
+        words.size >= 2 -> "${words[0].first()}${words[1].first()}".uppercase()
+        words.isNotEmpty() -> words[0].take(2).uppercase()
+        else -> "?"
+    }
+}
+
+/** True when both scores parse as numbers and this side is behind — the trailing score dims. */
+private fun scoreTrails(own: String?, other: String?): Boolean {
+    val a = own?.trim()?.toIntOrNull() ?: return false
+    val b = other?.trim()?.toIntOrNull() ?: return false
+    return a < b
+}
+
+@Composable
+private fun MatchStatusPill(fixture: RadarFixture, live: Boolean, liveScore: RadarLiveScore?) {
+    val tokens = MaterialTheme.nuvio
+    when {
+        live -> LiveBadge(progress = liveScore?.progress)
+        fixture.postponed == "yes" -> StatusPill("POSTPONED", tokens.colors.textMuted)
+        fixture.scoreLabel != null -> StatusPill("FT", tokens.colors.textMuted)
+        else -> {
+            val day = fixture.startEpochMs?.let { RadarTime.dayLabel(it) }
+            if (day == "Today" || day == "Tomorrow") StatusPill(day.uppercase(), tokens.colors.accent)
+        }
+    }
+}
+
+@Composable
+private fun StatusPill(text: String, color: Color) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        color = color,
+        maxLines = 1,
+        modifier = Modifier
+            .clip(MatchPillShape)
+            .background(color.copy(alpha = 0.12f))
+            .border(1.dp, color.copy(alpha = 0.35f), MatchPillShape)
+            .padding(horizontal = NuvioTokens.Space.s8, vertical = 2.dp),
+    )
+}
+
+@Composable
+internal fun LiveBadge(progress: String? = null) {
+    val danger = MaterialTheme.nuvio.colors.danger
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-            .clip(RoundedCornerShape(NuvioTokens.Space.s4))
-            .background(Color(0xFFD32F2F))
-            .padding(horizontal = NuvioTokens.Space.s6, vertical = 2.dp),
+            .clip(MatchPillShape)
+            .background(danger.copy(alpha = 0.14f))
+            .border(1.dp, danger.copy(alpha = 0.45f), MatchPillShape)
+            .padding(horizontal = NuvioTokens.Space.s8, vertical = 2.dp),
     ) {
-        Box(Modifier.size(6.dp).clip(CircleShape).background(Color.White))
+        Box(Modifier.size(6.dp).clip(CircleShape).background(danger))
         Spacer(Modifier.width(4.dp))
-        Text("LIVE", style = MaterialTheme.typography.labelSmall, color = Color.White, fontWeight = FontWeight.Bold)
+        Text(
+            if (progress.isNullOrBlank()) "LIVE" else "LIVE $progress",
+            style = MaterialTheme.typography.labelSmall,
+            color = danger,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+        )
+    }
+}
+
+/** Small league/team badge next to a shelf header title. */
+@Composable
+private fun ShelfHeaderBadge(badge: String) {
+    AsyncImage(
+        model = badge,
+        contentDescription = null,
+        contentScale = ContentScale.Fit,
+        modifier = Modifier.size(22.dp),
+    )
+}
+
+@Composable
+private fun SportTile(badge: String?, name: String, subtitle: String, onClick: () -> Unit) {
+    val tokens = MaterialTheme.nuvio
+    val shape = RoundedCornerShape(NuvioTokens.Radius.xl)
+    Column(
+        modifier = Modifier
+            .width(150.dp)
+            .clip(shape)
+            .background(tokens.colors.surface)
+            .border(1.dp, tokens.colors.borderSubtle, shape)
+            .clickable(onClick = onClick)
+            .padding(NuvioTokens.Space.s14),
+    ) {
+        Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+            if (!badge.isNullOrBlank()) {
+                AsyncImage(
+                    model = badge,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .clip(CircleShape)
+                        .background(tokens.colors.surfaceElevated),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        teamMonogram(name),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tokens.colors.textMuted,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(NuvioTokens.Space.s8))
+        Text(
+            name,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = tokens.colors.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            subtitle,
+            style = MaterialTheme.typography.labelSmall,
+            color = tokens.colors.textMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun AddTile(name: String, subtitle: String, onClick: () -> Unit) {
+    val tokens = MaterialTheme.nuvio
+    val shape = RoundedCornerShape(NuvioTokens.Radius.xl)
+    Column(
+        modifier = Modifier
+            .width(150.dp)
+            .clip(shape)
+            .background(tokens.colors.surface)
+            .border(1.dp, tokens.colors.borderSubtle, shape)
+            .clickable(onClick = onClick)
+            .padding(NuvioTokens.Space.s14),
+    ) {
+        Box(
+            Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(tokens.colors.surfaceElevated)
+                .border(1.dp, tokens.colors.borderSubtle, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("+", style = MaterialTheme.typography.titleMedium, color = tokens.colors.textSecondary)
+        }
+        Spacer(Modifier.height(NuvioTokens.Space.s8))
+        Text(
+            name,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = tokens.colors.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            subtitle,
+            style = MaterialTheme.typography.labelSmall,
+            color = tokens.colors.textMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** Shimmer stand-in for a match shelf while first fixtures load — real header-sized bar + cards. */
+@Composable
+private fun MatchRowSkeleton(sectionPadding: Dp) {
+    val brush = rememberHomeSkeletonBrush()
+    Column(verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s10)) {
+        Box(
+            Modifier
+                .padding(horizontal = sectionPadding)
+                .width(140.dp)
+                .height(18.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(brush),
+        )
+        Row(
+            modifier = Modifier.padding(horizontal = sectionPadding),
+            horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s10),
+        ) {
+            repeat(3) {
+                Box(
+                    Modifier
+                        .width(MatchCardWidth)
+                        .height(132.dp)
+                        .clip(RoundedCornerShape(NuvioTokens.Radius.xl))
+                        .background(brush),
+                )
+            }
+        }
     }
 }
 
@@ -1272,38 +1659,6 @@ private fun AddTeamSheet(
     }
 }
 
-/** Peer of [AddLeagueRowItem] for clubs. */
-@Composable
-private fun AddTeamRowItem(followedCount: Int, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s12),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            "+",
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.size(32.dp),
-        )
-        Spacer(Modifier.width(NuvioTokens.Space.s12))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                "Follow a team",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                if (followedCount > 0) "$followedCount followed" else "Just your club's matches",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
 @Composable
 private fun SimplePickRow(label: String, onClick: () -> Unit) {
     Row(
@@ -1323,34 +1678,3 @@ private fun SimplePickRow(label: String, onClick: () -> Unit) {
     }
 }
 
-/** Peer of [CategoryRowItem] that opens the add-a-league flow instead of a category. */
-@Composable
-private fun AddLeagueRowItem(customCount: Int, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s12),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            "+",
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.size(32.dp),
-        )
-        Spacer(Modifier.width(NuvioTokens.Space.s12))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                "Add a league",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                if (customCount > 0) "$customCount added" else "Not in the list? Add your own",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}

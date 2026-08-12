@@ -27,6 +27,8 @@ data class RadarUiState(
     val fixturesByLeague: Map<String, List<RadarFixture>> = emptyMap(),
     /** Event ids confirmed live by the livescore feed (5 covered sports). */
     val liveEventIds: Set<String> = emptySet(),
+    /** eventId -> latest livescore row (in-progress score + minute) for covered sports. */
+    val liveScores: Map<String, RadarLiveScore> = emptyMap(),
     /** Sports the last FRESH fetch returned livescore data for — the feed is authoritative
      *  for these (empty set after a cold-start disk load: stale feed data must not
      *  suppress the time-window inference). */
@@ -170,6 +172,7 @@ object RadarRepository {
                 fixturesByLeague = cachedFixtures?.fixtures ?: emptyMap(),
                 fixturesByTeam = cachedFixtures?.teamFixtures ?: emptyMap(),
                 liveEventIds = cachedFixtures?.let { r -> liveIds(r) } ?: emptySet(),
+                liveScores = cachedFixtures?.let { r -> scoresById(r) } ?: emptyMap(),
             )
         }
         refreshFixtures()
@@ -245,6 +248,7 @@ object RadarRepository {
                     fixturesByLeague = it.fixturesByLeague + response.fixtures,
                     fixturesByTeam = it.fixturesByTeam + response.teamFixtures,
                     liveEventIds = liveIds(response),
+                    liveScores = scoresById(response),
                     livescoreSports = response.livescore.keys.map { s -> s.lowercase() }.toSet(),
                     loadingFixtures = false,
                 )
@@ -279,6 +283,7 @@ object RadarRepository {
                 it.copy(
                     fixturesByLeague = it.fixturesByLeague + response.fixtures,
                     liveEventIds = it.liveEventIds + liveIds(response),
+                    liveScores = it.liveScores + scoresById(response),
                 )
             }
         }
@@ -286,6 +291,11 @@ object RadarRepository {
 
     private fun liveIds(response: RadarFixturesResponse): Set<String> =
         response.livescore.values.asSequence().flatten().mapNotNull { it.eventId }.toSet()
+
+    private fun scoresById(response: RadarFixturesResponse): Map<String, RadarLiveScore> =
+        response.livescore.values.asSequence().flatten()
+            .mapNotNull { score -> score.eventId?.let { it to score } }
+            .toMap()
 
     // --- follows -------------------------------------------------------------
 

@@ -92,7 +92,12 @@ fun RadarHomeSection(
                     horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s10),
                 ) {
                     items(fixtures, key = { it.id ?: it.hashCode().toString() }) { fx ->
-                        MatchCard(fx, live = state.isLive(fx, nowMs), onClick = { sheetFixture = fx })
+                        MatchCard(
+                            fx,
+                            live = state.isLive(fx, nowMs),
+                            onClick = { sheetFixture = fx },
+                            liveScore = fx.id?.let { state.liveScores[it] },
+                        )
                     }
                 }
             }
