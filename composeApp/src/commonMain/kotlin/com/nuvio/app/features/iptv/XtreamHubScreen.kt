@@ -18,13 +18,22 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,6 +44,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.NuvioDropdownChip
 import com.nuvio.app.core.ui.NuvioDropdownOption
+import com.nuvio.app.core.ui.NuvioPosterCard
+import com.nuvio.app.core.ui.NuvioPosterShape
+import com.nuvio.app.core.ui.PlatformBackHandler
 import com.nuvio.app.core.ui.NuvioShelfSection
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.NuvioViewAllPillSize
@@ -49,6 +61,8 @@ import com.nuvio.app.features.home.components.HomeEmptyStateCard
 import com.nuvio.app.features.home.components.HomePosterCard
 import com.nuvio.app.features.home.components.homeSectionHorizontalPaddingForWidth
 import com.nuvio.app.features.home.components.rememberHomeSkeletonBrush
+import com.nuvio.app.features.library.LibraryRepository
+import com.nuvio.app.features.library.toMetaPreview
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import nuvio.composeapp.generated.resources.Res
@@ -60,13 +74,16 @@ import nuvio.composeapp.generated.resources.compose_iptv_hub_epg_next
 import nuvio.composeapp.generated.resources.compose_iptv_hub_epg_no_information
 import nuvio.composeapp.generated.resources.compose_iptv_hub_error_message
 import nuvio.composeapp.generated.resources.compose_iptv_hub_error_title
+import nuvio.composeapp.generated.resources.compose_iptv_hub_favorites
 import nuvio.composeapp.generated.resources.compose_iptv_hub_no_provider_message
 import nuvio.composeapp.generated.resources.compose_iptv_hub_no_provider_title
 import nuvio.composeapp.generated.resources.compose_iptv_hub_playlist_fallback
 import nuvio.composeapp.generated.resources.compose_iptv_hub_playlists_title
+import nuvio.composeapp.generated.resources.compose_iptv_hub_recent
 import nuvio.composeapp.generated.resources.compose_iptv_hub_section_live
 import nuvio.composeapp.generated.resources.compose_settings_page_iptv_add_playlist
 import nuvio.composeapp.generated.resources.library_other
+import nuvio.composeapp.generated.resources.home_view_all
 import nuvio.composeapp.generated.resources.media_movies
 import nuvio.composeapp.generated.resources.media_series
 import org.jetbrains.compose.resources.StringResource
@@ -92,7 +109,13 @@ fun XtreamHubScreen(
     scrollToTopRequests: Flow<Unit> = emptyFlow(),
 ) {
     val state by XtreamHubRepository.uiState.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { XtreamHubRepository.ensureLoaded() }
+    val localLibraryItems by LibraryRepository.localItems.collectAsStateWithLifecycle()
+    val liveRecents by XtreamLiveRecents.recents.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) {
+        XtreamHubRepository.ensureLoaded()
+        LibraryRepository.ensureLoaded()
+        XtreamLiveRecents.ensureLoaded()
+    }
 
     if (state.accounts.isEmpty()) {
         XtreamHubNoPlaylistState(onAddProvider = onAddProvider, modifier = modifier)
@@ -123,6 +146,32 @@ fun XtreamHubScreen(
     // Filtering ahead of the LazyColumn keeps the listGap arrangement from stacking gaps for
     // collapsed rows.
     val renderableCategories = visibleCategories.filterNot { it.loaded && it.items.isEmpty() }
+    val favoriteTitle = stringResource(Res.string.compose_iptv_hub_favorites)
+    val recentTitle = stringResource(Res.string.compose_iptv_hub_recent)
+    val liveSpecialCategories = remember(isLive, localLibraryItems, liveRecents, favoriteTitle, recentTitle) {
+        if (!isLive) {
+            emptyList()
+        } else {
+            buildList {
+                localLibraryItems
+                    .filter { XtreamItemRegistry.isLiveId(it.id) }
+                    .map { it.toMetaPreview() }
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { items ->
+                        add(XtreamHubCategory(SPECIAL_FAVORITES_ID, favoriteTitle, items, loaded = true))
+                    }
+                liveRecents
+                    .map { it.toMetaPreview() }
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { items ->
+                        add(XtreamHubCategory(SPECIAL_RECENT_ID, recentTitle, items, loaded = true))
+                    }
+            }
+        }
+    }
+    val displayedCategories = liveSpecialCategories + renderableCategories
+    var openCategoryId by remember(state.selectedAccountId, state.section) { mutableStateOf<String?>(null) }
+    val openCategory = openCategoryId?.let { id -> displayedCategories.firstOrNull { it.id == id } }
 
     val tokens = MaterialTheme.nuvio
     val listState = rememberLazyListState()
@@ -136,6 +185,20 @@ fun XtreamHubScreen(
         // which would hide this fixed section-chip header — pad it down to clear the bar.
         val tabletTopInset = if (maxWidth >= 768.dp) TABLET_TOP_BAR_INSET else 0.dp
         Column(modifier = Modifier.fillMaxSize().statusBarsPadding().padding(top = tabletTopInset)) {
+            if (openCategory != null) {
+                XtreamHubCategoryPage(
+                    category = openCategory,
+                    live = isLive,
+                    epg = if (isLive) epgMap else emptyMap(),
+                    sectionPadding = sectionPadding,
+                    onBack = { openCategoryId = null },
+                    onPosterClick = onTileClick,
+                    onPosterLongClick = onTileLongClick,
+                    loadFromRepository = !openCategory.id.startsWith(SPECIAL_CATEGORY_PREFIX),
+                )
+                return@Column
+            }
+
             XtreamHubHeader(
                 accounts = state.accounts,
                 selectedAccountId = state.selectedAccountId,
@@ -161,7 +224,7 @@ fun XtreamHubScreen(
                     sectionPadding = sectionPadding,
                 )
 
-                renderableCategories.isEmpty() -> XtreamHubMessageCard(
+                displayedCategories.isEmpty() -> XtreamHubMessageCard(
                     title = stringResource(Res.string.compose_iptv_hub_empty_title),
                     message = stringResource(Res.string.compose_iptv_hub_empty_message),
                     actionLabel = stringResource(Res.string.compose_settings_page_iptv_add_playlist),
@@ -171,7 +234,7 @@ fun XtreamHubScreen(
 
                 else -> {
                     // Xtream panels ship real-world duplicate category ids — duplicate-safe keys.
-                    val keyedCategories = renderableCategories.withDuplicateSafeLazyKeys { it.id }
+                    val keyedCategories = displayedCategories.withDuplicateSafeLazyKeys { it.id }
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
@@ -191,14 +254,18 @@ fun XtreamHubScreen(
                             val category = entry.value
                             // Keyed on the account/section too: a category id that survives a
                             // section switch would otherwise keep the effect from re-running.
-                            LaunchedEffect(state.selectedAccountId, state.section, category.id) {
-                                XtreamHubRepository.loadCategory(category.id)
-                                // Give the next few rows a head start so they land with boxes and
-                                // names instead of shimmer. The repository caps how many of these
-                                // can actually be in flight and drops the rest.
-                                for (offset in 1..CATEGORY_PREFETCH_LOOKAHEAD) {
-                                    val next = keyedCategories.getOrNull(index + offset) ?: break
-                                    XtreamHubRepository.prefetchCategory(next.value.id)
+                            if (!category.id.startsWith(SPECIAL_CATEGORY_PREFIX)) {
+                                LaunchedEffect(state.selectedAccountId, state.section, category.id) {
+                                    XtreamHubRepository.loadCategory(category.id)
+                                    // Give the next few rows a head start so they land with boxes and
+                                    // names instead of shimmer. The repository caps how many of these
+                                    // can actually be in flight and drops the rest.
+                                    for (offset in 1..CATEGORY_PREFETCH_LOOKAHEAD) {
+                                        val next = keyedCategories.getOrNull(index + offset) ?: break
+                                        if (!next.value.id.startsWith(SPECIAL_CATEGORY_PREFIX)) {
+                                            XtreamHubRepository.prefetchCategory(next.value.id)
+                                        }
+                                    }
                                 }
                             }
                             XtreamHubCategoryRow(
@@ -208,6 +275,7 @@ fun XtreamHubScreen(
                                 sectionPadding = sectionPadding,
                                 onPosterClick = onTileClick,
                                 onPosterLongClick = onTileLongClick,
+                                onViewAll = { openCategoryId = category.id },
                             )
                         }
                     }
@@ -321,6 +389,7 @@ private fun XtreamHubCategoryRow(
     sectionPadding: Dp,
     onPosterClick: (MetaPreview) -> Unit,
     onPosterLongClick: ((MetaPreview) -> Unit)? = null,
+    onViewAll: () -> Unit,
 ) {
     val title = category.name.ifBlank { stringResource(Res.string.library_other) }
     if (category.items.isEmpty()) {
@@ -344,6 +413,8 @@ private fun XtreamHubCategoryRow(
             headerHorizontalPadding = sectionPadding,
             rowContentPadding = PaddingValues(horizontal = sectionPadding),
             viewAllPillSize = NuvioViewAllPillSize.Compact,
+            onViewAllClick = onViewAll,
+            endContent = { XtreamHubViewAllCard(live = live, onClick = onViewAll) },
             key = { it.id },
         ) { item ->
             // Item-5 window append: composing the LAST loaded tile of a longer category pulls
@@ -374,19 +445,144 @@ private fun XtreamHubCategoryRow(
 }
 
 @Composable
+private fun XtreamHubViewAllCard(live: Boolean, onClick: () -> Unit) {
+    val style = rememberPosterCardStyleUiState()
+    NuvioPosterCard(
+        title = stringResource(Res.string.home_view_all),
+        imageUrl = null,
+        shape = if (live || style.catalogLandscapeModeEnabled) {
+            NuvioPosterShape.Landscape
+        } else {
+            NuvioPosterShape.Poster
+        },
+        showTitleBelow = false,
+        onClick = onClick,
+    )
+}
+
+@Composable
+private fun XtreamHubCategoryPage(
+    category: XtreamHubCategory,
+    live: Boolean,
+    epg: Map<String, ChannelEpg>,
+    sectionPadding: Dp,
+    onBack: () -> Unit,
+    onPosterClick: (MetaPreview) -> Unit,
+    onPosterLongClick: ((MetaPreview) -> Unit)?,
+    loadFromRepository: Boolean = true,
+) {
+    PlatformBackHandler(enabled = true, onBack = onBack)
+    val landscape = live || rememberPosterCardStyleUiState().catalogLandscapeModeEnabled
+    val title = category.name.ifBlank { stringResource(Res.string.library_other) }
+
+    if (loadFromRepository) {
+        LaunchedEffect(category.id) { XtreamHubRepository.loadCategory(category.id) }
+    }
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = sectionPadding, vertical = NuvioTokens.Space.s6),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back",
+                    tint = MaterialTheme.nuvio.colors.textPrimary,
+                )
+            }
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.nuvio.colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val columns = remember(maxWidth, landscape) {
+                xtreamCategoryGridColumns(maxWidth, landscape)
+            }
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(columns),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = sectionPadding,
+                    end = sectionPadding,
+                    bottom = nuvioSafeBottomPadding(MaterialTheme.nuvio.spacing.screenBottom),
+                ),
+                horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s10),
+                verticalArrangement = Arrangement.spacedBy(MaterialTheme.nuvio.spacing.listGap),
+            ) {
+            gridItemsIndexed(
+                items = category.items,
+                key = { _, item -> item.id },
+            ) { index, item ->
+                if (category.hasMore && index == category.items.lastIndex) {
+                    LaunchedEffect(category.id, category.items.size) {
+                        XtreamHubRepository.loadMore(category.id)
+                    }
+                }
+                if (live) {
+                    LaunchedEffect(item.id) { XtreamHubRepository.ensureEpg(item.id) }
+                    XtreamLiveChannelTile(
+                        item = item,
+                        epg = epg[item.id],
+                        compact = true,
+                        onClick = { onPosterClick(item) },
+                        onLongClick = onPosterLongClick?.let { callback -> { callback(item) } },
+                    )
+                } else {
+                    HomePosterCard(
+                        item = item,
+                        modifier = Modifier.fillMaxWidth(),
+                        compact = true,
+                        onClick = { onPosterClick(item) },
+                        onLongClick = onPosterLongClick?.let { callback -> { callback(item) } },
+                    )
+                }
+            }
+            }
+        }
+    }
+}
+
+private fun xtreamCategoryGridColumns(width: Dp, landscape: Boolean): Int =
+    if (landscape) {
+        when {
+            width >= 1400.dp -> 6
+            width >= 1200.dp -> 5
+            width >= 840.dp -> 4
+            width >= 600.dp -> 3
+            else -> 2
+        }
+    } else {
+        when {
+            width >= 1400.dp -> 8
+            width >= 1200.dp -> 7
+            width >= 1000.dp -> 6
+            width >= 840.dp -> 5
+            width >= 600.dp -> 4
+            else -> 3
+        }
+    }
+
+@Composable
 private fun XtreamLiveChannelTile(
     item: MetaPreview,
     epg: ChannelEpg?,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)?,
+    compact: Boolean = false,
 ) {
     val tokens = MaterialTheme.nuvio
     // The card style's natural landscape width — not a hardcoded tile size.
     val tileWidth = landscapePosterWidth(rememberPosterCardStyleUiState().widthDp)
-    Column(modifier = Modifier.width(tileWidth)) {
+    Column(modifier = if (compact) Modifier.fillMaxWidth() else Modifier.width(tileWidth)) {
         HomePosterCard(
             item = item,
+            modifier = if (compact) Modifier.fillMaxWidth() else Modifier,
             useLandscapeBackdropMode = true,
+            compact = compact,
             onClick = onClick,
             onLongClick = onLongClick,
         )
@@ -559,3 +755,6 @@ private const val CATEGORY_PREFETCH_LOOKAHEAD = 3
 private const val PLACEHOLDER_TILE_COUNT = 6
 private const val SKELETON_SHELF_COUNT = 3
 private const val ADD_PLAYLIST_OPTION_KEY = "__add_playlist__"
+private const val SPECIAL_CATEGORY_PREFIX = "__live_"
+private const val SPECIAL_FAVORITES_ID = "${SPECIAL_CATEGORY_PREFIX}favorites__"
+private const val SPECIAL_RECENT_ID = "${SPECIAL_CATEGORY_PREFIX}recent__"

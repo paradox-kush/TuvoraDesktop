@@ -83,7 +83,13 @@ object AuthRepository {
                             )
                         }
                         is SessionStatus.NotAuthenticated -> {
-                            _state.value = AuthState.Unauthenticated
+                            // A process restart or a transient SDK refresh failure can drop the
+                            // in-memory session before the persisted rotating refresh token has
+                            // been re-imported. Only show sign-in when storage has no recoverable
+                            // full-account session. Explicit sign-out clears storage first.
+                            if (!restorePersistedSession()) {
+                                _state.value = AuthState.Unauthenticated
+                            }
                         }
                         is SessionStatus.Initializing -> {
                             if (AuthStorage.loadAnonymousUserId() == null) {
@@ -108,6 +114,36 @@ object AuthRepository {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    private suspend fun restorePersistedSession(): Boolean {
+        val auth = SupabaseProvider.client.auth
+        val persistedSession = runCatching { auth.sessionManager.loadSession() }
+            .onFailure { error -> log.w(error) { "Unable to read persisted Supabase session" } }
+            .getOrNull()
+            ?: return false
+        val user = persistedSession.user ?: return false
+        if (persistedSession.refreshToken.isBlank()) return false
+
+        // Keep the cached account usable offline while the SDK refreshes in the background.
+        _state.value = AuthState.Authenticated(
+            userId = user.id,
+            email = user.email,
+            isAnonymous = false,
+        )
+        return runCatching {
+            auth.importSession(persistedSession, autoRefresh = true)
+            true
+        }.getOrElse { error ->
+            if (isInvalidRefreshError(error.restStatusCode(), error.authErrorText())) {
+                log.w(error) { "Persisted Supabase session was rejected; clearing local auth" }
+                clearLocalSessionAfterRemoteInvalidation()
+                false
+            } else {
+                log.w(error) { "Persisted Supabase session could not refresh yet; keeping cached auth state" }
+                true
             }
         }
     }

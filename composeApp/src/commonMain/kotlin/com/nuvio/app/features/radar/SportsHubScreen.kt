@@ -69,6 +69,7 @@ import com.nuvio.app.core.ui.NuvioShelfSection
 import com.nuvio.app.core.ui.NuvioSurfaceCard
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.NuvioViewAllPillSize
+import com.nuvio.app.core.ui.PlatformBackHandler
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.home.components.homeSectionHorizontalPaddingForWidth
@@ -104,12 +105,19 @@ fun SportsHubScreen(
     var sheetFixture by remember { mutableStateOf<RadarFixture?>(null) }
     // Discovery drill-in: a league/event page listing everything happening in it.
     var leaguePage by remember { mutableStateOf<RadarLeague?>(null) }
+    var fixturesPage by remember { mutableStateOf<SportsFixturesPage?>(null) }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val tabletTopInset = if (maxWidth >= 768.dp) TABLET_TOP_BAR_INSET else 0.dp
         val isWide = maxWidth >= 768.dp
         Column(modifier = Modifier.fillMaxSize().statusBarsPadding().padding(top = tabletTopInset)) {
             when {
+                fixturesPage != null -> SportsFixturesPage(
+                    state = state,
+                    page = fixturesPage!!,
+                    onBack = { fixturesPage = null },
+                    onFixtureClick = { sheetFixture = it },
+                )
                 leaguePage != null -> LeagueFixturesPage(
                     state = state,
                     league = leaguePage!!,
@@ -139,6 +147,7 @@ fun SportsHubScreen(
                     onOpenBrowse = { browsing = true },
                     onOpenCategory = { browsing = true; browseCategory = it },
                     onOpenLeague = { leaguePage = it },
+                    onOpenFixtures = { title, fixtures -> fixturesPage = SportsFixturesPage(title, fixtures) },
                     onFixtureClick = { sheetFixture = it },
                 )
             }
@@ -166,6 +175,7 @@ private fun SportsOverview(
     onOpenBrowse: () -> Unit,
     onOpenCategory: (RadarCategory) -> Unit,
     onOpenLeague: (RadarLeague) -> Unit,
+    onOpenFixtures: (String, List<RadarFixture>) -> Unit,
     onFixtureClick: (RadarFixture) -> Unit,
 ) {
     val nowMs = RadarTime.nowMs()
@@ -220,6 +230,14 @@ private fun SportsOverview(
                         headerHorizontalPadding = sectionPadding,
                         rowContentPadding = rowPadding,
                         viewAllPillSize = NuvioViewAllPillSize.Compact,
+                        onViewAllClick = {
+                            onOpenFixtures(
+                                "Featured Events",
+                                featured.flatMap { event -> state.upcoming(listOf(event.leagueId), nowMs, cap = 40) }
+                                    .distinctBy { it.id ?: "${it.leagueId}/${it.event}/${it.ts}" }
+                                    .sortedBy { it.startEpochMs },
+                            )
+                        },
                         key = { it.id },
                     ) { event ->
                         val fixtures = state.fixturesByLeague[event.leagueId].orEmpty()
@@ -242,6 +260,7 @@ private fun SportsOverview(
                         headerHorizontalPadding = sectionPadding,
                         rowContentPadding = rowPadding,
                         viewAllPillSize = NuvioViewAllPillSize.Compact,
+                        onViewAllClick = { onOpenFixtures("Live & Upcoming", upcoming) },
                         key = { it.id ?: "${it.leagueId}/${it.event}/${it.ts}" },
                     ) { fx ->
                         MatchCard(
@@ -264,6 +283,9 @@ private fun SportsOverview(
                     headerHorizontalPadding = sectionPadding,
                     rowContentPadding = rowPadding,
                     viewAllPillSize = NuvioViewAllPillSize.Compact,
+                    onViewAllClick = {
+                        onOpenFixtures(team.name, state.upcomingForTeams(listOf(team.id), nowMs, cap = 40))
+                    },
                     headerLeading = team.badge?.takeIf { it.isNotBlank() }?.let { badge ->
                         { ShelfHeaderBadge(badge) }
                     },
@@ -312,6 +334,8 @@ private fun SportsOverview(
                     entries = browseEntries,
                     headerHorizontalPadding = sectionPadding,
                     rowContentPadding = rowPadding,
+                    onViewAllClick = onOpenBrowse,
+                    viewAllPillSize = NuvioViewAllPillSize.Compact,
                     key = { entry ->
                         when (entry) {
                             is RadarCategory -> "cat-${entry.name}"
@@ -364,6 +388,46 @@ private fun SportsOverview(
         onDismiss = { addLeagueSport = null },
         onPickSport = { addLeagueSport = it },
     )
+}
+
+private data class SportsFixturesPage(
+    val title: String,
+    val fixtures: List<RadarFixture>,
+)
+
+@Composable
+private fun SportsFixturesPage(
+    state: RadarUiState,
+    page: SportsFixturesPage,
+    onBack: () -> Unit,
+    onFixtureClick: (RadarFixture) -> Unit,
+) {
+    PlatformBackHandler(enabled = true, onBack = onBack)
+    val nowMs = RadarTime.nowMs()
+    Column(Modifier.fillMaxSize()) {
+        BrowseHeader(page.title, onBack)
+        LazyColumn(
+            contentPadding = PaddingValues(
+                start = NuvioTokens.Space.s16,
+                end = NuvioTokens.Space.s16,
+                bottom = nuvioSafeBottomPadding(NuvioTokens.Space.s24),
+            ),
+            verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s10),
+        ) {
+            items(
+                items = page.fixtures,
+                key = { it.id ?: "${it.leagueId}/${it.event}/${it.ts}" },
+            ) { fixture ->
+                MatchCard(
+                    fixture = fixture,
+                    live = state.isLive(fixture, nowMs),
+                    onClick = { onFixtureClick(fixture) },
+                    modifier = Modifier.fillMaxWidth(),
+                    liveScore = fixture.id?.let { state.liveScores[it] },
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -1677,4 +1741,3 @@ private fun SimplePickRow(label: String, onClick: () -> Unit) {
         Text("\u203A", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
-

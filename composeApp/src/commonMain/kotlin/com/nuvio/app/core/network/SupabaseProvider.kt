@@ -79,7 +79,11 @@ object SupabaseProvider {
                     headers.append(HttpHeaders.UserAgent, userAgent)
                 }
             }
-            install(Auth)
+            install(Auth) {
+                alwaysAutoRefresh = true
+                autoLoadFromStorage = true
+                autoSaveToStorage = true
+            }
             install(Postgrest)
             install(Functions)
             // Realtime backs the fork's sync-invalidation service (upstream dropped realtime).

@@ -2238,10 +2238,9 @@ private fun MainAppContent(
                                         },
                                         onIptvFavoriteChannel = { contentId ->
                                             XtreamItemRegistry.get(contentId)?.let { item ->
-                                                // toggleSaved is suspend since the tracking refactor; a live
-                                                // channel has no tracker membership, so no confirmation flow.
-                                                coroutineScope.launch {
-                                                LibraryRepository.toggleSaved(
+                                                // Live favorites belong to Tuvora's own synced library even
+                                                // when Movies/Series are currently sourced from Trakt or Simkl.
+                                                LibraryRepository.toggleLocalSaved(
                                                     LibraryItem(
                                                         id = contentId,
                                                         type = "tv",
@@ -2253,9 +2252,8 @@ private fun MainAppContent(
                                                     )
                                                 )
                                                 NuvioToastController.show(
-                                                    if (LibraryRepository.isSaved(contentId, "tv")) "Added to Library" else "Removed from Library"
+                                                    if (LibraryRepository.isLocalSaved(contentId, "tv")) "Added to Library" else "Removed from Library"
                                                 )
-                                                }
                                             }
                                         },
                                         onLibraryPosterClick = { item ->

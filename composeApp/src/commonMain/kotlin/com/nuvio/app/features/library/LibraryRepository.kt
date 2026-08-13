@@ -54,6 +54,10 @@ object LibraryRepository {
 
     private val _uiState = MutableStateFlow(LibraryUiState())
     val uiState: StateFlow<LibraryUiState> = _uiState.asStateFlow()
+    // IPTV live favorites are always stored in Tuvora's local/synced library, even when the
+    // visible Movies/Series library is sourced from Trakt or Simkl.
+    private val _localItems = MutableStateFlow<List<LibraryItem>>(emptyList())
+    val localItems: StateFlow<List<LibraryItem>> = _localItems.asStateFlow()
 
     private val localState = LibraryLocalState()
     private val loadLock = SynchronizedObject()
@@ -130,6 +134,7 @@ object LibraryRepository {
         transition.detachedPushJob?.cancel()
         TrackingProviderRegistry.libraryProviders().forEach(TrackingLibraryProvider::clearLocalState)
         _uiState.value = LibraryUiState()
+        _localItems.value = emptyList()
     }
 
     internal fun runAccountStorageWipe(wipeStorage: () -> Unit) {
@@ -408,6 +413,11 @@ object LibraryRepository {
         }
     }
 
+    fun isLocalSaved(id: String, type: String? = null): Boolean {
+        ensureLoaded()
+        return if (type != null) localState.contains(id, type) else localState.containsId(id)
+    }
+
     fun savedItem(id: String): LibraryItem? {
         ensureLoaded()
 
@@ -601,6 +611,8 @@ object LibraryRepository {
 
     private fun publish() {
         val localSnapshot = localState.snapshot()
+        val localItems = localSnapshot.items.sortedByDescending { it.savedAtEpochMs }
+        _localItems.value = localItems
         val sourceMode = effectiveLibrarySourceMode()
         activeLibraryProvider(sourceMode)?.let { provider ->
             val providerSnapshot = provider.snapshot()
@@ -618,8 +630,7 @@ object LibraryRepository {
             return
         }
 
-        val items = localSnapshot.items
-            .sortedByDescending { it.savedAtEpochMs }
+        val items = localItems
         val sections = items
             .groupBy { it.type }
             .map { (type, typeItems) ->

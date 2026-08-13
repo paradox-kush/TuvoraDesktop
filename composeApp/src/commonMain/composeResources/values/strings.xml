@@ -349,6 +349,8 @@
     <string name="compose_iptv_hub_no_provider_title">No IPTV provider yet</string>
     <string name="compose_iptv_hub_playlist_fallback">Playlist</string>
     <string name="compose_iptv_hub_playlists_title">Playlists</string>
+    <string name="compose_iptv_hub_favorites">Favorites</string>
+    <string name="compose_iptv_hub_recent">Recent Channels</string>
     <string name="compose_iptv_hub_section_live">Live TV</string>
     <string name="compose_livetv_error_tap_retry">Can't play this channel · Tap to retry</string>
     <string name="compose_livetv_exit_fullscreen">Exit fullscreen</string>
