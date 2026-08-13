@@ -348,7 +348,10 @@ private fun RowsContent(
     }
 
     if (sections.isEmpty() && !uiState.isLoading) {
-        EmptyMessage()
+        // Every source came back empty *or* failed. Surface the failure rather than claiming the
+        // folder is empty — a dead Trakt list and an empty one are not the same problem.
+        val error = uiState.tabs.firstNotNullOfOrNull { tab -> tab.error?.takeIf { it.isNotBlank() } }
+        if (error != null) ErrorMessage(error) else EmptyMessage()
         return
     }
 

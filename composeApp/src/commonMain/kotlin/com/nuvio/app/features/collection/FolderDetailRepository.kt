@@ -24,6 +24,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import nuvio.composeapp.generated.resources.Res
@@ -185,7 +186,30 @@ object FolderDetailRepository {
                         ),
                     )
                 } else {
-                    val catalogSource = source.addonCatalogSource() ?: return@forEachIndexed
+                    val catalogSource = source.addonCatalogSource()
+                    if (catalogSource == null) {
+                        // Still add a tab. The loader below indexes tabs by source position, so
+                        // skipping one shifts every later tab and walks off the end of the list —
+                        // and the tab that falls off never stops loading.
+                        add(
+                            FolderTab(
+                                label = source.title?.takeIf { it.isNotBlank() }
+                                    ?: source.catalogId.orEmpty(),
+                                source = source,
+                                sourceKey = source.catalogRouteKey(),
+                                type = source.type.orEmpty(),
+                                catalogId = source.catalogId.orEmpty(),
+                                isLoading = false,
+                                error = runBlocking {
+                                    getString(
+                                        Res.string.collections_folder_addon_not_found,
+                                        source.addonId.orEmpty(),
+                                    )
+                                },
+                            ),
+                        )
+                        return@forEachIndexed
+                    }
                     val resolvedCatalog = addons.findCollectionCatalog(catalogSource)
                     val addon = resolvedCatalog?.addon
                     val catalog = resolvedCatalog?.catalog
@@ -226,10 +250,10 @@ object FolderDetailRepository {
             val catalogSource = source.addonCatalogSource()
             val resolvedCatalog = catalogSource?.let { addons.findCollectionCatalog(it) }
             if (!source.isTmdb && !source.isTrakt && resolvedCatalog == null) {
-                updateTab(tabIndex) {
-                    it.copy(
+                updateTab(tabIndex) { tab ->
+                    tab.copy(
                         isLoading = false,
-                        error = runBlocking {
+                        error = tab.error ?: runBlocking {
                             getString(Res.string.collections_folder_addon_not_found, catalogSource?.addonId.orEmpty())
                         },
                     )
@@ -275,28 +299,52 @@ object FolderDetailRepository {
         }
     }
 
+    /**
+     * Every source loads on its own coroutine, so this has to be a compare-and-set update. A plain
+     * `_uiState.value = _uiState.value.copy(...)` loses one of two near-simultaneous writes, and the
+     * tab whose write was dropped stays `isLoading = true` forever — the screen then spins with no
+     * error and no rows.
+     */
     private fun updateTab(index: Int, transform: (FolderTab) -> FolderTab) {
-        val current = _uiState.value
-        val updatedTabs = current.tabs.toMutableList()
-        if (index !in updatedTabs.indices) return
-        updatedTabs[index] = transform(updatedTabs[index])
+        _uiState.update { current ->
+            if (index !in current.tabs.indices) return@update current
+            val updatedTabs = current.tabs.toMutableList()
+            updatedTabs[index] = transform(updatedTabs[index])
 
-        val allDone = updatedTabs.none { !it.isAllTab && it.isLoading }
-        _uiState.value = current.copy(
-            tabs = updatedTabs,
-            isLoading = !allDone,
-        )
+            val allDone = updatedTabs.none { !it.isAllTab && it.isLoading }
+            current.copy(
+                tabs = updatedTabs,
+                isLoading = !allDone,
+            )
+        }
     }
 
     private fun loadTabPage(index: Int, reset: Boolean) {
+        // Bailing out of here without clearing isLoading strands the tab: the screen-level spinner
+        // is driven by "no source tab is still loading", so one stranded tab spins forever.
         val currentTab = _uiState.value.tabs.getOrNull(index) ?: return
-        val requestedSkip = if (reset) 0 else currentTab.nextSkip ?: return
+        val requestedSkip = if (reset) 0 else currentTab.nextSkip ?: run {
+            updateTab(index) { it.copy(isLoading = false, isLoadingMore = false) }
+            return
+        }
         val currentSource = currentTab.source
         if (
             currentSource?.isTmdb != true &&
             currentSource?.isTrakt != true &&
             currentTab.manifestUrl == null
-        ) return
+        ) {
+            updateTab(index) { tab ->
+                tab.copy(
+                    isLoading = false,
+                    isLoadingMore = false,
+                    error = tab.error ?: runBlocking {
+                        getString(Res.string.collections_folder_addon_not_found, tab.catalogId)
+                    },
+                )
+            }
+            rebuildAllTab()
+            return
+        }
 
         updateTab(index) { tab ->
             if (reset) {
@@ -383,42 +431,44 @@ object FolderDetailRepository {
     }
 
     private fun rebuildAllTab() {
-        val current = _uiState.value
-        if (!current.showAllTab) return
-        val sourceTabs = current.tabs.filter { !it.isAllTab }
+        // Compare-and-set for the same reason as updateTab: this runs from each source's coroutine.
+        _uiState.update { current ->
+            if (!current.showAllTab) return@update current
+            val sourceTabs = current.tabs.filter { !it.isAllTab }
 
-        // Round-robin merge
-        val merged = mutableListOf<MetaPreview>()
-        val seenKeys = mutableSetOf<String>()
-        val iterators = sourceTabs.map { it.items.iterator() }
-        var hasMore = true
-        while (hasMore) {
-            hasMore = false
-            for (iterator in iterators) {
-                if (iterator.hasNext()) {
-                    val item = iterator.next()
-                    if (seenKeys.add(item.stableKey())) {
-                        merged.add(item)
+            // Round-robin merge
+            val merged = mutableListOf<MetaPreview>()
+            val seenKeys = mutableSetOf<String>()
+            val iterators = sourceTabs.map { it.items.iterator() }
+            var hasMore = true
+            while (hasMore) {
+                hasMore = false
+                for (iterator in iterators) {
+                    if (iterator.hasNext()) {
+                        val item = iterator.next()
+                        if (seenKeys.add(item.stableKey())) {
+                            merged.add(item)
+                        }
+                        hasMore = true
                     }
-                    hasMore = true
                 }
             }
-        }
 
-        val updatedTabs = current.tabs.toMutableList()
-        val allTabIndex = updatedTabs.indexOfFirst { it.isAllTab }
-        if (allTabIndex >= 0) {
-            val hasInitialLoads = sourceTabs.any { it.isLoading }
-            val hasLoadMore = sourceTabs.any { it.isLoadingMore }
-            val errorMessage = sourceTabs.firstOrNull { it.error != null }?.error
-            updatedTabs[allTabIndex] = updatedTabs[allTabIndex].copy(
-                items = merged,
-                isLoading = hasInitialLoads,
-                isLoadingMore = hasLoadMore,
-                error = errorMessage.takeIf { merged.isEmpty() },
-            )
+            val updatedTabs = current.tabs.toMutableList()
+            val allTabIndex = updatedTabs.indexOfFirst { it.isAllTab }
+            if (allTabIndex >= 0) {
+                val hasInitialLoads = sourceTabs.any { it.isLoading }
+                val hasLoadMore = sourceTabs.any { it.isLoadingMore }
+                val errorMessage = sourceTabs.firstOrNull { it.error != null }?.error
+                updatedTabs[allTabIndex] = updatedTabs[allTabIndex].copy(
+                    items = merged,
+                    isLoading = hasInitialLoads,
+                    isLoadingMore = hasLoadMore,
+                    error = errorMessage.takeIf { merged.isEmpty() },
+                )
+            }
+            current.copy(tabs = updatedTabs)
         }
-        _uiState.value = current.copy(tabs = updatedTabs)
     }
 
     fun getCatalogSectionsForRows(): List<HomeCatalogSection> {

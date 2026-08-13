@@ -819,22 +819,25 @@ private fun FolderEditorPage(
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(stringResource(Res.string.source_tmdb))
                             }
-                            TextButton(
-                                onClick = {
-                                    CollectionEditorRepository.showTraktSourcePicker()
-                                    onNavigateToPage?.invoke(
-                                        CollectionEditorPage.TraktSourcePicker,
-                                        traktSourcePickerTitle,
+                            // No Trakt client id in the build means every Trakt source is a dead row.
+                            if (state.traktAvailable) {
+                                TextButton(
+                                    onClick = {
+                                        CollectionEditorRepository.showTraktSourcePicker()
+                                        onNavigateToPage?.invoke(
+                                            CollectionEditorPage.TraktSourcePicker,
+                                            traktSourcePickerTitle,
+                                        )
+                                    },
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Add,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
                                     )
-                                },
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Add,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(stringResource(Res.string.collections_editor_add_trakt_source))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(stringResource(Res.string.collections_editor_add_trakt_source))
+                                }
                             }
                             TextButton(
                                 onClick = {
@@ -885,6 +888,7 @@ private fun FolderEditorPage(
                                 } else if (source.isTrakt) {
                                     FolderTraktSourceCard(
                                         source = source,
+                                        canEdit = state.traktAvailable,
                                         onEdit = {
                                             CollectionEditorRepository.editTraktSource(index)
                                             onNavigateToPage?.invoke(
@@ -2190,6 +2194,7 @@ private fun FolderTmdbSourceCard(
 @Composable
 private fun FolderTraktSourceCard(
     source: CollectionSource,
+    canEdit: Boolean,
     onEdit: () -> Unit,
     onRemove: () -> Unit,
 ) {
@@ -2211,16 +2216,20 @@ private fun FolderTraktSourceCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                IconButton(
-                    onClick = onEdit,
-                    modifier = Modifier.size(36.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Edit,
-                        contentDescription = stringResource(Res.string.action_edit),
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
+                // Without credentials the picker can't search or validate, so editing goes nowhere.
+                // Remove stays so the dead source can still be cleaned up.
+                if (canEdit) {
+                    IconButton(
+                        onClick = onEdit,
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Edit,
+                            contentDescription = stringResource(Res.string.action_edit),
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
                 IconButton(
                     onClick = onRemove,
@@ -2240,6 +2249,14 @@ private fun FolderTraktSourceCard(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+            if (!canEdit) {
+                Text(
+                    text = stringResource(Res.string.collections_trakt_credentials_missing),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
         }
     }
 }
