@@ -86,14 +86,18 @@ internal object PosterEnricher {
     private suspend fun drain() {
         while (true) {
             val req = synchronized(lock) {
-                val entry = queue.entries.firstOrNull()
-                if (entry == null) {
+                val iterator = queue.entries.iterator()
+                if (!iterator.hasNext()) {
                     workers--
                     return
                 }
-                queue.remove(entry.key)
-                attempted.add(entry.key)
-                entry.value
+                // Kotlin/Native invalidates a HashMap.Entry as soon as its backing entry is
+                // removed. Copy the request first, then remove through the iterator; reading
+                // entry.key/value after queue.remove(entry.key) aborts iOS with SIGABRT.
+                val request = iterator.next().value
+                iterator.remove()
+                attempted.add(request.key)
+                request
             }
             val result = when (req.kind) {
                 MatchKind.MOVIE -> XtreamClient.vodArtwork(req.acc, req.sid)
