@@ -8,6 +8,8 @@ import java.awt.Point
 import java.awt.Toolkit
 import java.awt.event.MouseEvent
 import java.awt.event.MouseMotionAdapter
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
 import java.awt.image.BufferedImage
 
 internal class NativePlayerHost : Canvas() {
@@ -16,6 +18,7 @@ internal class NativePlayerHost : Canvas() {
     var onFirstPaint: (() -> Unit)? = null
     var onFirstFullSizePaint: (() -> Unit)? = null
     var onCursorActivity: (() -> Unit)? = null
+    var onBoundsChanged: (() -> Unit)? = null
     private var firstPaintNotified = false
     private var firstFullSizePaintNotified = false
     private var controlsVisible = true
@@ -39,6 +42,10 @@ internal class NativePlayerHost : Canvas() {
             override fun mouseDragged(event: MouseEvent) {
                 noteCursorActivity()
             }
+        })
+        addComponentListener(object : ComponentAdapter() {
+            override fun componentMoved(event: ComponentEvent) = onBoundsChanged?.invoke() ?: Unit
+            override fun componentResized(event: ComponentEvent) = onBoundsChanged?.invoke() ?: Unit
         })
     }
 

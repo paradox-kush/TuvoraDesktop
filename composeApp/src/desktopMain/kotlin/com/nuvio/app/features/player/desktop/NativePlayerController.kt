@@ -67,6 +67,10 @@ internal class NativePlayerController(
         }
     }
 
+    init {
+        host.onBoundsChanged = { updateNativeHostBounds() }
+    }
+
     fun attach(
         sourceUrl: String,
         sourceHeaders: Map<String, String>,
@@ -128,7 +132,7 @@ internal class NativePlayerController(
 
     private fun createPlayer(pending: PendingSource) {
         // Resolving the AWT peer must happen on the EDT; everything after it must not.
-        val hostViewPtr = runCatching { AwtNativeViewResolver.resolveNativeViewPointer(host) }
+        val hostTarget = runCatching { AwtNativeViewResolver.resolveNativePlayerHost(host) }
             .getOrElse { error ->
                 log.w(error) { "attach failed to resolve host source=${pending.sourceUrl.toPlaybackLogKey()}" }
                 pending.onError(error.message)
@@ -151,7 +155,12 @@ internal class NativePlayerController(
         Thread({
             runCatching {
                 NativePlayerBridge.create(
-                    hostViewPtr = hostViewPtr,
+                    hostViewPtr = hostTarget.viewPtr,
+                    hostX = hostTarget.x,
+                    hostY = hostTarget.y,
+                    hostWidth = hostTarget.width,
+                    hostHeight = hostTarget.height,
+                    needsBoundedChild = hostTarget.needsBoundedChild,
                     sourceUrl = resolvedSource,
                     headerLines = pending.headerLines.toTypedArray(),
                     playWhenReady = pending.playWhenReady,
@@ -170,6 +179,7 @@ internal class NativePlayerController(
                         return@invokeLater
                     }
                     handle = created
+                    updateNativeHostBounds()
                     log.d {
                         "attach created handle=$created source=${resolvedSource.toPlaybackLogKey()} " +
                             "initialPositionMs=${pending.initialPositionMs}"
@@ -186,6 +196,19 @@ internal class NativePlayerController(
             isDaemon = true
             start()
         }
+    }
+
+    private fun updateNativeHostBounds() {
+        val current = handle.takeIf { it != 0L } ?: return
+        if (!host.isDisplayable || DesktopHostOs.current != DesktopHostOs.MACOS) return
+        val target = runCatching { AwtNativeViewResolver.resolveNativePlayerHost(host) }.getOrNull() ?: return
+        NativePlayerBridge.updateHostBounds(
+            current,
+            target.x,
+            target.y,
+            target.width,
+            target.height,
+        )
     }
 
     fun setControlCallbacks(
@@ -283,8 +306,12 @@ internal class NativePlayerController(
                 }
             }
             "toggleFullscreen" -> {
-                toggleDesktopAppFullscreen(SwingUtilities.getWindowAncestor(host))
-                onDesktopFullscreenChanged()
+                val handled = onAction(PlayerControlsAction.ToggleFullscreen)
+                log.d { "action delegated action=${PlayerControlsAction.ToggleFullscreen} handled=$handled handle=$handle" }
+                if (!handled) {
+                    toggleDesktopAppFullscreen(SwingUtilities.getWindowAncestor(host))
+                    onDesktopFullscreenChanged()
+                }
             }
             "volumeChange" -> setFallbackVolume(value.toFloat())
             else -> {
@@ -694,6 +721,7 @@ private fun String.toPlayerControlsAction(): PlayerControlsAction? =
         "toggleChrome" -> PlayerControlsAction.ToggleChrome
         "revealLockedOverlay" -> PlayerControlsAction.RevealLockedOverlay
         "back" -> PlayerControlsAction.Back
+        "toggleFullscreen" -> PlayerControlsAction.ToggleFullscreen
         "toggle" -> PlayerControlsAction.TogglePlayback
         "keyboardToggle" -> PlayerControlsAction.KeyboardTogglePlayback
         "seekBack" -> PlayerControlsAction.SeekBack

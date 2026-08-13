@@ -2199,6 +2199,11 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_create(
     JNIEnv *env,
     jobject,
     jlong hostViewPtr,
+    jint,
+    jint,
+    jint,
+    jint,
+    jboolean,
     jstring sourceUrl,
     jobjectArray headerLines,
     jboolean playWhenReady,
@@ -2253,6 +2258,14 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_create(
     auto *holder = new std::shared_ptr<WindowsMpvWebPlayer>(player);
     jlong handle = (jlong)(intptr_t)holder;
     return handle;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_updateHostBounds(
+    JNIEnv *, jobject, jlong, jint, jint, jint, jint
+) {
+    // The Windows bridge already receives the player Canvas HWND. Its child windows follow that
+    // HWND automatically, unlike macOS where playback is hosted under the window content view.
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

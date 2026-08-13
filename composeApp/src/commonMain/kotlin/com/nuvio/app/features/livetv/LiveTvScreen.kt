@@ -298,14 +298,12 @@ fun LiveTvScreen(
                     // answers the action, which is how Live TV became a room with no door on
                     // macOS/Windows. Inert on Android/iOS: they ignore both parameters.
                     onControlsAction = { action ->
-                        if (action == PlayerControlsAction.Back) {
-                            if (fullscreen) setFullscreen(false) else onBack()
-                            true
-                        } else {
-                            // Everything else falls through to the engine's own handling
-                            // (play/pause, seek, speed, volume).
-                            false
-                        }
+                        handleLiveTvPlayerControlsAction(
+                            action = action,
+                            fullscreen = fullscreen,
+                            setFullscreen = ::setFullscreen,
+                            onBack = onBack,
+                        )
                     },
                     onControllerReady = { controller = it },
                     onSnapshot = {
@@ -405,6 +403,29 @@ fun LiveTvScreen(
             }
         }
     }
+}
+
+/**
+ * Testable boundary between the native desktop controls and Live TV's layout state.
+ *
+ * Live TV consumes fullscreen here because it owns an in-screen player/guide layout; the regular
+ * player declines the same command and lets desktop fullscreen the whole application window.
+ */
+internal fun handleLiveTvPlayerControlsAction(
+    action: PlayerControlsAction,
+    fullscreen: Boolean,
+    setFullscreen: (Boolean) -> Unit,
+    onBack: () -> Unit,
+): Boolean = when (action) {
+    PlayerControlsAction.Back -> {
+        if (fullscreen) setFullscreen(false) else onBack()
+        true
+    }
+    PlayerControlsAction.ToggleFullscreen -> {
+        setFullscreen(!fullscreen)
+        true
+    }
+    else -> false
 }
 
 /** now + next titles for the current channel, for the docked now-bar. */

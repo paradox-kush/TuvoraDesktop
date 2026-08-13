@@ -214,6 +214,7 @@ private fun GuideRow(
             modifier = Modifier
                 .weight(1f)
                 .height(ROW_HEIGHT)
+                .clickable(onClick = onClick)
                 .horizontalScroll(timeScroll),
         ) {
             Box(modifier = Modifier.width(totalWidth).height(ROW_HEIGHT)) {

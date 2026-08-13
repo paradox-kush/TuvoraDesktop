@@ -28,6 +28,11 @@ internal object NativePlayerBridge {
 
     external fun create(
         hostViewPtr: Long,
+        hostX: Int,
+        hostY: Int,
+        hostWidth: Int,
+        hostHeight: Int,
+        needsBoundedChild: Boolean,
         sourceUrl: String,
         headerLines: Array<String>,
         playWhenReady: Boolean,
@@ -39,6 +44,7 @@ internal object NativePlayerBridge {
     ): Long
 
     external fun dispose(handle: Long)
+    external fun updateHostBounds(handle: Long, x: Int, y: Int, width: Int, height: Int)
     external fun updateControls(handle: Long, controlsJson: String)
     external fun requestFocus(handle: Long)
     external fun setPaused(handle: Long, paused: Boolean)

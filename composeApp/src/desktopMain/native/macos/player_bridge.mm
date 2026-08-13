@@ -82,6 +82,11 @@
 
 @interface MpvWebPlayer : NSObject
 - (instancetype)initWithHostView:(NSView *)hostView
+                          hostX:(int)hostX
+                          hostY:(int)hostY
+                      hostWidth:(int)hostWidth
+                     hostHeight:(int)hostHeight
+              needsBoundedChild:(BOOL)needsBoundedChild
                        sourceUrl:(NSString *)sourceUrl
                     headerLines:(NSArray<NSString *> *)headerLines
                    playWhenReady:(BOOL)playWhenReady
@@ -92,6 +97,7 @@
                         eventSink:(jobject)eventSink
                       eventMethod:(jmethodID)eventMethod;
 - (void)shutdown;
+- (void)updateHostX:(int)x y:(int)y width:(int)width height:(int)height;
 - (void)updateControlsJson:(NSString *)controlsJson;
 - (void)setPaused:(BOOL)paused;
 - (BOOL)isPaused;
@@ -1019,7 +1025,9 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
 }
 
 @implementation MpvWebPlayer {
+    NSView *_rootHostView;
     NSView *_hostView;
+    BOOL _ownsHostView;
     PlayerMetalView *_videoView;
     WKWebView *_webView;
     PlayerScriptHandler *_scriptHandler;
@@ -1055,6 +1063,11 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
 }
 
 - (instancetype)initWithHostView:(NSView *)hostView
+                          hostX:(int)hostX
+                          hostY:(int)hostY
+                      hostWidth:(int)hostWidth
+                     hostHeight:(int)hostHeight
+              needsBoundedChild:(BOOL)needsBoundedChild
                        sourceUrl:(NSString *)sourceUrl
                     headerLines:(NSArray<NSString *> *)headerLines
                    playWhenReady:(BOOL)playWhenReady
@@ -1081,7 +1094,19 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     _eventSink = eventSink;
     _eventMethod = eventMethod;
 
-    _hostView = hostView;
+    _rootHostView = hostView;
+    _ownsHostView = needsBoundedChild;
+    if (needsBoundedChild) {
+        CGFloat rootHeight = NSHeight(hostView.bounds);
+        CGFloat nativeY = hostView.isFlipped ? hostY : rootHeight - hostY - hostHeight;
+        NSRect playerFrame = NSMakeRect(hostX, nativeY, MAX(hostWidth, 1), MAX(hostHeight, 1));
+        _hostView = [[NSView alloc] initWithFrame:playerFrame];
+        _hostView.wantsLayer = YES;
+        _hostView.layer.masksToBounds = YES;
+        [hostView addSubview:_hostView];
+    } else {
+        _hostView = hostView;
+    }
     _hostView.wantsLayer = YES;
     _hostView.layer.backgroundColor = NSColor.blackColor.CGColor;
     [_hostView setPostsFrameChangedNotifications:YES];
@@ -1162,6 +1187,19 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
                                            userInfo:nil
                                             repeats:YES];
     return self;
+}
+
+- (void)updateHostX:(int)x y:(int)y width:(int)width height:(int)height {
+    if (!_ownsHostView || !_rootHostView || !_hostView) {
+        return;
+    }
+    CGFloat rootHeight = NSHeight(_rootHostView.bounds);
+    CGFloat nativeY = _rootHostView.isFlipped ? y : rootHeight - y - height;
+    NSRect frame = NSMakeRect(x, nativeY, MAX(width, 1), MAX(height, 1));
+    if (!NSEqualRects(_hostView.frame, frame)) {
+        _hostView.frame = frame;
+    }
+    [self layoutNativeSubviews];
 }
 
 - (void)focusControlsWebViewIfNeeded {
@@ -1763,9 +1801,14 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     [_webView.configuration.userContentController removeScriptMessageHandlerForName:@"player"];
     [_webView removeFromSuperview];
     [_videoView removeFromSuperview];
+    if (_ownsHostView) {
+        [_hostView removeFromSuperview];
+    }
     _webView = nil;
     _videoView = nil;
     _scriptHandler = nil;
+    _hostView = nil;
+    _rootHostView = nil;
     if (_eventSink) {
         BOOL didAttach = NO;
         JNIEnv *env = [self jniEnvDidAttach:&didAttach];
@@ -2501,6 +2544,11 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_create(
     JNIEnv *env,
     jobject /* bridge */,
     jlong hostViewPtr,
+    jint hostX,
+    jint hostY,
+    jint hostWidth,
+    jint hostHeight,
+    jboolean needsBoundedChild,
     jstring sourceUrl,
     jobjectArray headerLines,
     jboolean playWhenReady,
@@ -2543,6 +2591,11 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_create(
         @try {
             player = [[MpvWebPlayer alloc]
                 initWithHostView:hostView
+                          hostX:hostX
+                          hostY:hostY
+                      hostWidth:hostWidth
+                     hostHeight:hostHeight
+              needsBoundedChild:needsBoundedChild == JNI_TRUE
                     sourceUrl:[NSString stringWithUTF8String:source.c_str()]
                     headerLines:headers
                    playWhenReady:playWhenReady == JNI_TRUE
@@ -2566,6 +2619,23 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_create(
     }
 
     return (jlong)(intptr_t)CFBridgingRetain(player);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_updateHostBounds(
+    JNIEnv * /* env */,
+    jobject /* bridge */,
+    jlong handle,
+    jint x,
+    jint y,
+    jint width,
+    jint height
+) {
+    if (handle == 0) return;
+    MpvWebPlayer *player = (__bridge MpvWebPlayer *)(void *)(intptr_t)handle;
+    runOnMainSync(^{
+        [player updateHostX:x y:y width:width height:height];
+    });
 }
 
 extern "C" JNIEXPORT void JNICALL

@@ -679,6 +679,9 @@ private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControl
             flushWatchProgress()
             args.onBack()
         }
+        // The regular player keeps the desktop control's existing whole-window fullscreen
+        // fallback. Surfaces with their own layout fullscreen (Live TV) may consume this action.
+        PlayerControlsAction.ToggleFullscreen -> return false
         PlayerControlsAction.TogglePlayback -> {
             prepareTogglePlaybackForNativeFallback()
             return false

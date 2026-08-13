@@ -1285,6 +1285,12 @@ kotlin {
         commonTest.dependencies {
             implementation(libs.kotlin.test)
         }
+        val desktopTest by getting {
+            dependencies {
+                implementation(libs.compose.uiTest)
+                implementation(compose.desktop.currentOs)
+            }
+        }
     }
 }
 

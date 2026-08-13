@@ -37,6 +37,7 @@ enum class PlayerControlsAction {
     ToggleChrome,
     RevealLockedOverlay,
     Back,
+    ToggleFullscreen,
     TogglePlayback,
     KeyboardTogglePlayback,
     SeekBack,
