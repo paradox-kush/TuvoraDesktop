@@ -53,6 +53,13 @@ data class TraktPublicListSearchResult(
 object TraktPublicListSourceResolver {
     const val PAGE_LIMIT = 50
 
+    /**
+     * False when the build carries no Trakt client id. Every Trakt call fails in that case, so
+     * surfaces that let people *create* Trakt sources should hide rather than offer a dead end.
+     */
+    val isConfigured: Boolean
+        get() = TraktConfig.CLIENT_ID.isNotBlank()
+
     private const val BASE_URL = "https://api.trakt.tv"
     private const val API_VERSION = "2"
 
