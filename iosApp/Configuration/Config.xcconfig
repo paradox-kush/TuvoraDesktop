@@ -1,4 +1,5 @@
 #include? "Version.xcconfig"
+#include? "PostHog.local.xcconfig"
 
 TEAM_ID=
 

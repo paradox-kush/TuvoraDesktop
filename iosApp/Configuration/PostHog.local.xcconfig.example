@@ -1,0 +1,3 @@
+// Copy to PostHog.local.xcconfig (which is gitignored) before creating a Release archive.
+// Install the uploader once with: npm install -g @posthog/cli@latest
+POSTHOG_CLI_API_KEY = REPLACE_WITH_POSTHOG_PERSONAL_API_KEY

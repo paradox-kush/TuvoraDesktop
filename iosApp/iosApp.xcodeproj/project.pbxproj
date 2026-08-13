@@ -251,7 +251,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"$CONFIGURATION\" != \"Release\" ]; then\n  exit 0\nfi\nif [ -z \"$POSTHOG_CLI_API_KEY\" ]; then\n  echo \"warning: POSTHOG_CLI_API_KEY is not set; skipping PostHog dSYM upload\"\n  exit 0\nfi\nexport POSTHOG_CLI_HOST=\"${POSTHOG_CLI_HOST:-https://us.posthog.com}\"\nexport POSTHOG_CLI_PROJECT_ID=\"${POSTHOG_CLI_PROJECT_ID:-494529}\"\n\"${BUILD_DIR%/Build/*}/SourcePackages/checkouts/posthog-ios/build-tools/upload-symbols.sh\"\n";
+			shellScript = "\"$SRCROOT/Scripts/upload-posthog-symbols.sh\"\n";
 		};
 		8C96BAEBBE1F4269A0BADC2B /* Compile Kotlin Framework */ = {
 			isa = PBXShellScriptBuildPhase;

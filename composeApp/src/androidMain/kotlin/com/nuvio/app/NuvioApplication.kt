@@ -73,4 +73,9 @@ class NuvioApplication : Application() {
             }
         }
     }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        AppExitReporter.recordMemorySnapshot(this, "trim_memory", level)
+    }
 }

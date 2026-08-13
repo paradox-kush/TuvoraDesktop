@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.getString
 import androidx.lifecycle.LifecycleEventObserver
@@ -1178,15 +1179,24 @@ private class NuvioLibmpvView(
     private val mpvCtl = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "mpv-ctl")
     }
+    private val released = AtomicBoolean(false)
 
     private fun ctl(block: () -> Unit) {
         // Rejected only after release(); a stale UI callback after teardown is a no-op.
+        if (released.get()) return
         runCatching { mpvCtl.execute { runCatching(block) } }
     }
 
     fun release() {
-        ctl { runCatching { destroy() } }
-        mpvCtl.shutdown()
+        if (!released.compareAndSet(false, true)) return
+        // Abort a wedged demuxer before destroy reaches the serialized control queue. Without
+        // this, an earlier blocked command can retain the entire native core after the view is
+        // gone, allowing abandoned MPV buffers/threads to accumulate across player sessions.
+        Thread({
+            runCatching { mpv.command("stop") }
+            runCatching { mpvCtl.execute { runCatching { destroy() } } }
+            mpvCtl.shutdown()
+        }, "mpv-stop-release").start()
     }
 
     // Shadow of every property observeProperties() registers, updated from mpv's event
@@ -1314,6 +1324,9 @@ private class NuvioLibmpvView(
             mpv.setOptionString("vf", "format=yuv420p")
         }
         mpv.setOptionString("msg-level", "all=warn")
+        // The app supplies its own controls; avoid loading mpv's built-in Lua console and its
+        // extra interpreter state (also present in the native tombstones seen in production).
+        mpv.setOptionString("load-console", "no")
         // Bound blocking network reads (ffmpeg rw_timeout): a half-dead live socket
         // otherwise wedges the demuxer — and with it any thread waiting on the core.
         mpv.setOptionString("network-timeout", "15")
