@@ -303,6 +303,83 @@ object ProfileRepository {
         return pushProfiles(allPayloads)
     }
 
+    /**
+     * Make [profileIndex] the account's primary profile by swapping it with index 1.
+     *
+     * Index 1 is the anchor: it can't be deleted and the others inherit from it via
+     * usesPrimaryAddons / usesPrimaryPlugins. Someone who outgrows the profile they first created
+     * otherwise has no way out — their real data sits on index 2+ and the empty first profile is
+     * permanent. Swapping is the only move that preserves both profiles' data.
+     *
+     * Returns true when the profiles actually changed places.
+     */
+    suspend fun promoteToPrimary(profileIndex: Int): Boolean {
+        if (profileIndex == PRIMARY_PROFILE_INDEX) return false
+        val profiles = _state.value.profiles
+        if (profiles.none { it.profileIndex == profileIndex }) return false
+        if (profiles.none { it.profileIndex == PRIMARY_PROFILE_INDEX }) return false
+
+        if (AuthRepository.state.value.isLocalOnly) {
+            swapProfileIndexesLocally(PRIMARY_PROFILE_INDEX, profileIndex)
+            return true
+        }
+
+        return try {
+            val params = buildJsonObject {
+                put("p_a", PRIMARY_PROFILE_INDEX)
+                put("p_b", profileIndex)
+                putSyncOriginClientId()
+            }
+            SupabaseProvider.client.postgrest.rpc("sync_swap_profile_index", params)
+            // The server moved every per-profile row; the PIN cache is local, so move it here.
+            swapPinCache(PRIMARY_PROFILE_INDEX, profileIndex)
+            // Follow the profile the user was on rather than the index, which now means someone else.
+            activeProfileIndex = when (activeProfileIndex) {
+                PRIMARY_PROFILE_INDEX -> profileIndex
+                profileIndex -> PRIMARY_PROFILE_INDEX
+                else -> activeProfileIndex
+            }
+            pullProfiles()
+            true
+        } catch (e: Throwable) {
+            if (AuthRepository.signOutIfSessionInvalid(e, "Profile promote")) return false
+            log.e(e) { "Failed to promote profile $profileIndex to primary" }
+            false
+        }
+    }
+
+    /**
+     * Signed-out equivalent of the server's sync_swap_profile_index: there are no synced rows to
+     * move, so exchanging the two profiles' indexes in the local list is the whole operation.
+     */
+    private fun swapProfileIndexesLocally(a: Int, b: Int) {
+        val swapped = _state.value.profiles.map { profile ->
+            when (profile.profileIndex) {
+                a -> profile.copy(profileIndex = b)
+                b -> profile.copy(profileIndex = a)
+                else -> profile
+            }
+        }.sortedBy { it.profileIndex }
+        swapPinCache(a, b)
+        activeProfileIndex = when (activeProfileIndex) {
+            a -> b
+            b -> a
+            else -> activeProfileIndex
+        }
+        _state.value = _state.value.copy(
+            profiles = swapped,
+            activeProfile = swapped.find { it.profileIndex == activeProfileIndex },
+        )
+        persist()
+    }
+
+    private fun swapPinCache(a: Int, b: Int) {
+        val payloadA = ProfilePinCacheStorage.loadPayload(a)
+        val payloadB = ProfilePinCacheStorage.loadPayload(b)
+        if (payloadB != null) ProfilePinCacheStorage.savePayload(a, payloadB) else ProfilePinCacheStorage.removePayload(a)
+        if (payloadA != null) ProfilePinCacheStorage.savePayload(b, payloadA) else ProfilePinCacheStorage.removePayload(b)
+    }
+
     suspend fun deleteProfile(profileIndex: Int) {
         if (AuthRepository.state.value.isLocalOnly) {
             val remaining = _state.value.profiles.filter { it.profileIndex != profileIndex }

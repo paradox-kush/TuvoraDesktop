@@ -6,6 +6,13 @@ import kotlinx.serialization.Serializable
 
 const val MAX_PROFILES = 6
 
+/**
+ * The account's anchor profile. It cannot be deleted, and other profiles inherit its addons and
+ * plugins via [NuvioProfile.usesPrimaryAddons] / [NuvioProfile.usesPrimaryPlugins]. "Primary" is
+ * this index, not a flag — which is why promoting a profile means swapping indexes.
+ */
+const val PRIMARY_PROFILE_INDEX = 1
+
 @Serializable
 data class NuvioProfile(
     val id: String = "",

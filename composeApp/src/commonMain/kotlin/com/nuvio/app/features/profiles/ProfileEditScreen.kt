@@ -83,6 +83,8 @@ fun ProfileEditScreen(
     var isSaving by remember { mutableStateOf(false) }
     var saveFailed by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showPromoteConfirm by remember { mutableStateOf(false) }
+    var promoteFailed by remember { mutableStateOf(false) }
     var showPinSetup by remember { mutableStateOf(false) }
     var showPinClear by remember { mutableStateOf(false) }
     val authState by AuthRepository.state.collectAsStateWithLifecycle()
@@ -304,6 +306,31 @@ fun ProfileEditScreen(
             }
         }
 
+        // Index 1 is the anchor other profiles inherit from, so "primary" is a position rather than
+        // a flag. Promoting swaps this profile with it; both keep their own data.
+        if (!isNew && (currentProfile?.profileIndex ?: 0) > PRIMARY_PROFILE_INDEX) {
+            item {
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = { showPromoteConfirm = true },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Text(stringResource(Res.string.profile_make_primary))
+                }
+                if (promoteFailed) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(Res.string.profile_make_primary_failed),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        }
+
         if (!isNew && (currentProfile?.profileIndex ?: 0) > 1) {
             item {
                 Spacer(modifier = Modifier.height(8.dp))
@@ -327,6 +354,26 @@ fun ProfileEditScreen(
             }
         }
     }
+
+    NuvioStatusModal(
+        title = stringResource(Res.string.profile_make_primary_title),
+        message = stringResource(
+            Res.string.profile_make_primary_confirm_message,
+            currentProfile?.name.orEmpty(),
+        ),
+        isVisible = showPromoteConfirm,
+        confirmText = stringResource(Res.string.action_switch),
+        dismissText = stringResource(Res.string.action_cancel),
+        onConfirm = {
+            showPromoteConfirm = false
+            val target = currentProfile?.profileIndex
+            scope.launch {
+                promoteFailed = target == null || !ProfileRepository.promoteToPrimary(target)
+                if (!promoteFailed) onBack()
+            }
+        },
+        onDismiss = { showPromoteConfirm = false },
+    )
 
     NuvioStatusModal(
         title = stringResource(Res.string.profile_delete_title),

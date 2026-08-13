@@ -1460,6 +1460,10 @@
     <string name="profile_delete_confirm_message">All data for &quot;%1$s&quot; will be permanently deleted.</string>
     <string name="profile_delete_title">Delete Profile</string>
     <string name="profile_edit_add_title">Add Profile</string>
+    <string name="profile_make_primary">Make this my main profile</string>
+    <string name="profile_make_primary_confirm_message">&quot;%1$s&quot; will swap places with your main profile. Both keep all their own data — only which one is the main profile changes.</string>
+    <string name="profile_make_primary_failed">Couldn\'t change the main profile. Check your connection and try again.</string>
+    <string name="profile_make_primary_title">Change main profile</string>
     <string name="profile_edit_edit_title">Edit Profile</string>
     <string name="profile_enter_current_pin">Enter current PIN</string>
     <string name="profile_enter_new_pin">Enter new PIN</string>
