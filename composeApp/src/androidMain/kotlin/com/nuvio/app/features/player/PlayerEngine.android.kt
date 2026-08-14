@@ -10,10 +10,13 @@ import android.util.TypedValue
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.util.AttributeSet
 import android.view.SurfaceHolder
+import android.view.Surface
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.Composable
@@ -68,6 +71,7 @@ import androidx.media3.ui.PlayerView
 import androidx.media3.ui.SubtitleView
 import androidx.media3.ui.CaptionStyleCompat
 import com.nuvio.app.R
+import com.nuvio.app.AppExitReporter
 import com.nuvio.app.features.streams.normalizeStreamType
 import `is`.xyz.mpv.BaseMPVView
 import `is`.xyz.mpv.MPV
@@ -1120,10 +1124,10 @@ private fun LibmpvPlayerSurface(
             ).apply {
                 layoutParams = android.view.ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT)
                 keepScreenOn = false
-                runCatching {
-                    Utils.copyAssets(viewContext)
-                    initialize(viewContext.filesDir.path, viewContext.cacheDir.path)
-                }.onFailure { error ->
+                initializeWhenPredecessorReleased(
+                    configDir = viewContext.filesDir.path,
+                    cacheDir = viewContext.cacheDir.path,
+                ) { error ->
                     Log.e(TAG, "Failed to initialize libmpv", error)
                     latestOnError.value(error.localizedMessage ?: "libmpv unavailable")
                 }
@@ -1171,32 +1175,168 @@ private class NuvioLibmpvView(
     var playWhenReadyIntent: Boolean = true
     private var pendingLiveRejoin = false
 
+    private val lifecycleLease = AndroidMpvInstanceGate.gate.register()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val coreInitialized = AtomicBoolean(false)
+    private val controlLock = Any()
+    private val pendingControls = ArrayDeque<() -> Unit>()
+    private var controlsReady = false
+    // Read and written only by mpv-ctl.
+    private var attachedSurface: Surface? = null
+
     // All mpv control calls (property writes, loadfile, seeks, teardown) run here,
     // serialized in submission order. mpv_set_property/mpv_command take the same core
     // lock as reads: with a wedged live demuxer, ON_START's setPaused(false) blocked the
     // main thread >5s (reproduced ANR: pthread_cond_wait ← mpv_set_property ← setPaused
     // ← lifecycle onStateChanged). Reads are lock-free via the shadow; writes queue here.
     private val mpvCtl = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "mpv-ctl")
+        Thread(runnable, "mpv-ctl-${lifecycleLease.id}")
     }
     private val released = AtomicBoolean(false)
 
     private fun ctl(block: () -> Unit) {
-        // Rejected only after release(); a stale UI callback after teardown is a no-op.
         if (released.get()) return
-        runCatching { mpvCtl.execute { runCatching(block) } }
+        synchronized(controlLock) {
+            if (released.get()) return
+            if (!controlsReady) {
+                pendingControls.addLast(block)
+                return
+            }
+            executeControl(block = block)
+        }
+    }
+
+    private fun executeControl(allowAfterRelease: Boolean = false, block: () -> Unit) {
+        runCatching {
+            mpvCtl.execute {
+                if (!allowAfterRelease && released.get()) return@execute
+                runCatching(block).onFailure { error ->
+                    Log.w(TAG, "MPV control operation failed: ${error.message}")
+                }
+            }
+        }
+    }
+
+    fun initializeWhenPredecessorReleased(
+        configDir: String,
+        cacheDir: String,
+        onFailure: (Throwable) -> Unit,
+    ) {
+        recordMpvStage("waiting_for_predecessor")
+        lifecycleLease.whenReady {
+            mainHandler.post {
+                if (released.get()) {
+                    finishWithoutNativeCore("released_before_initialization")
+                    return@post
+                }
+                runCatching {
+                    Utils.copyAssets(context)
+                    initialize(configDir, cacheDir)
+                }.onSuccess {
+                    coreInitialized.set(true)
+                    lifecycleLease.markInitialized()
+                    recordMpvStage("initialized")
+
+                    // BaseMPVView does not replay surfaceCreated when initialize() runs after the
+                    // Surface already exists. Put an idempotent attach first, ahead of every
+                    // load/pause command that accumulated while this lease waited.
+                    val initialSurface = holder.surface?.takeIf { it.isValid }
+                    synchronized(controlLock) {
+                        controlsReady = true
+                        initialSurface?.let { surface ->
+                            executeControl { attachSurfaceInternal(surface) }
+                        }
+                        while (pendingControls.isNotEmpty()) {
+                            executeControl(block = pendingControls.removeFirst())
+                        }
+                    }
+                }.onFailure { error ->
+                    Log.e(TAG, "MPV initialization failed for instance ${lifecycleLease.id}", error)
+                    if (mpv.isInitialized) {
+                        coreInitialized.set(true)
+                        lifecycleLease.markInitialized()
+                    }
+                    recordMpvStage("initialization_failed")
+                    onFailure(error)
+                    release()
+                }
+            }
+        }
     }
 
     fun release() {
         if (!released.compareAndSet(false, true)) return
-        // Abort a wedged demuxer before destroy reaches the serialized control queue. Without
-        // this, an earlier blocked command can retain the entire native core after the view is
-        // gone, allowing abandoned MPV buffers/threads to accumulate across player sessions.
-        Thread({
-            runCatching { mpv.command("stop") }
-            runCatching { mpvCtl.execute { runCatching { destroy() } } }
-            mpvCtl.shutdown()
-        }, "mpv-stop-release").start()
+        val releaseStartedAtMs = SystemClock.elapsedRealtime()
+        runCatching { holder.removeCallback(this) }
+        synchronized(controlLock) { pendingControls.clear() }
+        recordMpvStage("release_started")
+
+        if (!coreInitialized.get()) {
+            finishWithoutNativeCore("released_without_native_core")
+            return
+        }
+
+        executeControl(
+            allowAfterRelease = true,
+            block = {
+                var destroyed = false
+                try {
+                    // This may wait for one already-running network operation, but it never runs
+                    // on Main. network-timeout bounds that wait; keeping it on this queue avoids
+                    // racing stop/detach/destroy from independent raw threads.
+                    runCatching { mpv.command("stop") }
+                    detachSurfaceInternal()
+                    runCatching { mpv.removeObserver(propertyShadow) }
+                    runCatching { mpv.destroy() }
+                        .onSuccess { destroyed = true }
+                        .onFailure { Log.w(TAG, "Failed to destroy libmpv cleanly", it) }
+                } finally {
+                    val waitMs = SystemClock.elapsedRealtime() - releaseStartedAtMs
+                    if (destroyed) {
+                        coreInitialized.set(false)
+                        lifecycleLease.complete()
+                        recordMpvStage("destroyed", destroyWaitMs = waitMs)
+                    } else {
+                        // Keep the lease closed: initializing a replacement after a failed native
+                        // destroy recreates the exact overlapping-core resource leak we prevent.
+                        recordMpvStage("destroy_failed", destroyWaitMs = waitMs)
+                    }
+                    mpvCtl.shutdown()
+                }
+            },
+        )
+
+        mainHandler.postDelayed({
+            if (!lifecycleLease.isComplete()) {
+                recordMpvStage(
+                    stage = "destroy_timeout",
+                    destroyWaitMs = SystemClock.elapsedRealtime() - releaseStartedAtMs,
+                )
+            }
+        }, MPV_DESTROY_WATCHDOG_MS)
+    }
+
+    private fun finishWithoutNativeCore(stage: String) {
+        synchronized(controlLock) {
+            controlsReady = false
+            pendingControls.clear()
+        }
+        lifecycleLease.complete()
+        recordMpvStage(stage)
+        mpvCtl.shutdownNow()
+    }
+
+    private fun recordMpvStage(stage: String, destroyWaitMs: Long? = null) {
+        val snapshot = AndroidMpvInstanceGate.gate.snapshot()
+        AppExitReporter.recordMpvLifecycle(
+            context = context,
+            instanceId = lifecycleLease.id,
+            stage = stage,
+            activeInstances = snapshot.initializedInstances,
+            waitingInstances = snapshot.waitingInstances,
+            peakActiveInstances = snapshot.peakInitializedInstances,
+            destroyWaitMs = destroyWaitMs,
+        )
     }
 
     // Shadow of every property observeProperties() registers, updated from mpv's event
@@ -1287,33 +1427,48 @@ private class NuvioLibmpvView(
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
-        // The surface dies exactly when the app leaves the foreground. Flag the rejoin here
-        // rather than in a lifecycle observer: BaseMPVView's vo teardown below can block the
-        // main thread on the mpv core while a live demuxer is stuck, which starves ON_STOP/
-        // ON_START dispatch entirely (seen in ANR traces).
-        if (isLiveStream && currentSourceUrl != null) {
-            pendingLiveRejoin = true
-            // Kill the live demux before super's synchronous vo teardown: "stop" sets
-            // mpv's abort token at enqueue, interrupting a demuxer wedged in a dead-socket
-            // read — the state that kept super's mpv_set_property("vo") waiting on main
-            // for minutes (reproduced trace). A raw thread, not the ctl queue: the queue
-            // itself can be wedged inside a blocked command, and the whole point is to
-            // abort that. The live edge is rejoined via loadfile on surfaceCreated anyway.
-            Thread({ runCatching { mpv.command("stop") } }, "mpv-stop").start()
+        val shouldStopLive = isLiveStream && currentSourceUrl != null
+        if (shouldStopLive) pendingLiveRejoin = true
+        // Do not call BaseMPVView: it performs blocking mpv calls synchronously on Main.
+        ctl {
+            if (shouldStopLive) mpv.command("stop")
+            detachSurfaceInternal()
+            recordMpvStage("surface_detached")
         }
-        super.surfaceDestroyed(holder)
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
-        super.surfaceCreated(holder)
-        if (pendingLiveRejoin) {
-            pendingLiveRejoin = false
-            Log.i(TAG, "Rejoining live edge after background")
-            // On the control thread: loadfile on a core stuck in a dead network read would
-            // otherwise block here (same mpv lock the teardown path hits), and queueing
-            // keeps it ordered against any lifecycle setPaused already in flight.
-            ctl { loadCurrentSource(playWhenReady = playWhenReadyIntent) }
+        val surface = holder.surface ?: return
+        val shouldRejoinLive = pendingLiveRejoin
+        pendingLiveRejoin = false
+        // Attach and optional live reload are one ordered transition. A fast background/return
+        // can no longer attach a new Surface before the previous detach has completed.
+        ctl {
+            attachSurfaceInternal(surface)
+            if (shouldRejoinLive) {
+                Log.i(TAG, "Rejoining live edge after background")
+                loadCurrentSource(playWhenReady = playWhenReadyIntent)
+            }
         }
+    }
+
+    private fun attachSurfaceInternal(surface: Surface) {
+        if (!surface.isValid) return
+        if (attachedSurface === surface) return
+        detachSurfaceInternal()
+        mpv.attachSurface(surface)
+        attachedSurface = surface
+        mpv.setOptionString("force-window", "yes")
+        mpv.setPropertyString("vo", videoOutput.mpvValue)
+        recordMpvStage("surface_attached")
+    }
+
+    private fun detachSurfaceInternal() {
+        if (attachedSurface == null) return
+        runCatching { mpv.setPropertyString("vo", "null") }
+        runCatching { mpv.setPropertyString("force-window", "no") }
+        runCatching { mpv.detachSurface() }
+        attachedSurface = null
     }
 
     override fun initOptions() {
@@ -1392,6 +1547,7 @@ private class NuvioLibmpvView(
     // Runs on the mpv-ctl thread only.
     private fun loadCurrentSource(playWhenReady: Boolean) {
         val sourceUrl = currentSourceUrl ?: return
+        recordMpvStage("load_source")
         applyRequestHeaders(currentRequestHeaders)
         obsPaused = !playWhenReady
         mpv.setPropertyBoolean("pause", !playWhenReady)
@@ -1629,6 +1785,8 @@ private class NuvioLibmpvView(
             }
     }
 }
+
+private const val MPV_DESTROY_WATCHDOG_MS = 20_000L
 
 private data class LibmpvTrack(
     val id: Int,
