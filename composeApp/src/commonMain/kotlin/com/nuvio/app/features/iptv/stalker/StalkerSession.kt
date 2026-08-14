@@ -278,12 +278,64 @@ internal class StalkerSession(
             rawRequestAt(endpoint, profileParams)
         }
 
-        val rejection = profileOutcome.exceptionOrNull() as? StalkerAuthException ?: return
+        val rejection = profileOutcome.exceptionOrNull() as? StalkerAuthException
+        if (rejection == null) {
+            runFollowUpBootstrap(endpoint, profileOutcome.getOrNull())
+            return
+        }
         val nextPreset = StalkerMagPresets.next(magPreset) ?: throw rejection
         magPreset = nextPreset
         token = null
         doHandshakeAndProfile()
     }
+
+    /**
+     * The extra calls some portals require before they will serve anything — see
+     * [StalkerBootstrapPolicy]. Best-effort: a portal that did not want these answers them with
+     * junk, and failing the whole session over an optional step would be worse than not asking.
+     */
+    private suspend fun runFollowUpBootstrap(endpoint: String, profile: JsonElement?) {
+        val js = profile?.jsOrNull() as? JsonObject ?: return
+        val steps = StalkerBootstrapPolicy.stepsAfterProfile(
+            authAccess = js["auth_access"]?.looseBoolean(),
+            status = js["status"]?.looseInt(),
+            hasCredentials = !account.stalkerUsername.isNullOrBlank() &&
+                !account.stalkerPassword.isNullOrBlank(),
+        )
+        for (step in steps) {
+            val params = when (step) {
+                StalkerBootstrapPolicy.Step.DO_AUTH -> mapOf(
+                    "type" to "stb",
+                    "action" to "do_auth",
+                    "login" to account.stalkerUsername.orEmpty(),
+                    "password" to account.stalkerPassword.orEmpty(),
+                )
+                StalkerBootstrapPolicy.Step.GET_MODULES -> mapOf(
+                    "type" to "stb",
+                    "action" to "get_modules",
+                )
+            }
+            runCatching { rawRequestAt(endpoint, params) }
+        }
+    }
+
+    /**
+     * Portals are loose about types — these arrive as booleans, numbers or quoted strings depending
+     * on the panel. Null means absent or unreadable, which the policy treats as "nothing further".
+     */
+    private fun JsonElement.looseBoolean(): Boolean? {
+        val prim = this as? JsonPrimitive ?: return null
+        prim.booleanOrNull?.let { return it }
+        prim.content.trim().toIntOrNull()?.let { return it != 0 }
+        return when (prim.content.trim().lowercase()) {
+            "1", "true" -> true
+            "0", "false" -> false
+            else -> null
+        }
+    }
+
+    private fun JsonElement.looseInt(): Int? =
+        (this as? JsonPrimitive)?.content?.trim()?.toIntOrNull()
 
     /** Try each candidate endpoint until one handshakes with a token. Throws if none do. */
     private suspend fun probeEndpoint(): String {
