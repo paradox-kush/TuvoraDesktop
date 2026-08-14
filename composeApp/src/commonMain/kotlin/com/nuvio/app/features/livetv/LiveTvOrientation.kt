@@ -7,10 +7,11 @@ import androidx.compose.runtime.State
  * Orientation policy for the Live TV screen.
  *
  * [Sensor] lets the device drive rotation (so physically rotating the phone toggles fullscreen).
- * [ForceLandscape] / [ForcePortrait] are the button-driven overrides: they pin the app to one
- * orientation until the device physically catches up, at which point the screen hands control back
- * to [Sensor] (see [rememberPhysicalLandscape]). That coexistence is what makes rotate-to-fullscreen
- * and the fullscreen button both work.
+ * [ForceLandscape] is the sticky, button-driven fullscreen override and remains active until the
+ * viewer explicitly exits. [ForcePortrait] is the exit transition: it pins portrait until the
+ * device physically catches up, then the screen hands control back to [Sensor] (see
+ * [rememberPhysicalLandscape]). That coexistence makes rotate-to-fullscreen work without allowing
+ * incidental device movement to cancel an explicitly entered fullscreen session.
  */
 enum class LiveOrientationMode { Sensor, ForceLandscape, ForcePortrait }
 

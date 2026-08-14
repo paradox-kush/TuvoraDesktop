@@ -83,6 +83,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 private val sportsMatchLog = Logger.withTag("SportsChannelMatch")
+private const val SPORTS_LIVE_REFRESH_INTERVAL_MS = 2 * 60 * 1000L
 
 /**
  * Sports Centre tab: featured event banners, live & upcoming fixtures for followed leagues,
@@ -98,7 +99,16 @@ fun SportsHubScreen(
     onOpenRecording: (String) -> Unit = {},
 ) {
     val state by RadarRepository.uiState.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { RadarRepository.ensureLoaded() }
+    LaunchedEffect(Unit) {
+        RadarRepository.ensureLoaded()
+        // This screen can stay composed while a match crosses kick-off. A one-shot load leaves
+        // pre-game cards blank until the user restarts or navigates far enough to recreate the
+        // destination, so keep the two-minute server livescore cache moving while Sports is open.
+        while (true) {
+            delay(SPORTS_LIVE_REFRESH_INTERVAL_MS)
+            RadarRepository.refreshFixtures(force = true)
+        }
+    }
 
     var browseCategory by remember { mutableStateOf<RadarCategory?>(null) }
     var browsing by remember { mutableStateOf(false) }

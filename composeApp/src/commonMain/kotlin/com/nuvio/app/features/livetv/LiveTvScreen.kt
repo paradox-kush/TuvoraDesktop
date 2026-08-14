@@ -199,11 +199,15 @@ fun LiveTvScreen(
     // ---- Orientation / fullscreen state ----
     val physicalLandscape by rememberPhysicalLandscape()
     var manualOrientation by remember { mutableStateOf<Boolean?>(null) } // true=landscape,false=portrait,null=follow
-    // Hand control back to the sensor once the device physically agrees with a forced rotation.
+    // Exiting fullscreen only needs a temporary portrait pin: once the phone physically catches
+    // up, hand control back to the sensor so rotate-to-fullscreen keeps working. Entering
+    // fullscreen is intentionally different. A tap on Fullscreen is explicit user intent, so keep
+    // landscape locked until Back/Exit instead of letting a small device movement silently return
+    // the viewer to the docked guide.
     LaunchedEffect(physicalLandscape, manualOrientation) {
         val manual = manualOrientation
         val physical = physicalLandscape
-        if (manual != null && physical != null && physical == manual) {
+        if (manual == false && physical == false) {
             manualOrientation = null
         }
     }
