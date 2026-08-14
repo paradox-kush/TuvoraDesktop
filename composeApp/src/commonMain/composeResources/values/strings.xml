@@ -1459,6 +1459,16 @@
     <string name="profile_custom_avatar_url">Custom avatar URL</string>
     <string name="profile_custom_avatar_url_description">Paste an image link, or leave this empty to use the built-in avatar catalog.</string>
     <string name="profile_custom_avatar_url_placeholder">https://example.com/avatar.png</string>
+    <string name="profile_upload_photo">Upload a photo</string>
+    <string name="profile_upload_photo_description">Pick a picture from this device. It is resized and stored on your account, so it appears on every device you sign in to.</string>
+    <string name="profile_change_photo">Change photo</string>
+    <string name="profile_uploading_photo">Uploading\u2026</string>
+    <string name="profile_photo_uploaded">Photo uploaded.</string>
+    <string name="profile_upload_requires_account">Sign in to upload a photo. Without an account you can still paste an image link below.</string>
+    <string name="profile_upload_failed">Couldn\'t upload that photo. Check your connection and try again.</string>
+    <string name="profile_upload_unreadable">That file couldn\'t be read as an image. Try a JPEG or PNG.</string>
+    <string name="profile_upload_too_large">That image is too large. Pick one under 2 MB.</string>
+    <string name="profile_avatar_url_unreachable">That link didn\'t load as an image. Direct image links work best \u2014 Discord and Google Drive links usually don\'t.</string>
     <string name="profile_delete_confirm_message">All data for &quot;%1$s&quot; will be permanently deleted.</string>
     <string name="profile_delete_title">Delete Profile</string>
     <string name="profile_edit_add_title">Add Profile</string>

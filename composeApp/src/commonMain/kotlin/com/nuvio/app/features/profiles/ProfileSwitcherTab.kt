@@ -1020,6 +1020,9 @@ private fun PopupProfileBubble(
     val avatarImageUrl = remember(profile.avatarUrl, avatarItem) {
         profileAvatarImageUrl(profile, avatarItem)
     }
+    // A URL that does not load must fall back to the initials. Without this the else-branch below
+    // only fires when there is no URL at all, so a broken link renders as an empty coloured circle.
+    var avatarLoadFailed by remember(avatarImageUrl) { mutableStateOf(false) }
 
     // Per-item entrance animation
     val itemAlpha = remember { Animatable(0f) }
@@ -1103,12 +1106,13 @@ private fun PopupProfileBubble(
                     ),
                 contentAlignment = Alignment.Center,
             ) {
-                if (avatarImageUrl != null) {
+                if (avatarImageUrl != null && !avatarLoadFailed) {
                     AsyncImage(
                         model = avatarImageUrl,
                         contentDescription = profile.name,
                         modifier = Modifier.size(48.dp).clip(tokens.shapes.avatar),
                         contentScale = ContentScale.Crop,
+                        onError = { avatarLoadFailed = true },
                     )
                 } else if (profile.name.isNotBlank()) {
                     Text(
@@ -1398,6 +1402,9 @@ fun ActiveProfileMiniAvatar(
     val avatarImageUrl = remember(profile.avatarUrl, avatarItem) {
         profileAvatarImageUrl(profile, avatarItem)
     }
+    // A URL that does not load must fall back to the initials. Without this the else-branch below
+    // only fires when there is no URL at all, so a broken link renders as an empty coloured circle.
+    var avatarLoadFailed by remember(avatarImageUrl) { mutableStateOf(false) }
 
     val borderColor = if (selected) {
         tokens.colors.borderSelected
@@ -1419,12 +1426,13 @@ fun ActiveProfileMiniAvatar(
             .border(tokens.borders.thin + NuvioTokens.Space.hairline, borderColor, tokens.shapes.avatar),
         contentAlignment = Alignment.Center,
     ) {
-        if (avatarImageUrl != null) {
+        if (avatarImageUrl != null && !avatarLoadFailed) {
             AsyncImage(
                 model = avatarImageUrl,
                 contentDescription = profile.name,
                 modifier = Modifier.size(size.dp).clip(tokens.shapes.avatar),
                 contentScale = ContentScale.Crop,
+                onError = { avatarLoadFailed = true },
             )
         } else if (profile.name.isNotBlank()) {
             Text(

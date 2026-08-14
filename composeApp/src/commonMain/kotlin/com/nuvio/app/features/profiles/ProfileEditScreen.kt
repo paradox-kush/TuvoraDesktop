@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil3.compose.AsyncImagePainter
 import com.nuvio.app.core.ui.NuvioAsyncImage as AsyncImage
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
@@ -56,7 +57,17 @@ import com.nuvio.app.core.ui.NuvioStatusModal
 import com.nuvio.app.core.ui.NuvioSurfaceCard
 import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.*
+import org.jetbrains.compose.resources.StringResource
 import org.jetbrains.compose.resources.stringResource
+
+/** What the upload row is currently telling the user. Kept next to the screen that renders it. */
+private enum class UploadMessage(val resource: StringResource) {
+    Uploaded(Res.string.profile_photo_uploaded),
+    RequiresAccount(Res.string.profile_upload_requires_account),
+    Unreadable(Res.string.profile_upload_unreadable),
+    TooLarge(Res.string.profile_upload_too_large),
+    Failed(Res.string.profile_upload_failed),
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -82,6 +93,9 @@ fun ProfileEditScreen(
     var usesPrimaryAddons by rememberSaveable { mutableStateOf(currentProfile?.usesPrimaryAddons ?: false) }
     var isSaving by remember { mutableStateOf(false) }
     var saveFailed by remember { mutableStateOf(false) }
+    var isUploading by remember { mutableStateOf(false) }
+    var uploadMessage by remember { mutableStateOf<UploadMessage?>(null) }
+    var customAvatarPreviewFailed by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showPromoteConfirm by remember { mutableStateOf(false) }
     var promoteFailed by remember { mutableStateOf(false) }
@@ -102,6 +116,11 @@ fun ProfileEditScreen(
 
     val customAvatarUrl = remember(avatarUrl) { normalizedAvatarUrl(avatarUrl) }
     val avatarUrlIsInvalid = avatarUrl.isNotBlank() && customAvatarUrl == null
+    val isUploadedAvatar = remember(avatarUrl) {
+        AvatarUploadRepository.uploadedObjectPath(avatarUrl) != null
+    }
+    // Each new URL gets a fresh verdict; without this the last failure would stick to the next link.
+    LaunchedEffect(customAvatarUrl) { customAvatarPreviewFailed = false }
     val selectedAvatarItem = remember(selectedAvatarId, avatars) {
         selectedAvatarId?.let { id -> avatars.find { it.id == id } }
     }
@@ -134,7 +153,78 @@ fun ProfileEditScreen(
                 customAvatarUrl = customAvatarUrl,
                 accentColor = previewAccent,
                 hasAvatarChoices = avatars.isNotEmpty(),
+                onCustomAvatarFailed = { customAvatarPreviewFailed = true },
             )
+        }
+
+        item {
+            NuvioSurfaceCard {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = stringResource(Res.string.profile_upload_photo),
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = stringResource(Res.string.profile_upload_photo_description),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    NuvioPrimaryButton(
+                        text = when {
+                            isUploading -> stringResource(Res.string.profile_uploading_photo)
+                            isUploadedAvatar -> stringResource(Res.string.profile_change_photo)
+                            else -> stringResource(Res.string.profile_upload_photo)
+                        },
+                        enabled = !isUploading && !isSaving,
+                        onClick = {
+                            uploadMessage = null
+                            pickAvatarImage { picked ->
+                                if (picked == null) return@pickAvatarImage
+                                isUploading = true
+                                scope.launch {
+                                    val previousUrl = avatarUrl
+                                    when (
+                                        val result = AvatarUploadRepository.uploadAvatar(
+                                            profileIndex = currentProfile?.profileIndex
+                                                ?: ProfileRepository.nextFreeProfileIndex(),
+                                            picked = picked,
+                                        )
+                                    ) {
+                                        is AvatarUploadResult.Success -> {
+                                            avatarUrl = result.publicUrl
+                                            selectedAvatarId = null
+                                            uploadMessage = UploadMessage.Uploaded
+                                            // The replaced object is ours and now unreferenced.
+                                            AvatarUploadRepository.deleteUploadedAvatar(previousUrl)
+                                        }
+                                        AvatarUploadResult.RequiresAccount ->
+                                            uploadMessage = UploadMessage.RequiresAccount
+                                        AvatarUploadResult.Unreadable ->
+                                            uploadMessage = UploadMessage.Unreadable
+                                        AvatarUploadResult.TooLarge ->
+                                            uploadMessage = UploadMessage.TooLarge
+                                        AvatarUploadResult.Failed ->
+                                            uploadMessage = UploadMessage.Failed
+                                    }
+                                    isUploading = false
+                                }
+                            }
+                        },
+                    )
+                    uploadMessage?.let { message ->
+                        Text(
+                            text = stringResource(message.resource),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (message == UploadMessage.Uploaded) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.error
+                            },
+                        )
+                    }
+                }
+            }
         }
 
         item {
@@ -154,6 +244,7 @@ fun ProfileEditScreen(
                         value = avatarUrl,
                         onValueChange = { value ->
                             avatarUrl = value
+                            uploadMessage = null
                             if (value.isNotBlank()) {
                                 selectedAvatarId = null
                             }
@@ -163,6 +254,14 @@ fun ProfileEditScreen(
                     if (avatarUrlIsInvalid) {
                         Text(
                             text = stringResource(Res.string.profile_avatar_url_invalid),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    } else if (customAvatarPreviewFailed) {
+                        // A link that saves fine but never renders used to be indistinguishable from
+                        // having set no avatar at all. Say so while the user can still fix it.
+                        Text(
+                            text = stringResource(Res.string.profile_avatar_url_unreachable),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                         )
@@ -436,6 +535,7 @@ private fun ProfileIdentityCard(
     customAvatarUrl: String?,
     accentColor: Color,
     hasAvatarChoices: Boolean,
+    onCustomAvatarFailed: () -> Unit = {},
 ) {
     NuvioSurfaceCard {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -472,6 +572,7 @@ private fun ProfileIdentityCard(
                             contentDescription = name,
                             modifier = Modifier.size(88.dp).clip(CircleShape),
                             contentScale = ContentScale.Crop,
+                            onError = { onCustomAvatarFailed() },
                         )
                     } else if (selectedAvatar != null) {
                         AsyncImage(

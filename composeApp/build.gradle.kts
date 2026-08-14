@@ -1277,6 +1277,7 @@ kotlin {
             implementation(libs.supabase.realtime)
             implementation(libs.supabase.auth)
             implementation(libs.supabase.functions)
+            implementation(libs.supabase.storage)
             implementation(libs.reorderable)
             // TMDB->Xtream match index db API. The DRIVER is per-target: sqlite-framework on
             // Android/iOS (system sqlite, no bundled binary), sqlite-bundled on desktop JVM.

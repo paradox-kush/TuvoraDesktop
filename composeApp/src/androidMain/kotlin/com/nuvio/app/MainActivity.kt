@@ -135,6 +135,9 @@ class MainActivity : AppCompatActivity() {
         // Register the ACTION_OPEN_DOCUMENT launcher for the IPTV M3U-file picker (must happen before
         // the activity is STARTED, i.e. here in onCreate).
         com.nuvio.app.features.iptv.M3UFilePicker.bindActivity(this)
+        // Same deal for the profile-picture picker (PickVisualMedia).
+        com.nuvio.app.features.profiles.AvatarImagePicker.initialize(applicationContext)
+        com.nuvio.app.features.profiles.AvatarImagePicker.bindActivity(this)
         // P3: periodic background refresh of overdue IPTV playlists (idempotent — KEEP).
         com.nuvio.app.features.iptv.IptvRefreshWorker.schedule(applicationContext)
         handleIncomingAppIntent(intent)

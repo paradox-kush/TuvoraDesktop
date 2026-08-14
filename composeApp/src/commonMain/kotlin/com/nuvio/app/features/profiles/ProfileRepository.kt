@@ -236,6 +236,17 @@ object ProfileRepository {
         }
     }
 
+    /**
+     * The profile_index [createProfile] would claim next, or null when the account is full.
+     *
+     * Exposed because an avatar can be uploaded before the profile it belongs to exists — the object
+     * path embeds the index, and a not-yet-created profile has none to embed.
+     */
+    fun nextFreeProfileIndex(): Int =
+        ((1..MAX_PROFILES).toSet() - _state.value.profiles.map { it.profileIndex }.toSet())
+            .minOrNull()
+            ?: MAX_PROFILES
+
     suspend fun createProfile(
         name: String,
         avatarColorHex: String,

@@ -8,6 +8,7 @@ import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.functions.Functions
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.realtime.Realtime
+import io.github.jan.supabase.storage.Storage
 import io.ktor.client.plugins.HttpRequestRetry
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.http.HttpHeaders
@@ -86,6 +87,8 @@ object SupabaseProvider {
             }
             install(Postgrest)
             install(Functions)
+            // Storage backs user-uploaded profile avatars (the 'user-avatars' bucket).
+            install(Storage)
             // Realtime backs the fork's sync-invalidation service (upstream dropped realtime).
             install(Realtime)
         }

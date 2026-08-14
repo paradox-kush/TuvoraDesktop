@@ -326,6 +326,9 @@ private fun ProfileAvatarCard(
     val avatarImageUrl = remember(profile.avatarUrl, avatarItem) {
         profileAvatarImageUrl(profile, avatarItem)
     }
+    // A URL that does not load must fall back to the initials. Without this the else-branch below
+    // only fires when there is no URL at all, so a broken link renders as an empty coloured circle.
+    var avatarLoadFailed by remember(avatarImageUrl) { mutableStateOf(false) }
 
     val animAlpha = remember { Animatable(0f) }
     val animScale = remember { Animatable(0.85f) }
@@ -414,12 +417,13 @@ private fun ProfileAvatarCard(
                     ),
                 contentAlignment = Alignment.Center,
             ) {
-                if (avatarImageUrl != null) {
+                if (avatarImageUrl != null && !avatarLoadFailed) {
                     AsyncImage(
                         model = avatarImageUrl,
                         contentDescription = avatarItem?.displayName ?: profile.name,
                         modifier = Modifier.size(100.dp).clip(CircleShape),
                         contentScale = ContentScale.Crop,
+                        onError = { avatarLoadFailed = true },
                     )
                 } else if (profile.name.isNotBlank()) {
                     Text(

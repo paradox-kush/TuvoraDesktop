@@ -2,6 +2,9 @@ package com.nuvio.app.core.network
 
 import kotlinx.serialization.Serializable
 
+/** Bucket holding user-uploaded profile pictures. Presets live in 'avatars' and stay read-only. */
+const val USER_AVATAR_BUCKET = "user-avatars"
+
 internal const val SYNC_BACKEND_HOSTED_ID = "hosted"
 internal const val SYNC_BACKEND_NUVIO_ID = "nuvio"
 
@@ -22,6 +25,17 @@ data class SyncBackendConfig(
 
     fun avatarStorageUrl(storagePath: String): String =
         "${normalizedAvatarPublicBaseUrl}/${storagePath.trim().trimStart('/')}"
+
+    /**
+     * Public URL of an object in the user-upload bucket.
+     *
+     * Derived from this backend's own Supabase URL rather than from [avatarPublicBaseUrl]: that one
+     * is a persisted per-backend value pointing at the preset 'avatars' bucket, so reusing it would
+     * address user uploads inside the preset namespace. Deriving here also means a backend switch
+     * cannot leave uploads resolving against the previous project.
+     */
+    fun userAvatarStorageUrl(objectPath: String): String =
+        "$normalizedSupabaseUrl/storage/v1/object/public/$USER_AVATAR_BUCKET/${objectPath.trim().trimStart('/')}"
 
     fun normalized(): SyncBackendConfig =
         copy(
