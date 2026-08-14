@@ -246,7 +246,12 @@ object XtreamRepository {
         val profileAtStart = currentProfileId
         scope.launch {
             _uiState.update { it.copy(isValidating = true, error = null) }
-            IptvClient.forAccount(account).verify(account)
+            // Options-only edit (name/EPG/DNS/refresh) — nothing about how we reach the provider
+            // changed, so an unreachable provider must not block the save. See sameConnectionAs.
+            val verified =
+                if (account.sameConnectionAs(old)) Result.success(Unit)
+                else IptvClient.forAccount(account).verify(account)
+            verified
                 .onSuccess {
                     // Profile switched while verifying — see verifyAndSave.
                     if (currentProfileId != profileAtStart) {

@@ -191,6 +191,29 @@ fun XtreamAccount.allowsCategory(type: String, categoryId: String?): Boolean {
     return categoryId != null && categoryId in selection
 }
 
+/**
+ * True when [other] is reached over exactly the same connection as this account: same source type,
+ * same host/URL, same credentials, same STB identity.
+ *
+ * An edit that leaves this true changed only the shared options (name, EPG url, DNS resolver,
+ * refresh interval), so it must NOT be gated behind a live verify. Gating it created a catch-22: a
+ * playlist whose provider is currently unreachable could not be edited at all — including to change
+ * the DNS resolver, which is one of the few settings that can *fix* an unreachable provider (a
+ * filtered or broken system resolver on the device).
+ */
+fun XtreamAccount.sameConnectionAs(other: XtreamAccount): Boolean =
+    sourceType == other.sourceType &&
+        baseUrl == other.baseUrl &&
+        username == other.username &&
+        password == other.password &&
+        userAgent == other.userAgent &&
+        macAddress == other.macAddress &&
+        stalkerUsername == other.stalkerUsername &&
+        stalkerPassword == other.stalkerPassword &&
+        serialNumber == other.serialNumber &&
+        deviceId == other.deviceId &&
+        sendDeviceId == other.sendDeviceId
+
 data class XtreamCategory(val id: String, val name: String)
 
 data class XtreamChannel(

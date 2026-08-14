@@ -145,9 +145,11 @@ actual suspend fun httpPostJson(url: String, body: String): String =
             payload
         }
 
+// [dnsProvider] is ignored here for the same reason as httpGetText above — no per-app DNS hook.
 actual suspend fun httpGetTextWithHeaders(
     url: String,
     headers: Map<String, String>,
+    dnsProvider: String?,
 ): String =
     addonHttpClient
         .get(url) {

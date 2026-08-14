@@ -258,11 +258,13 @@ actual suspend fun httpPostJson(url: String, body: String): String =
 actual suspend fun httpGetTextWithHeaders(
     url: String,
     headers: Map<String, String>,
+    dnsProvider: String?,
 ): String =
     executeTextRequest(
         method = "GET",
         url = url,
         headers = mapOf("Accept" to "application/json") + headers,
+        dnsProvider = dnsProvider,
     )
 
 actual suspend fun httpPostJsonWithHeaders(

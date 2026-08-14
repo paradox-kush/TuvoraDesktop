@@ -484,4 +484,42 @@ class XtreamPlaylistModelTest {
         assertEquals(listOf("1"), materialized.forType(CONTENT_TYPE_LIVE))
         assertNull(materialized.withType(CONTENT_TYPE_MOVIES, null).forType(CONTENT_TYPE_MOVIES))
     }
+
+    /**
+     * The edit path skips its live verify when the connection is unchanged. This pins what
+     * "unchanged" means: shared options may move freely, anything that decides WHERE we connect
+     * or WHO we connect as does not. Without this, a playlist whose provider is unreachable can
+     * never be edited — including to switch its DNS resolver, which is what fixes some of those
+     * unreachable providers in the first place.
+     */
+    @Test
+    fun sameConnectionAsIgnoresOptionsButNotIdentity() {
+        val stalker = XtreamAccount(
+            id = "stalker|http://portal:80|00:1A:79:32:31:37", name = "Portal",
+            baseUrl = "http://portal:80", username = "", password = "",
+            sourceType = SOURCE_TYPE_STALKER, macAddress = "00:1A:79:32:31:37",
+        )
+
+        // Options-only edits: same connection.
+        assertTrue(stalker.copy(dnsProvider = "cloudflare").sameConnectionAs(stalker))
+        assertTrue(stalker.copy(epgUrl = "http://epg/x.xml").sameConnectionAs(stalker))
+        assertTrue(stalker.copy(autoRefreshHours = 0).sameConnectionAs(stalker))
+        assertTrue(stalker.copy(name = "Renamed").sameConnectionAs(stalker))
+        assertTrue(stalker.copy(enabled = false).sameConnectionAs(stalker))
+
+        // Anything that changes where/who we connect as: not the same connection, so verify runs.
+        assertFalse(stalker.copy(baseUrl = "http://other:80").sameConnectionAs(stalker))
+        assertFalse(stalker.copy(macAddress = "00:1A:79:00:00:01").sameConnectionAs(stalker))
+        assertFalse(stalker.copy(serialNumber = "SN1").sameConnectionAs(stalker))
+        assertFalse(stalker.copy(deviceId = "DEV1").sameConnectionAs(stalker))
+        assertFalse(stalker.copy(sendDeviceId = false).sameConnectionAs(stalker))
+        assertFalse(stalker.copy(stalkerUsername = "u").sameConnectionAs(stalker))
+        assertFalse(stalker.copy(sourceType = SOURCE_TYPE_M3U_URL).sameConnectionAs(stalker))
+
+        // Xtream identity is the credentials; the M3U one includes its per-playlist User-Agent.
+        assertTrue(base.copy(dnsProvider = "quad9").sameConnectionAs(base))
+        assertFalse(base.copy(username = "other").sameConnectionAs(base))
+        assertFalse(base.copy(password = "other").sameConnectionAs(base))
+        assertFalse(base.copy(userAgent = "VLC/3.0").sameConnectionAs(base))
+    }
 }

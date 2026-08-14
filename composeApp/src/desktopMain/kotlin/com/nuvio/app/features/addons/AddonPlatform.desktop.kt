@@ -76,9 +76,11 @@ actual suspend fun httpPostJson(url: String, body: String): String =
         body = body,
     )
 
+// [dnsProvider] is Android-only (no per-app DNS hook on the desktop JVM client) — ignored here.
 actual suspend fun httpGetTextWithHeaders(
     url: String,
     headers: Map<String, String>,
+    dnsProvider: String?,
 ): String =
     executeTextRequest(
         method = "GET",

@@ -90,9 +90,11 @@ object StalkerClient : IptvClient {
         sessionFactory(acc).also { sessions[acc.id] = Entry(it, fp) }
     }
 
+    // dnsProvider is in here because the session's HTTP seams close over it: without it an edited
+    // DNS choice wouldn't reach the portal until the process restarted.
     private fun fingerprint(a: XtreamAccount): String =
         listOf(a.baseUrl, a.macAddress, a.serialNumber, a.deviceId, a.sendDeviceId.toString(),
-            a.stalkerUsername, a.stalkerPassword).joinToString("|")
+            a.stalkerUsername, a.stalkerPassword, a.dnsProvider).joinToString("|")
 
     /** Verify = a successful get_genres proves the full handshake + get_profile + authorised-browse chain. */
     override suspend fun verify(acc: XtreamAccount): Result<Unit> = runCatching {

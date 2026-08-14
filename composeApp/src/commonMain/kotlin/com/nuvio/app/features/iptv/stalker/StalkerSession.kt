@@ -30,18 +30,20 @@ internal class StalkerAuthException(message: String) : IllegalStateException(mes
  *
  * Ported from NuvioTV's StalkerSession; the OkHttp call is swapped for [httpGetTextWithHeaders] (which
  * throws on any non-2xx / blank body — that throw IS the stale-token signal the retry path catches) and
- * Gson for kotlinx.serialization. Portal API calls use the system resolver; the per-playlist DoH only
- * applies to PLAYBACK (the create_link'd URL rides the DNS-aware player path), matching TV.
+ * Gson for kotlinx.serialization. Portal API calls ride the playlist's own DoH resolver (Android),
+ * exactly like the Xtream/M3U/XMLTV fetches and like TV — a device whose system resolver blocks the
+ * portal host is otherwise unfixable from inside the app.
  */
 internal class StalkerSession(
     private val account: XtreamAccount,
     // Injectable HTTP seam so the auth/retry logic is unit-testable with a fake portal; production
     // uses the real platform GET (throws on non-2xx / blank body — that throw IS the stale signal).
-    private val httpGet: suspend (url: String, headers: Map<String, String>) -> String = ::httpGetTextWithHeaders,
+    private val httpGet: suspend (url: String, headers: Map<String, String>) -> String =
+        { u, h -> httpGetTextWithHeaders(u, h, account.dnsProvider) },
     // Streaming twin of [httpGet] (bulk EPG): chunks go to the callback, nothing body-sized is
     // held. Tests inject `{ u, h, c -> c(fakePortal(u, h)) }` so the fake drives BOTH seams.
     private val httpStream: suspend (url: String, headers: Map<String, String>, onChunk: (String) -> Unit) -> Unit =
-        { u, h, c -> httpStreamLines(u, userAgent = null, dnsProvider = null, headers = h, onLine = c) },
+        { u, h, c -> httpStreamLines(u, userAgent = null, dnsProvider = account.dnsProvider, headers = h, onLine = c) },
 ) {
     private var token: String? = null
     private var resolvedEndpoint: String? = null   // e.g. "/portal.php"

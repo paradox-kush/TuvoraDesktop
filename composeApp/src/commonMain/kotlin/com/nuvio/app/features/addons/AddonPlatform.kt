@@ -61,9 +61,16 @@ expect suspend fun httpGetText(url: String, dnsProvider: String? = null): String
 
 expect suspend fun httpPostJson(url: String, body: String): String
 
+/**
+ * As [httpGetText] but with caller-supplied request headers. [dnsProvider] carries the same
+ * per-playlist DoH selection (Android-only; iOS/desktop ignore it) — the Stalker portal session
+ * passes its account's choice so portal calls resolve through the playlist's own resolver, like
+ * every other IPTV fetch already does.
+ */
 expect suspend fun httpGetTextWithHeaders(
     url: String,
     headers: Map<String, String>,
+    dnsProvider: String? = null,
 ): String
 
 expect suspend fun httpPostJsonWithHeaders(
