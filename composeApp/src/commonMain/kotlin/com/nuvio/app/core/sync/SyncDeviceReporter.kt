@@ -1,8 +1,6 @@
 package com.nuvio.app.core.sync
 
 import co.touchlab.kermit.Logger
-import com.nuvio.app.core.auth.AuthRepository
-import com.nuvio.app.core.auth.AuthState
 import com.nuvio.app.core.network.SupabaseProvider
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.rpc
@@ -31,8 +29,7 @@ object SyncDeviceReporter {
 
     /** Call whenever the app is authenticated. Repeat calls in the same launch are no-ops. */
     fun reportOnce() {
-        val state = AuthRepository.state.value
-        if (state !is AuthState.Authenticated || state.isAnonymous) return
+        if (!SyncSession.canSync()) return
 
         val clientId = SyncClientIdentity.currentClientId()
         if (reportedForClientId == clientId) return

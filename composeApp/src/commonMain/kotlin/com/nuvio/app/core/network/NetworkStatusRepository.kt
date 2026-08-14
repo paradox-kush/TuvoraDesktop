@@ -136,10 +136,14 @@ object NetworkStatusRepository {
             return NetworkCondition.NoInternet
         }
 
-        val supabaseReachable = SupabaseEndpointConfig.restEndpointUrls().any { url ->
+        val supabaseReachable = SupabaseEndpointConfig.healthProbeUrls().any { url ->
             probeReachable(
                 url = url,
-                headers = mapOf("apikey" to SupabaseConfig.ANON_KEY),
+                method = SupabaseEndpointConfig.healthProbeMethod,
+                headers = mapOf(
+                    "apikey" to SupabaseConfig.ANON_KEY,
+                    "Content-Type" to "application/json",
+                ),
             )
         }
         if (!supabaseReachable) {
@@ -154,19 +158,22 @@ object NetworkStatusRepository {
 
     private suspend fun probeReachable(
         url: String,
+        method: String = "GET",
         headers: Map<String, String> = emptyMap(),
     ): Boolean {
         val response = withTimeoutOrNull(REQUEST_TIMEOUT_MS) {
             runCatching {
                 httpRequestRaw(
-                    method = "GET",
+                    method = method,
                     url = url,
                     headers = headers,
-                    body = "",
+                    body = if (method == "POST") "{}" else "",
                 )
             }.getOrNull()
         } ?: return false
 
+        // Any answer at all still proves reachability — including the 404 an older backend without
+        // health_ping returns, which is what keeps this working during a staged rollout.
         return response.status in 100..599
     }
 

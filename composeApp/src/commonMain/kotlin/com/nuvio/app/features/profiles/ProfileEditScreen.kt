@@ -680,7 +680,13 @@ fun PinSetupDialog(
                     profileIndex = profileIndex,
                     pin = pin,
                     currentPin = currentPin.ifEmpty { null },
-                )
+                ).also { result ->
+                    // hasExistingPin came from the local pinEnabled flag, which is stale whenever
+                    // sync_pull_profile_locks last failed. The server is the authority: if it says a
+                    // PIN exists, go collect it rather than leaving the user to retry a call that
+                    // can only be refused.
+                    if (result.currentPinRequired) step = "current"
+                }
             },
             onVerified = {
                 onDone()

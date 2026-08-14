@@ -446,9 +446,35 @@ object ProfileRepository {
             PinVerifyResult(unlocked = true)
         }.onFailure { e ->
             log.e(e) { "Failed to set pin" }
-        }.getOrElse {
-            PinVerifyResult(unlocked = false, message = getString(Res.string.profile_pin_set_failed))
+        }.getOrElse { e ->
+            // The server knows about a PIN this device didn't. Say so, and let the caller collect it
+            // — otherwise the user retries the same rejected call forever.
+            if (e.isCurrentPinRequired()) {
+                PinVerifyResult(
+                    unlocked = false,
+                    currentPinRequired = true,
+                    message = getString(Res.string.profile_pin_current_required),
+                )
+            } else {
+                PinVerifyResult(unlocked = false, message = getString(Res.string.profile_pin_set_failed))
+            }
         }
+    }
+
+    /**
+     * `set_profile_pin` raises `Current PIN is required` when the profile already has a `pin_hash`
+     * and `p_current_pin` was null. Matched on the message because that is all PostgREST forwards —
+     * a plpgsql `raise exception` arrives as a generic error with the text intact.
+     */
+    private fun Throwable.isCurrentPinRequired(): Boolean {
+        var current: Throwable? = this
+        while (current != null) {
+            if (current.message?.contains("current pin is required", ignoreCase = true) == true) {
+                return true
+            }
+            current = current.cause
+        }
+        return false
     }
 
     suspend fun clearPin(profileIndex: Int, currentPin: String? = null): PinVerifyResult {

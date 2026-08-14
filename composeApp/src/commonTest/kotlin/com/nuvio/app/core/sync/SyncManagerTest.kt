@@ -137,24 +137,25 @@ class SyncManagerTest {
             profileId = 3,
             completedAtEpochMs = 1_000L,
         )
-        val failed = previous.recordIfSuccessful(
+        val failed = previous.record(
             profileId = 3,
-            completedAtEpochMs = 2_000L,
+            nowEpochMs = 2_000L,
             result = ProfileSyncResult(setOf(ProfileSyncStep.ActiveWatchSource)),
         )
-        val succeeded = previous.recordIfSuccessful(
+        val succeeded = previous.record(
             profileId = 3,
-            completedAtEpochMs = 2_000L,
+            nowEpochMs = 2_000L,
             result = ProfileSyncResult(emptySet()),
         )
 
-        assertEquals(previous, failed)
+        // The failure must move the retry cooldown but leave freshness where it was.
+        assertEquals(previous.completedAtEpochMs, failed.completedAtEpochMs)
         assertEquals(2_000L, succeeded.completedAtEpochMs)
         assertFalse(
             ProfilePullFreshness()
-                .recordIfSuccessful(
+                .record(
                     profileId = 3,
-                    completedAtEpochMs = 2_000L,
+                    nowEpochMs = 2_000L,
                     result = ProfileSyncResult(setOf(ProfileSyncStep.ActiveWatchSource)),
                 )
                 .isRecent(profileId = 3, nowEpochMs = 2_001L, minIntervalMs = 1_000L),
@@ -162,6 +163,128 @@ class SyncManagerTest {
         assertTrue(
             succeeded.isRecent(profileId = 3, nowEpochMs = 2_001L, minIntervalMs = 1_000L),
         )
+    }
+
+    @Test
+    fun `failed cycle holds off the next attempt and success clears the hold`() {
+        val failed = ProfilePullFreshness().record(
+            profileId = 3,
+            nowEpochMs = 1_000L,
+            result = ProfileSyncResult(setOf(ProfileSyncStep.Library)),
+        )
+
+        assertEquals(1, failed.consecutiveFailures)
+        assertTrue(failed.isInRetryBackoff(profileId = 3, nowEpochMs = 1_500L))
+        assertFalse(failed.isInRetryBackoff(profileId = 3, nowEpochMs = 6_001L))
+        // The hold is per profile; switching profiles must not inherit it.
+        assertFalse(failed.isInRetryBackoff(profileId = 4, nowEpochMs = 1_500L))
+
+        val recovered = failed.record(
+            profileId = 3,
+            nowEpochMs = 7_000L,
+            result = ProfileSyncResult(emptySet()),
+        )
+        assertEquals(0, recovered.consecutiveFailures)
+        assertFalse(recovered.isInRetryBackoff(profileId = 3, nowEpochMs = 7_001L))
+    }
+
+    @Test
+    fun `consecutive failures back off exponentially up to a cap`() {
+        assertEquals(0L, syncRetryBackoffMs(0))
+        assertEquals(5_000L, syncRetryBackoffMs(1))
+        assertEquals(10_000L, syncRetryBackoffMs(2))
+        assertEquals(20_000L, syncRetryBackoffMs(3))
+        assertEquals(160_000L, syncRetryBackoffMs(SYNC_RETRY_MAX_FAILURE_STEP))
+        assertEquals(
+            syncRetryBackoffMs(SYNC_RETRY_MAX_FAILURE_STEP),
+            syncRetryBackoffMs(SYNC_RETRY_MAX_FAILURE_STEP + 20),
+        )
+
+        var freshness = ProfilePullFreshness()
+        repeat(3) { attempt ->
+            freshness = freshness.record(
+                profileId = 3,
+                nowEpochMs = 1_000L * attempt,
+                result = ProfileSyncResult(setOf(ProfileSyncStep.Library)),
+            )
+        }
+        assertEquals(3, freshness.consecutiveFailures)
+    }
+
+    @Test
+    fun `auth refusal goes straight to the longest hold`() {
+        val refused = ProfilePullFreshness().record(
+            profileId = 3,
+            nowEpochMs = 0L,
+            result = ProfileSyncResult(
+                failedSteps = setOf(ProfileSyncStep.Addons),
+                authRefused = true,
+            ),
+        )
+
+        assertEquals(SYNC_RETRY_MAX_FAILURE_STEP, refused.consecutiveFailures)
+        assertEquals(
+            syncRetryBackoffMs(SYNC_RETRY_MAX_FAILURE_STEP),
+            refused.retryNotBeforeEpochMs,
+        )
+    }
+
+    @Test
+    fun `permission denied on one step abandons the rest of the cycle`() = runBlocking {
+        val events = mutableListOf<String>()
+
+        val result = runOrderedProfileSync(
+            profileId = 3,
+            pluginsEnabled = true,
+            operations = recordingOperations(events).copy(
+                pullAddons = {
+                    events += "addons"
+                    error("permission denied for function sync_push_addons")
+                },
+            ),
+        )
+
+        assertTrue(result.authRefused)
+        // Only the step that actually ran should have executed; everything after is abandoned
+        // rather than sending its own doomed RPC.
+        assertEquals(listOf("addons"), events)
+        assertEquals(ProfileSyncStep.entries.toSet(), result.failedSteps)
+    }
+
+    @Test
+    fun `an ordinary step failure still lets the rest of the cycle run`() = runBlocking {
+        val events = mutableListOf<String>()
+
+        val result = runOrderedProfileSync(
+            profileId = 3,
+            pluginsEnabled = true,
+            operations = recordingOperations(events).copy(
+                pullAddons = {
+                    events += "addons"
+                    error("boom")
+                },
+            ),
+        )
+
+        assertFalse(result.authRefused)
+        assertTrue("library" in events)
+        assertTrue("collections" in events)
+        assertEquals(setOf(ProfileSyncStep.Addons), result.failedSteps)
+    }
+
+    @Test
+    fun `a refused push is recognised through the exception type`() {
+        assertTrue(SyncNotAuthenticatedException().isSyncAuthRefusal())
+        assertTrue(
+            IllegalStateException(
+                "wrapped",
+                RuntimeException("permission denied for function sync_pull_profiles"),
+            ).isSyncAuthRefusal(),
+        )
+        assertTrue(RuntimeException("PostgrestRestException: 42501").isSyncAuthRefusal())
+        assertFalse(RuntimeException("connection reset by peer").isSyncAuthRefusal())
+        // A bare 401 is excluded on purpose: supabase-kt can refresh past it.
+        assertFalse(RuntimeException("HTTP 401 Unauthorized").isSyncAuthRefusal())
     }
 
     private fun recordingOperations(events: MutableList<String>): ProfileSyncOperations =

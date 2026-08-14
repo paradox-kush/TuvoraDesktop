@@ -7,8 +7,21 @@ internal object SupabaseEndpointConfig {
     val hasFallback: Boolean
         get() = fallbackBaseUrl.isNotBlank() && !fallbackBaseUrl.equals(primaryBaseUrl, ignoreCase = true)
 
-    fun restEndpointUrls(): List<String> =
-        endpointUrls("/rest/v1/")
+    /**
+     * The reachability probe's target.
+     *
+     * Deliberately `health_ping` and not the REST root. `GET /rest/v1/` carries no Authorization
+     * header, so PostgREST answers 401 — the probe accepts any status and therefore worked, but it
+     * generated ~2,400 401s a day and made the log's largest error class a non-event. `health_ping`
+     * is granted to `anon`, answers 200, and unlike the REST root it actually reaches Postgres, so a
+     * healthy answer means the sync path is genuinely up.
+     *
+     * It is a VOLATILE function, so PostgREST requires POST — see [healthProbeMethod].
+     */
+    fun healthProbeUrls(): List<String> =
+        endpointUrls("/rest/v1/rpc/health_ping")
+
+    const val healthProbeMethod: String = "POST"
 
     fun fallbackUrlFor(requestUrl: String): String? {
         if (!hasFallback || primaryBaseUrl.isBlank()) return null

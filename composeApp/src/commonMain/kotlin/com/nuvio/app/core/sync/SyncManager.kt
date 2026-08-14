@@ -1,8 +1,6 @@
 package com.nuvio.app.core.sync
 
 import co.touchlab.kermit.Logger
-import com.nuvio.app.core.auth.AuthRepository
-import com.nuvio.app.core.auth.AuthState
 import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.core.time.EpisodeReleaseDatePlatform
 import com.nuvio.app.features.addons.AddonRepository
@@ -66,31 +64,76 @@ internal data class ProfileSyncOperations(
 
 internal data class ProfileSyncResult(
     val failedSteps: Set<ProfileSyncStep>,
+    val authRefused: Boolean = false,
 ) {
     val succeeded: Boolean
         get() = failedSteps.isEmpty()
 }
 
+/**
+ * How long to wait after [failures] consecutive failed cycles before another automatic attempt:
+ * 5s, 10s, 20s, 40s, 80s, then held at 160s.
+ */
+internal fun syncRetryBackoffMs(failures: Int): Long {
+    if (failures <= 0) return 0L
+    val shift = (failures - 1).coerceAtMost(SYNC_RETRY_MAX_FAILURE_STEP - 1)
+    return SYNC_RETRY_BASE_BACKOFF_MS shl shift
+}
+
+private const val SYNC_RETRY_BASE_BACKOFF_MS = 5_000L
+internal const val SYNC_RETRY_MAX_FAILURE_STEP = 6
+
 internal data class ProfilePullFreshness(
     val profileId: Int? = null,
     val completedAtEpochMs: Long = 0L,
+    val consecutiveFailures: Int = 0,
+    val retryNotBeforeEpochMs: Long = 0L,
 ) {
     fun isRecent(profileId: Int, nowEpochMs: Long, minIntervalMs: Long): Boolean =
         this.profileId == profileId && nowEpochMs - completedAtEpochMs < minIntervalMs
 
-    fun recordIfSuccessful(
+    /**
+     * True while a failed cycle is still cooling off.
+     *
+     * Without this there is no throttle on failure at all: [record] only stamps freshness on
+     * success — correct, since a failed pull refreshed nothing and must not look recent — so
+     * [isRecent] stays false and every trigger (periodic tick, realtime invalidation, profile
+     * switch) immediately runs another full cycle. That is what turned one lapsed session into ten
+     * seconds of repeating 42501s rather than a single refusal.
+     */
+    fun isInRetryBackoff(profileId: Int, nowEpochMs: Long): Boolean =
+        this.profileId == profileId && nowEpochMs < retryNotBeforeEpochMs
+
+    fun record(
         profileId: Int,
-        completedAtEpochMs: Long,
+        nowEpochMs: Long,
         result: ProfileSyncResult,
-    ): ProfilePullFreshness =
-        if (result.succeeded) {
+    ): ProfilePullFreshness {
+        val sameProfile = this.profileId == profileId
+        return if (result.succeeded) {
             ProfilePullFreshness(
                 profileId = profileId,
-                completedAtEpochMs = completedAtEpochMs,
+                completedAtEpochMs = nowEpochMs,
             )
         } else {
-            this
+            // An auth refusal goes straight to the longest cooldown: unlike a timeout or a 5xx, it
+            // cannot resolve because we asked again. It clears when the session returns, and
+            // SyncSession.canSync() already refuses to start a cycle before then.
+            val failures = if (result.authRefused) {
+                SYNC_RETRY_MAX_FAILURE_STEP
+            } else {
+                (if (sameProfile) consecutiveFailures else 0) + 1
+            }
+            ProfilePullFreshness(
+                profileId = profileId,
+                // Freshness is deliberately NOT advanced: a failed cycle refreshed nothing, so it
+                // must not make the data look recent. Only the retry cooldown moves.
+                completedAtEpochMs = if (sameProfile) completedAtEpochMs else 0L,
+                consecutiveFailures = failures,
+                retryNotBeforeEpochMs = nowEpochMs + syncRetryBackoffMs(failures),
+            )
         }
+    }
 }
 
 internal suspend fun runOrderedProfileSync(
@@ -101,11 +144,18 @@ internal suspend fun runOrderedProfileSync(
 ): ProfileSyncResult {
     val failureLock = SynchronizedObject()
     val failedSteps = mutableSetOf<ProfileSyncStep>()
+    // Set once the session is proven gone, so the remaining steps are abandoned rather than each
+    // sending its own doomed RPC. See Throwable.isSyncAuthRefusal.
+    var authRefused = false
 
     suspend fun runStep(
         step: ProfileSyncStep,
         operation: suspend (Int) -> Unit,
     ) {
+        if (synchronized(failureLock) { authRefused }) {
+            synchronized(failureLock) { failedSteps += step }
+            return
+        }
         try {
             operation(profileId)
         } catch (error: CancellationException) {
@@ -113,6 +163,7 @@ internal suspend fun runOrderedProfileSync(
         } catch (error: Throwable) {
             synchronized(failureLock) {
                 failedSteps += step
+                if (error.isSyncAuthRefusal()) authRefused = true
             }
             onFailure(step, error)
         }
@@ -141,6 +192,7 @@ internal suspend fun runOrderedProfileSync(
     }
     return ProfileSyncResult(
         failedSteps = synchronized(failureLock) { failedSteps.toSet() },
+        authRefused = synchronized(failureLock) { authRefused },
     )
 }
 
@@ -266,12 +318,12 @@ object SyncManager {
     }
 
     fun requestForegroundPull(profileId: Int, force: Boolean = false) {
-        val authState = AuthRepository.state.value
-        if (authState !is AuthState.Authenticated || authState.isAnonymous) return
+        if (!SyncSession.canSync()) return
 
         if (!force && hasRecentFullPull(profileId)) {
             return
         }
+        if (isInRetryBackoff(profileId)) return
         lateinit var requestJob: Job
         var previousJob: Job? = null
         synchronized(pullStateLock) {
@@ -290,6 +342,7 @@ object SyncManager {
                         delay(FOREGROUND_PULL_DELAY_MS)
                     }
                     if (!force && hasRecentFullPull(profileId)) return@launch
+                    if (isInRetryBackoff(profileId)) return@launch
                     if (ProfileRepository.activeProfileId != profileId) return@launch
                     pullForegroundForProfile(profileId)
                 } finally {
@@ -317,6 +370,21 @@ object SyncManager {
             )
         }
 
+    /**
+     * Whether a cycle that just failed is still cooling off.
+     *
+     * Applies to `force` too. Forcing exists to bypass the 30-minute freshness window, not to
+     * hammer a backend that is currently refusing us — and foreground events force on every resume,
+     * so exempting them would leave the storm intact for anyone switching apps.
+     */
+    private fun isInRetryBackoff(profileId: Int): Boolean =
+        synchronized(pullStateLock) {
+            pullFreshness.isInRetryBackoff(
+                profileId = profileId,
+                nowEpochMs = EpisodeReleaseDatePlatform.nowEpochMs(),
+            )
+        }
+
     private suspend fun pullForegroundForProfile(profileId: Int) {
         log.i { "Foreground sync started profile=$profileId" }
 
@@ -331,9 +399,9 @@ object SyncManager {
             },
         )
         synchronized(pullStateLock) {
-            pullFreshness = pullFreshness.recordIfSuccessful(
+            pullFreshness = pullFreshness.record(
                 profileId = profileId,
-                completedAtEpochMs = EpisodeReleaseDatePlatform.nowEpochMs(),
+                nowEpochMs = EpisodeReleaseDatePlatform.nowEpochMs(),
                 result = syncResult,
             )
         }
@@ -350,8 +418,7 @@ object SyncManager {
         profileId: Int,
         reason: String,
     ) {
-        val authState = AuthRepository.state.value
-        if (authState !is AuthState.Authenticated || authState.isAnonymous) return
+        if (!SyncSession.canSync()) return
         if (ProfileRepository.activeProfileId != profileId) return
 
         // Piggy-backs on the sync we were going to do anyway; it is a no-op after the first call.
@@ -361,8 +428,8 @@ object SyncManager {
             scope = accountScopeSnapshot(),
             profileId = profileId,
         ) {
-            val currentAuthState = AuthRepository.state.value
-            if (currentAuthState !is AuthState.Authenticated || currentAuthState.isAnonymous) return@launch
+            // Re-checked inside the gate: the session can lapse between request and launch.
+            if (!SyncSession.canSync()) return@launch
             if (ProfileRepository.activeProfileId != profileId) return@launch
 
             log.i { "Full profile sync started profile=$profileId reason=$reason" }
@@ -380,9 +447,9 @@ object SyncManager {
                 WatchProgressSourceCoordinator.resumeAutomaticTransitions()
             }
             synchronized(pullStateLock) {
-                pullFreshness = pullFreshness.recordIfSuccessful(
+                pullFreshness = pullFreshness.record(
                     profileId = profileId,
-                    completedAtEpochMs = EpisodeReleaseDatePlatform.nowEpochMs(),
+                    nowEpochMs = EpisodeReleaseDatePlatform.nowEpochMs(),
                     result = syncResult,
                 )
             }
@@ -425,8 +492,8 @@ object SyncManager {
     }
 
     fun startPeriodicNuvioSyncPull(profileId: Int) {
-        val authState = AuthRepository.state.value
-        if (authState !is AuthState.Authenticated || authState.isAnonymous) {
+        // Lifecycle gate, not a session gate: see SyncSession.hasAccount.
+        if (!SyncSession.hasAccount()) {
             stopPeriodicNuvioSyncPull()
             return
         }
@@ -438,8 +505,9 @@ object SyncManager {
             while (isActive) {
                 delay(PERIODIC_NUVIO_SYNC_PULL_INTERVAL_MS)
 
-                val currentAuthState = AuthRepository.state.value
-                if (currentAuthState !is AuthState.Authenticated || currentAuthState.isAnonymous) {
+                // Per-tick session gate: skip this round if the token is momentarily gone, and pick
+                // straight back up on the next one once supabase-kt has refreshed.
+                if (!SyncSession.canSync()) {
                     continue
                 }
                 if (ProfileRepository.activeProfileId != profileId) {
@@ -487,8 +555,7 @@ object SyncManager {
     }
 
     fun requestRealtimeSurfacePull(profileId: Int, surface: String) {
-        val authState = AuthRepository.state.value
-        if (authState !is AuthState.Authenticated || authState.isAnonymous) return
+        if (!SyncSession.canSync()) return
 
         accountScopeSnapshot().launch {
             log.i { "requestRealtimeSurfacePull($profileId, $surface)" }

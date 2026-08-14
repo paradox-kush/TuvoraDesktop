@@ -1596,6 +1596,7 @@
     <string name="profile_pin_changed_requires_refresh">This profile PIN changed. Connect once to refresh the lock on this device.</string>
     <string name="profile_pin_clear_failed">Couldn't remove PIN lock. Try again.</string>
     <string name="profile_pin_clear_requires_internet">Connect to the internet to remove the PIN lock.</string>
+    <string name="profile_pin_current_required">This profile already has a PIN. Enter the current PIN to change it.</string>
     <string name="profile_pin_offline_verification_requires_online">This PIN can't be verified offline on this device yet. Connect once and unlock it online first.</string>
     <string name="profile_pin_set_failed">Couldn't set PIN. Try again.</string>
     <string name="profile_pin_set_requires_internet">Connect to the internet to set a PIN.</string>

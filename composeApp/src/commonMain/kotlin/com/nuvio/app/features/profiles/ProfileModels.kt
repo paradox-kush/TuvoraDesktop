@@ -3,6 +3,7 @@ package com.nuvio.app.features.profiles
 import androidx.compose.ui.graphics.Color
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 const val MAX_PROFILES = 6
 
@@ -46,6 +47,16 @@ data class PinVerifyResult(
     val unlocked: Boolean = false,
     @SerialName("retry_after_seconds") val retryAfterSeconds: Int = 0,
     val message: String? = null,
+    /**
+     * The server refused because the profile already has a PIN and the current one was not supplied.
+     *
+     * Client-side only — the RPC signals this by raising, never in the result body — so it is
+     * [Transient] and never crosses the wire. It exists because the local `pinEnabled` flag can be
+     * stale (it comes from `sync_pull_profile_locks`, which fails whenever the session has lapsed),
+     * and a stale `false` sends the user down the "set a new PIN" path that the server then rejects
+     * with no way forward.
+     */
+    @Transient val currentPinRequired: Boolean = false,
 )
 
 data class ProfileState(
