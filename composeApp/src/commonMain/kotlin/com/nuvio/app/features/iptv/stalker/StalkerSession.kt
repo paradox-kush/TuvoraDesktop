@@ -5,6 +5,7 @@ import com.nuvio.app.features.addons.httpGetTextWithHeaders
 import com.nuvio.app.features.addons.httpStreamLines
 import com.nuvio.app.features.iptv.XtreamAccount
 import io.ktor.http.encodeURLParameter
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -47,6 +48,12 @@ internal class StalkerSession(
 ) {
     private var token: String? = null
     private var resolvedEndpoint: String? = null   // e.g. "/portal.php"
+    /**
+     * The STB identity this portal accepted. Starts at the one we have always sent, so a portal that
+     * already works is unaffected; a rejection walks [StalkerMagPresets.LADDER]. Session-scoped: a
+     * relaunch re-walks it, which costs one rejected request on the minority of portals that need it.
+     */
+    private var magPreset: StalkerMagPreset = StalkerMagPresets.DEFAULT
     /** When a re-auth ran and the retry STILL came back empty (another device holds the MAC). */
     private var lastFailedReauthAtMs: Long = 0L
 
@@ -181,8 +188,8 @@ internal class StalkerSession(
             append("; PHPSESSID=null")
         }
         val headers = buildMap {
-            put("User-Agent", USER_AGENT)
-            put("X-User-Agent", X_USER_AGENT)
+            put("User-Agent", magPreset.userAgent)
+            put("X-User-Agent", magPreset.xUserAgent)
             put("Referer", referer)
             put("Cookie", cookie)
             token?.takeIf { it.isNotEmpty() }?.let { put("Authorization", "Bearer $it") }
@@ -251,13 +258,16 @@ internal class StalkerSession(
 
         // get_profile activates the session. Non-fatal if it errors (some portals authorise on
         // handshake alone); we keep the token either way.
-        runCatching {
+        // The ONE failure we must not shrug off is an identity rejection: a portal provisioned for a
+        // different box answers the plain text "Authorization failed." here, and every later content
+        // call then returns nothing. Left swallowed, that reads as an empty portal.
+        val profileOutcome = runCatching {
             val profileParams = buildMap {
                 put("type", "stb"); put("action", "get_profile"); put("hd", "1")
-                put("ver", STB_VER)
-                put("num_banks", "2"); put("stb_type", "MAG250"); put("client_type", "STB")
-                put("image_version", "218"); put("video_out", "hdmi")
-                put("hw_version", "1.7-BD-00"); put("not_valid_token", "0")
+                put("ver", magPreset.stbVer)
+                put("num_banks", "2"); put("stb_type", magPreset.stbType); put("client_type", "STB")
+                put("image_version", magPreset.imageVersion); put("video_out", "hdmi")
+                put("hw_version", magPreset.hwVersion); put("not_valid_token", "0")
                 put("device_id", identity.deviceId); put("device_id2", identity.deviceId2)
                 if (account.sendDeviceId) put("signature", identity.signature)
                 put("sn", identity.serialNumber)
@@ -267,6 +277,12 @@ internal class StalkerSession(
             }
             rawRequestAt(endpoint, profileParams)
         }
+
+        val rejection = profileOutcome.exceptionOrNull() as? StalkerAuthException ?: return
+        val nextPreset = StalkerMagPresets.next(magPreset) ?: throw rejection
+        magPreset = nextPreset
+        token = null
+        doHandshakeAndProfile()
     }
 
     /** Try each candidate endpoint until one handshakes with a token. Throws if none do. */
@@ -292,11 +308,32 @@ internal class StalkerSession(
 
     /** One raw GET to [endpointPath] with full MAG headers. [tokenOverride] "" = the handshake call
      *  (no bearer yet); null = use the current session token. */
+    /**
+     * Hold browse traffic back while a stream from this portal is playing — most Stalker accounts
+     * allow barely any concurrent connections, and a guide pulling categories can cost the viewer
+     * the picture. Bootstrap and link creation are exempt: playback depends on them.
+     */
+    private suspend fun awaitPlaybackTraffic(action: String) {
+        val isExempt = action in PLAYBACK_CRITICAL_ACTIONS
+        var waited = 0L
+        while (
+            StalkerPlaybackTraffic.shouldDefer(
+                playbackActive = StalkerPlaybackTraffic.isPlaybackActive,
+                waitedMs = waited,
+                isBootstrap = isExempt
+            )
+        ) {
+            delay(StalkerPlaybackTraffic.DEFER_SLICE_MS)
+            waited += StalkerPlaybackTraffic.DEFER_SLICE_MS
+        }
+    }
+
     private suspend fun rawRequestAt(
         endpointPath: String,
         params: Map<String, String>,
         tokenOverride: String? = null
     ): JsonElement {
+        awaitPlaybackTraffic(params["action"].orEmpty())
         val query = (params + ("JsHttpRequest" to "1-xml")).entries.joinToString("&") { (k, v) ->
             "${k.encodeURLParameter()}=${v.encodeURLParameter()}"
         }
@@ -310,8 +347,8 @@ internal class StalkerSession(
             append("; PHPSESSID=null")
         }
         val headers = buildMap {
-            put("User-Agent", USER_AGENT)
-            put("X-User-Agent", X_USER_AGENT)
+            put("User-Agent", magPreset.userAgent)
+            put("X-User-Agent", magPreset.xUserAgent)
             put("Referer", referer)
             put("Cookie", cookie)
             if (!bearer.isNullOrEmpty()) put("Authorization", "Bearer $bearer")
@@ -367,11 +404,11 @@ internal class StalkerSession(
         // before over request volume. 2 keeps browse+EPG overlap without looking like a scraper.
         // (research/iptv-catalog-loading.md)
         private const val MAX_CONCURRENT_REQUESTS = 2
+
+        /** Never held back by [StalkerPlaybackTraffic] — playback itself depends on these. */
+        private val PLAYBACK_CRITICAL_ACTIONS = setOf(
+            "handshake", "get_profile", "create_link", "do_auth", "get_modules", "get_main_info"
+        )
         private val JSON = Json { ignoreUnknownKeys = true; isLenient = true }
-        private const val STB_VER =
-            "ImageDescription: 0.2.18-r14-pub-250; ImageDate: Wed Aug 29 10:49:52 EEST 2018; PORTAL version: 5.6.1; API Version: JS API version: 343; STB API version: 146; Player Engine version: 0x58c"
-        private const val USER_AGENT =
-            "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3"
-        private const val X_USER_AGENT = "Model: MAG250; Link: WiFi"
     }
 }
