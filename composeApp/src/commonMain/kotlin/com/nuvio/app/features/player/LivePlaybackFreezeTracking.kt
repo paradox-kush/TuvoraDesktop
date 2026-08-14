@@ -44,6 +44,7 @@ fun LivePlaybackFreezeReporter.onLiveSnapshot(
             ),
             nowMs = nowMs,
             positionMs = snapshot.positionMs,
+            videoProgressTicks = snapshot.videoProgressTicks,
         )
         reconnector.reset()
     }
@@ -56,6 +57,8 @@ fun LivePlaybackFreezeReporter.onLiveSnapshot(
         // The snapshot has no "user paused" flag: a viewer pause reports isPlaying=false with
         // isLoading=false, which maps to IDLE and is never treated as wanting to play.
         wantsToPlay = snapshot.isPlaying || snapshot.isLoading || snapshot.isEnded,
+        videoProgressTicks = snapshot.videoProgressTicks,
+        hasVideoTrack = snapshot.hasVideoTrack,
     )
 
     when (decision) {

@@ -58,6 +58,14 @@ internal object NativePlayerBridge {
     external fun durationMs(handle: Long): Long
     external fun positionMs(handle: Long): Long
     external fun bufferedPositionMs(handle: Long): Long
+
+    /**
+     * Evidence the video output is alive, for live-freeze detection: a counter that only moves
+     * while mpv reports frames leaving the filter chain. Returns **-1 when the track has no video
+     * at all**, so a radio station is distinguishable from a picture that died while audio
+     * carried on advancing the playhead.
+     */
+    external fun videoFrameTicks(handle: Long): Long
     external fun isLoading(handle: Long): Boolean
     external fun isEnded(handle: Long): Boolean
     external fun isPaused(handle: Long): Boolean

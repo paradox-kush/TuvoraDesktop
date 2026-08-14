@@ -111,6 +111,7 @@
 - (long long)durationMs;
 - (long long)positionMs;
 - (long long)bufferedPositionMs;
+- (long long)videoFrameTicks;
 - (BOOL)isLoading;
 - (BOOL)isEnded;
 - (NSString *)audioTracksJson;
@@ -1057,6 +1058,7 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     std::atomic<double> _cachedPositionSeconds;
     std::atomic<double> _cachedCacheAheadSeconds;
     std::atomic<double> _cachedSpeed;
+    std::atomic<long long> _videoFrameTicks;
     std::atomic_bool _cachedPaused;
     std::atomic_bool _cachedLoading;
     std::atomic_bool _cachedEnded;
@@ -1085,6 +1087,7 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     _cachedDurationSeconds.store(0.0);
     _cachedPositionSeconds.store(initialPositionMs > 0 ? (double)initialPositionMs / 1000.0 : 0.0);
     _cachedCacheAheadSeconds.store(0.0);
+    _videoFrameTicks.store(0);
     _cachedSpeed.store(1.0);
     _cachedPaused.store(!playWhenReady);
     _cachedLoading.store(true);
@@ -1978,6 +1981,19 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     return (long long)llround(fmax(bufferedPosition, 0.0) * 1000.0);
 }
 
+// Live-freeze detection. Returns -1 when the track carries no picture, so the policy can tell an
+// IPTV radio station from a channel whose video died while its audio kept playing — the shape the
+// playhead cannot express, because audio keeps advancing it.
+- (long long)videoFrameTicks {
+    if (!_mpv) return -1;
+    NSString *videoFormat = [self stringProperty:"video-format" fallback:@""];
+    if (videoFormat.length == 0) return -1;
+    if ([self doubleProperty:"estimated-vf-fps" fallback:0.0] > 0.0) {
+        _videoFrameTicks.fetch_add(1);
+    }
+    return _videoFrameTicks.load();
+}
+
 - (BOOL)isLoading {
     return _cachedLoading.load();
 }
@@ -2781,6 +2797,18 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_bufferedPositionMs
     if (handle == 0) return 0;
     MpvWebPlayer *player = (__bridge MpvWebPlayer *)(void *)(intptr_t)handle;
     return [player bufferedPositionMs];
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_videoFrameTicks(
+    JNIEnv *env,
+    jobject thiz,
+    jlong handle
+) {
+    // -1 means "no picture expected", which is also the right answer for a dead handle.
+    if (handle == 0) return -1;
+    MpvWebPlayer *player = (__bridge MpvWebPlayer *)(void *)(intptr_t)handle;
+    return [player videoFrameTicks];
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

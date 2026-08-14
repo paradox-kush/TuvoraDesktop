@@ -1077,6 +1077,17 @@ public:
         return (long long)std::llround(std::max(buffered, 0.0) * 1000.0);
     }
 
+    // Live-freeze detection. Returns -1 when the track carries no picture, so the policy can tell
+    // an IPTV radio station from a channel whose video died while its audio kept playing — the
+    // shape the playhead cannot express, because audio keeps advancing it.
+    long long videoFrameTicks() {
+        if (stringProperty("video-format", std::string()).empty()) return -1;
+        if (doubleProperty("estimated-vf-fps", 0.0) > 0.0) {
+            videoFrameTicks_.fetch_add(1);
+        }
+        return videoFrameTicks_.load();
+    }
+
     bool isLoading() {
         bool paused = isPaused();
         bool eofReached = isEnded();
@@ -1259,6 +1270,7 @@ private:
     std::mutex mpvMutex;
     mpv_handle *mpv = nullptr;
     std::thread eventThread;
+    std::atomic<long long> videoFrameTicks_{0};
     std::atomic_bool stopping = false;
     std::atomic_bool shuttingDown = false;
     std::atomic_bool hwdecLogged = false;  // one-shot log for hwdec-current
@@ -2358,6 +2370,13 @@ extern "C" JNIEXPORT jlong JNICALL
 Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_bufferedPositionMs(JNIEnv *, jobject, jlong handle) {
     auto player = playerFromHandle(handle);
     return player ? player->bufferedPositionMs() : 0;
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_videoFrameTicks(JNIEnv *, jobject, jlong handle) {
+    auto player = playerFromHandle(handle);
+    // -1 means "no picture expected", which is also the right answer for a dead handle.
+    return player ? player->videoFrameTicks() : -1;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

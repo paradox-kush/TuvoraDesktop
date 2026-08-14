@@ -59,6 +59,10 @@ class LivePlaybackFreezeReporter(
         lastAdvanceAtMs = nowMs
         lastAdvancedBufferedPositionMs = 0L
         lastBufferedAdvanceAtMs = nowMs
+        // The rebuilt player restarts its frame counter, so hold the current value as the baseline
+        // rather than letting the reset itself read as the picture coming back.
+        lastAdvancedVideoTicks = lastSeenVideoTicks
+        lastVideoAdvanceAtMs = nowMs
     }
 
     private var playbackStartedAtMs = 0L
@@ -66,6 +70,9 @@ class LivePlaybackFreezeReporter(
     private var lastAdvanceAtMs = 0L
     private var lastAdvancedBufferedPositionMs = 0L
     private var lastBufferedAdvanceAtMs = 0L
+    private var lastAdvancedVideoTicks = 0L
+    private var lastSeenVideoTicks = 0L
+    private var lastVideoAdvanceAtMs = 0L
 
     private var freezeActive = false
     private var freezeKind: LivePlaybackFreezePolicy.Kind? = null
@@ -84,7 +91,12 @@ class LivePlaybackFreezeReporter(
      * is on screen — startup buffering is a different problem and would otherwise report as a
      * freeze on every slow channel open.
      */
-    fun onLivePlaybackStarted(profile: Profile, nowMs: Long, positionMs: Long) {
+    fun onLivePlaybackStarted(
+        profile: Profile,
+        nowMs: Long,
+        positionMs: Long,
+        videoProgressTicks: Long = 0L,
+    ) {
         this.profile = profile
         armed = true
         playbackStartedAtMs = nowMs
@@ -92,6 +104,9 @@ class LivePlaybackFreezeReporter(
         lastAdvanceAtMs = nowMs
         lastAdvancedBufferedPositionMs = positionMs
         lastBufferedAdvanceAtMs = nowMs
+        lastAdvancedVideoTicks = videoProgressTicks
+        lastSeenVideoTicks = videoProgressTicks
+        lastVideoAdvanceAtMs = nowMs
         resetFreezeState()
         eventsThisSession = 0
     }
@@ -106,9 +121,12 @@ class LivePlaybackFreezeReporter(
         bufferedPositionMs: Long,
         state: LivePlaybackFreezePolicy.PlaybackState,
         wantsToPlay: Boolean,
+        videoProgressTicks: Long = 0L,
+        hasVideoTrack: Boolean = false,
     ): LivePlaybackFreezePolicy.Decision {
         if (!armed) return LivePlaybackFreezePolicy.Decision.Idle
         val bufferedAheadMs = (bufferedPositionMs - positionMs).coerceAtLeast(0L)
+        lastSeenVideoTicks = videoProgressTicks
 
         val decision = LivePlaybackFreezePolicy.evaluate(
             LivePlaybackFreezePolicy.Input(
@@ -121,9 +139,16 @@ class LivePlaybackFreezeReporter(
                 lastAdvancedBufferedPositionMs = lastAdvancedBufferedPositionMs,
                 sinceBufferedAdvanceMs = nowMs - lastBufferedAdvanceAtMs,
                 freezeActive = freezeActive,
+                activeKind = freezeKind,
+                hasVideoTrack = hasVideoTrack,
+                videoProgressTicks = videoProgressTicks,
+                lastAdvancedVideoTicks = lastAdvancedVideoTicks,
+                sinceVideoAdvanceMs = nowMs - lastVideoAdvanceAtMs,
+                sincePlaybackStartMs = nowMs - playbackStartedAtMs,
             )
         )
         markBufferedAdvancedIfMoved(nowMs, bufferedPositionMs)
+        markVideoAdvancedIfMoved(nowMs, videoProgressTicks)
 
         when (decision) {
             is LivePlaybackFreezePolicy.Decision.Idle -> {
@@ -193,6 +218,18 @@ class LivePlaybackFreezeReporter(
         ) {
             lastAdvancedBufferedPositionMs = bufferedPositionMs
             lastBufferedAdvanceAtMs = nowMs
+        }
+    }
+
+    /**
+     * Tracked independently of both the playhead and the buffered edge, because it is the only
+     * one of the three that audio cannot keep alive. Any change is a rendered frame — the value
+     * is a counter, so unlike a position it needs no tolerance band.
+     */
+    private fun markVideoAdvancedIfMoved(nowMs: Long, videoProgressTicks: Long) {
+        if (videoProgressTicks != lastAdvancedVideoTicks) {
+            lastAdvancedVideoTicks = videoProgressTicks
+            lastVideoAdvanceAtMs = nowMs
         }
     }
 
