@@ -29,14 +29,36 @@ class LivePlaybackReconnector(private val reporter: LivePlaybackFreezeReporter) 
      * [reconnect] should re-prepare the current source at the live edge — the automated form of
      * the channel-change-and-back that viewers do by hand.
      */
-    fun onFrozen(nowMs: Long, reconnect: () -> Unit): Boolean {
+    fun onFrozen(
+        nowMs: Long,
+        kind: LivePlaybackFreezePolicy.Kind = LivePlaybackFreezePolicy.Kind.STALLED,
+        resetVideo: (() -> Boolean)? = null,
+        reconnect: () -> Unit,
+    ): Boolean {
         val sinceLastAttemptMs = if (lastAttemptAtMs == 0L) Long.MAX_VALUE else nowMs - lastAttemptAtMs
         return when (
             LivePlaybackRecoveryPolicy.evaluate(
-                LivePlaybackRecoveryPolicy.Input(attempts = attempts, sinceLastAttemptMs = sinceLastAttemptMs)
+                LivePlaybackRecoveryPolicy.Input(
+                    attempts = attempts,
+                    sinceLastAttemptMs = sinceLastAttemptMs,
+                    kind = kind,
+                    // An engine with no video-reset primitive skips straight to reconnecting
+                    // rather than burning two attempts doing nothing.
+                    videoResetAttempts = if (resetVideo == null) 0 else LivePlaybackRecoveryPolicy.VIDEO_RESET_ATTEMPTS,
+                )
             )
         ) {
             LivePlaybackRecoveryPolicy.Decision.Wait -> false
+
+            LivePlaybackRecoveryPolicy.Decision.ResetVideo -> {
+                attempts += 1
+                lastAttemptAtMs = nowMs
+                reporter.onRecoveryAttempt(nowMs)
+                // An engine that has no video-reset primitive reports false, and the attempt
+                // escalates on the spot rather than being spent on a no-op.
+                if (resetVideo?.invoke() != true) reconnect()
+                true
+            }
 
             // Out of attempts. Let the freeze stand so the normal error path can surface it
             // rather than looping on a channel the provider is no longer serving.

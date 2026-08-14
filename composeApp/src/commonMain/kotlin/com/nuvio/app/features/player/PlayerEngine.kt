@@ -9,6 +9,18 @@ interface PlayerEngineController {
     fun seekTo(positionMs: Long)
     fun seekBy(offsetMs: Long)
     fun retry()
+
+    /**
+     * Reinitialise the video pipeline, leaving the connection alone — for a live channel whose
+     * picture died while its audio kept arriving. Returns false when the engine has no such
+     * primitive, so the caller escalates to a full re-resolve instead of spending a recovery
+     * attempt on nothing.
+     *
+     * Deliberately not [retry]: a live link carries an expiring, sometimes single-use token, and
+     * providers cap concurrent connections. Re-resolving a stream that is still delivering audio
+     * can cost the viewer the half-working stream they still had.
+     */
+    fun resetVideoPipeline(): Boolean = false
     fun setPlaybackSpeed(speed: Float)
     fun setMuted(muted: Boolean) {}
     fun getAudioTracks(): List<AudioTrack>

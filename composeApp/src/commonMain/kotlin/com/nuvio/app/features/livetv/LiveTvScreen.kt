@@ -333,6 +333,9 @@ fun LiveTvScreen(
                             // expiring tokens, so replaying the same URL can reconnect to a
                             // link the provider has already invalidated.
                             reconnect = onRetry,
+                            // Video-only freeze: the stream is still delivering audio, so reset
+                            // the decoder before spending a live link on a re-resolve.
+                            resetVideo = { controller?.resetVideoPipeline() == true },
                         )
                     },
                     onError = { playbackError = it },

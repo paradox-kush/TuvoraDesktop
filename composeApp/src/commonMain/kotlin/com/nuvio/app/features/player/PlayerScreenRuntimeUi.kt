@@ -463,6 +463,9 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                             surface = LIVE_FREEZE_SURFACE_PLAYER,
                             reconnector = freezeReconnector,
                             reconnect = { playerController?.retry() },
+                            // Video-only freeze: the stream is still delivering audio, so reset
+                            // the decoder before spending a live link on a re-resolve.
+                            resetVideo = { playerController?.resetVideoPipeline() == true },
                         )
                     }
                     // A live channel has no end: ENDED means the upstream closed, and the

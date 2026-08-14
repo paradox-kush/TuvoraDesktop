@@ -30,6 +30,12 @@ fun LivePlaybackFreezeReporter.onLiveSnapshot(
     surface: String,
     reconnector: LivePlaybackReconnector,
     reconnect: () -> Unit,
+    /**
+     * Reinitialise the video pipeline without touching the connection. Tried first for a
+     * video-only freeze, where audio proves the stream is still arriving and a re-resolve would
+     * risk a live link the provider has already invalidated.
+     */
+    resetVideo: (() -> Boolean)? = null,
 ) {
     val nowMs = TraktPlatformClock.nowEpochMs()
     val started = snapshot.positionMs > 0L || snapshot.isPlaying
@@ -61,12 +67,18 @@ fun LivePlaybackFreezeReporter.onLiveSnapshot(
         hasVideoTrack = snapshot.hasVideoTrack,
     )
 
-    when (decision) {
-        is LivePlaybackFreezePolicy.Decision.Start,
-        is LivePlaybackFreezePolicy.Decision.Continue,
-        -> reconnector.onFrozen(nowMs, reconnect)
-
-        else -> Unit
+    val kind = when (decision) {
+        is LivePlaybackFreezePolicy.Decision.Start -> decision.kind
+        is LivePlaybackFreezePolicy.Decision.Continue -> decision.kind
+        else -> null
+    }
+    if (kind != null) {
+        reconnector.onFrozen(
+            nowMs = nowMs,
+            kind = kind,
+            resetVideo = resetVideo,
+            reconnect = reconnect,
+        )
     }
 }
 
