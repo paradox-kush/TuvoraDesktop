@@ -416,6 +416,8 @@ internal class NativePlayerController(
             val isEnded = NativePlayerBridge.isEnded(current)
             // -1 means the track carries no picture; see NativePlayerBridge.videoFrameTicks.
             val videoTicks = NativePlayerBridge.videoFrameTicks(current)
+            // Packed 32/32; see NativePlayerBridge.voFrameStats.
+            val voFrameStats = NativePlayerBridge.voFrameStats(current)
             PlayerPlaybackSnapshot(
                 isLoading = isLoading,
                 isPlaying = !NativePlayerBridge.isPaused(current) && !isLoading && !isEnded,
@@ -426,6 +428,8 @@ internal class NativePlayerController(
                 playbackSpeed = NativePlayerBridge.speed(current),
                 videoProgressTicks = videoTicks.coerceAtLeast(0L),
                 hasVideoTrack = videoTicks >= 0L,
+                voDroppedFrameCount = voFrameStats ushr 32,
+                voDelayedFrameCount = voFrameStats and 0xFFFF_FFFFL,
             )
         }.getOrDefault(PlayerPlaybackSnapshot(isLoading = true))
     }

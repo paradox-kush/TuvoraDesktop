@@ -112,6 +112,7 @@
 - (long long)positionMs;
 - (long long)bufferedPositionMs;
 - (long long)videoFrameTicks;
+- (long long)voFrameStats;
 - (BOOL)isLoading;
 - (BOOL)isEnded;
 - (NSString *)audioTracksJson;
@@ -1994,6 +1995,21 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     return _videoFrameTicks.load();
 }
 
+// mpv's VO-level counters packed 32/32 into one JNI call — estimated-vf-fps above proves
+// decoding, not presentation; these are the closest mpv has to "the picture reached the
+// screen" (no true presented-frames property exists). High 32: frame-drop-count; low 32:
+// vo-delayed-frame-count; both clamped so the packed value is never negative.
+- (long long)voFrameStats {
+    if (!_mpv) return 0;
+    long long dropped = [self int64Property:"frame-drop-count" fallback:0];
+    long long delayed = [self int64Property:"vo-delayed-frame-count" fallback:0];
+    if (dropped < 0) dropped = 0;
+    if (dropped > INT32_MAX) dropped = INT32_MAX;
+    if (delayed < 0) delayed = 0;
+    if (delayed > UINT32_MAX) delayed = UINT32_MAX;
+    return (dropped << 32) | delayed;
+}
+
 - (BOOL)isLoading {
     return _cachedLoading.load();
 }
@@ -2809,6 +2825,17 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_videoFrameTicks(
     if (handle == 0) return -1;
     MpvWebPlayer *player = (__bridge MpvWebPlayer *)(void *)(intptr_t)handle;
     return [player videoFrameTicks];
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_voFrameStats(
+    JNIEnv * /* env */,
+    jobject /* bridge */,
+    jlong handle
+) {
+    if (handle == 0) return 0;
+    MpvWebPlayer *player = (__bridge MpvWebPlayer *)(void *)(intptr_t)handle;
+    return [player voFrameStats];
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
