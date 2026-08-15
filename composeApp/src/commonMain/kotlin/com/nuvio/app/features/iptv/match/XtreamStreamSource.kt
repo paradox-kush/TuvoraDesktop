@@ -46,15 +46,18 @@ internal object XtreamStreamSource {
     /**
      * Mints the real play link for a [isDeferred] URL. Returns null when the account is gone or the
      * portal won't issue a link (callers surface that as an unplayable source).
+     *
+     * [forceMint] — the 401-refresh path only: bypass a static-cmd verdict (the static URL just
+     * died); the normal pick-time resolve keeps the policy's static shortcut.
      */
-    suspend fun resolveDeferredUrl(url: String): String? {
+    suspend fun resolveDeferredUrl(url: String, forceMint: Boolean = false): String? {
         if (!isDeferred(url)) return url
         val d = parseDeferred(url) ?: return null
         com.nuvio.app.features.iptv.XtreamRepository.ensureLoaded()
         val acc = com.nuvio.app.features.iptv.XtreamRepository.uiState.value.accounts
             .firstOrNull { it.id == d.accountId } ?: return null
         return if (d.isMovie) {
-            StalkerClient.resolveMovieUrl(acc, d.a, d.name)
+            StalkerClient.resolveMovieUrl(acc, d.a, d.name, forceMint)
         } else {
             StalkerClient.resolveEpisodeUrl(acc, d.a, d.b, d.c)
         }

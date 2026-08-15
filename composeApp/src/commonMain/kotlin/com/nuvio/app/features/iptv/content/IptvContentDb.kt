@@ -19,7 +19,9 @@ internal data class IptvCategoryRow(val id: String, val name: String)
  * A live channel or VOD movie row. [ext] = container extension (VOD only). [cmd] is the Stalker
  * create_link handle (P6): stable across sessions — unlike the play URL, which is single-use —
  * so persisting it is what makes a browsed Stalker item playable after a cold start. [hasArchive]
- * = Stalker tv_archive (timeshift); M3U rows leave both defaulted.
+ * = Stalker tv_archive (timeshift); M3U rows leave both defaulted. [useHttpTmpLink] /
+ * [useLoadBalancing] mirror the Xtream panel's per-channel flags (stream resolution consumes
+ * them — this store only persists and returns them).
  */
 internal data class IptvStreamRow(
     val sid: Int,
@@ -31,6 +33,8 @@ internal data class IptvStreamRow(
     val ext: String?,
     val cmd: String? = null,
     val hasArchive: Boolean = false,
+    val useHttpTmpLink: Boolean = false,
+    val useLoadBalancing: Boolean = false,
 )
 
 /** A series row (one per distinct series within a playlist). */
@@ -68,13 +72,16 @@ internal data class IngestMeta(
 /** EPG freshness marker for a playlist — non-null once XMLTV has been ingested at least once. */
 internal data class EpgMeta(val builtAtMs: Long, val programmeCount: Int)
 
-/** One EPG programme row (already channel-filtered + UTC-normalized). */
+/** One EPG programme row (already channel-filtered + UTC-normalized). [hasArchive] = the
+ *  programme is inside the provider's replay window (catch-up). Windowed reads truncate
+ *  [desc] to 600 chars — [IptvContentDb.epgFullDesc] fetches the whole text on demand. */
 internal data class EpgProgrammeRow(
     val channelId: String,
     val startMs: Long,
     val endMs: Long,
     val title: String,
     val desc: String?,
+    val hasArchive: Boolean = false,
 )
 
 /**
@@ -135,6 +142,19 @@ internal object IptvContentDb {
         // Per-playlist EPG freshness marker (kept separate from the catalog's ingest_meta so an EPG
         // refresh doesn't touch the catalog row, and vice-versa).
         it.execSQL("CREATE TABLE IF NOT EXISTS epg_meta(playlist_id TEXT NOT NULL PRIMARY KEY, built_at INTEGER NOT NULL, programme_count INTEGER NOT NULL) WITHOUT ROWID")
+        // v4 (memory/catch-up pre-work, one migration): the per-programme catch-up flag on the
+        // guide rows, plus the Xtream panel's per-channel flags that stream resolution consumes.
+        // Runs AFTER the CREATEs above so a fresh DB replays it against the just-created tables
+        // (the v2/v3 idiom: base CREATEs stay at v1 shape, later columns arrive via ALTER).
+        if (version < 4) {
+            runCatching { it.execSQL("ALTER TABLE epg_programmes ADD COLUMN has_archive INTEGER NOT NULL DEFAULT 0") }
+            runCatching { it.execSQL("ALTER TABLE channels ADD COLUMN use_http_tmp_link INTEGER") }
+            runCatching { it.execSQL("ALTER TABLE channels ADD COLUMN use_load_balancing INTEGER") }
+            it.execSQL("PRAGMA user_version = 4")
+        }
+        // Per-(playlist, channel) EPG fetch stamp — the guide's lazy-fetch gate (v4, but created
+        // unconditionally like the other epg tables: IF NOT EXISTS is self-healing).
+        it.execSQL("CREATE TABLE IF NOT EXISTS epg_channel_fetch(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, fetched_at INTEGER NOT NULL, PRIMARY KEY(playlist_id, channel_id)) WITHOUT ROWID")
         conn = it
     }
 
@@ -164,7 +184,7 @@ internal object IptvContentDb {
         val c = connection()
         c.execSQL("BEGIN IMMEDIATE")
         try {
-            for (table in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta", "epg_programmes", "epg_meta")) {
+            for (table in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta", "epg_programmes", "epg_meta", "epg_channel_fetch")) {
                 c.prepare("DELETE FROM $table WHERE playlist_id = ?").use { st -> st.bindText(1, playlistId); st.step() }
             }
             c.execSQL("COMMIT")
@@ -189,7 +209,7 @@ internal object IptvContentDb {
         val c = connection()
         c.execSQL("BEGIN IMMEDIATE")
         try {
-            if (channels.isNotEmpty()) c.prepare("INSERT OR REPLACE INTO channels(playlist_id, sid, category_id, name, logo, tvg_id, url, cmd, tv_archive) VALUES(?,?,?,?,?,?,?,?,?)").use { st ->
+            if (channels.isNotEmpty()) c.prepare("INSERT OR REPLACE INTO channels(playlist_id, sid, category_id, name, logo, tvg_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing) VALUES(?,?,?,?,?,?,?,?,?,?,?)").use { st ->
                 for (r in channels) {
                     st.reset()
                     st.bindText(1, playlistId); st.bindLong(2, r.sid.toLong())
@@ -200,6 +220,8 @@ internal object IptvContentDb {
                     st.bindText(7, r.url)
                     if (r.cmd != null) st.bindText(8, r.cmd) else st.bindNull(8)
                     st.bindLong(9, if (r.hasArchive) 1L else 0L)
+                    st.bindLong(10, if (r.useHttpTmpLink) 1L else 0L)
+                    st.bindLong(11, if (r.useLoadBalancing) 1L else 0L)
                     st.step()
                 }
             }
@@ -284,12 +306,13 @@ internal object IptvContentDb {
         }
     }
 
-    /** Wipes any prior EPG rows for a playlist. Call once before streaming [insertEpgChunk] calls. */
+    /** Wipes any prior EPG rows for a playlist (per-channel fetch stamps included — a wholesale
+     *  refresh supersedes them). Call once before streaming [insertEpgChunk] calls. */
     suspend fun beginEpg(playlistId: String) = mutex.withLock {
         val c = connection()
         c.execSQL("BEGIN IMMEDIATE")
         try {
-            for (table in listOf("epg_programmes", "epg_meta")) {
+            for (table in listOf("epg_programmes", "epg_meta", "epg_channel_fetch")) {
                 c.prepare("DELETE FROM $table WHERE playlist_id = ?").use { st -> st.bindText(1, playlistId); st.step() }
             }
             c.execSQL("COMMIT")
@@ -304,19 +327,123 @@ internal object IptvContentDb {
         val c = connection()
         c.execSQL("BEGIN IMMEDIATE")
         try {
-            c.prepare("INSERT INTO epg_programmes(playlist_id, channel_id, start_ms, end_ms, title, desc) VALUES(?,?,?,?,?,?)").use { st ->
+            c.prepare("INSERT INTO epg_programmes(playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive) VALUES(?,?,?,?,?,?,?)").use { st ->
                 for (r in programmes) {
                     st.reset()
                     st.bindText(1, playlistId); st.bindText(2, r.channelId)
                     st.bindLong(3, r.startMs); st.bindLong(4, r.endMs)
                     st.bindText(5, r.title)
                     if (r.desc != null) st.bindText(6, r.desc) else st.bindNull(6)
+                    st.bindLong(7, if (r.hasArchive) 1L else 0L)
                     st.step()
                 }
             }
             c.execSQL("COMMIT")
         } catch (t: Throwable) {
             c.execSQL("ROLLBACK"); throw t
+        }
+    }
+
+    /**
+     * Atomic per-channel EPG refill: the channel's old rows are DELETEd in the SAME transaction
+     * as the new batch's insert, and the (playlist, channel) fetch stamp is written with them —
+     * a reader never sees an empty channel mid-refill and a crash leaves the old rows intact.
+     * Rows are stored under [channelId] regardless of what their own field says: the refill is
+     * per-channel by contract. An empty [programmes] still stamps [fetchedAtMs] so the guide's
+     * lazy-fetch gate stops re-asking a channel the provider has no guide for.
+     */
+    suspend fun refillChannelEpg(
+        playlistId: String,
+        channelId: String,
+        programmes: List<EpgProgrammeRow>,
+        fetchedAtMs: Long,
+    ) = mutex.withLock {
+        val c = connection()
+        c.execSQL("BEGIN IMMEDIATE")
+        try {
+            c.prepare("DELETE FROM epg_programmes WHERE playlist_id = ? AND channel_id = ?").use { st ->
+                st.bindText(1, playlistId); st.bindText(2, channelId); st.step()
+            }
+            if (programmes.isNotEmpty()) {
+                c.prepare("INSERT INTO epg_programmes(playlist_id, channel_id, start_ms, end_ms, title, desc, has_archive) VALUES(?,?,?,?,?,?,?)").use { st ->
+                    for (r in programmes) {
+                        st.reset()
+                        st.bindText(1, playlistId); st.bindText(2, channelId)
+                        st.bindLong(3, r.startMs); st.bindLong(4, r.endMs)
+                        st.bindText(5, r.title)
+                        if (r.desc != null) st.bindText(6, r.desc) else st.bindNull(6)
+                        st.bindLong(7, if (r.hasArchive) 1L else 0L)
+                        st.step()
+                    }
+                }
+            }
+            c.prepare("INSERT OR REPLACE INTO epg_channel_fetch(playlist_id, channel_id, fetched_at) VALUES(?,?,?)").use { st ->
+                st.bindText(1, playlistId); st.bindText(2, channelId); st.bindLong(3, fetchedAtMs)
+                st.step()
+            }
+            c.execSQL("COMMIT")
+        } catch (t: Throwable) {
+            c.execSQL("ROLLBACK"); throw t
+        }
+    }
+
+    /** When this channel's EPG was last refilled (null = never — the lazy-fetch gate opens). */
+    suspend fun epgChannelFetchedAt(playlistId: String, channelId: String): Long? = mutex.withLock {
+        connection().prepare("SELECT fetched_at FROM epg_channel_fetch WHERE playlist_id = ? AND channel_id = ?").use { st ->
+            st.bindText(1, playlistId); st.bindText(2, channelId)
+            if (st.step()) st.getLong(0) else null
+        }
+    }
+
+    /** Drops programmes that ended before [cutoffMs] — the guide never reads that far back. */
+    suspend fun pruneEpg(playlistId: String, cutoffMs: Long) = mutex.withLock {
+        connection().prepare("DELETE FROM epg_programmes WHERE playlist_id = ? AND end_ms < ?").use { st ->
+            st.bindText(1, playlistId); st.bindLong(2, cutoffMs)
+            st.step()
+        }
+    }
+
+    /**
+     * Windowed guide read: programmes overlapping [fromMs, toMs) for one channel, ordered by
+     * start, desc truncated to its first 600 chars (SUBSTR runs in SQLite, so a feed's 4KB
+     * synopsis never lands in the heap — [epgFullDesc] fetches the whole text on demand).
+     * [limit] keeps a corrupt feed from materializing thousands of rows.
+     */
+    suspend fun epgWindow(
+        playlistId: String,
+        channelId: String,
+        fromMs: Long,
+        toMs: Long,
+        limit: Int = 200,
+    ): List<EpgProgrammeRow> = mutex.withLock {
+        connection().prepare(
+            "SELECT channel_id, start_ms, end_ms, title, SUBSTR(desc, 1, 600), has_archive FROM epg_programmes " +
+                "WHERE playlist_id = ? AND channel_id = ? AND start_ms < ? AND end_ms > ? ORDER BY start_ms LIMIT ?"
+        ).use { st ->
+            st.bindText(1, playlistId); st.bindText(2, channelId)
+            st.bindLong(3, toMs); st.bindLong(4, fromMs); st.bindLong(5, limit.toLong())
+            val out = ArrayList<EpgProgrammeRow>()
+            while (st.step()) out.add(
+                EpgProgrammeRow(
+                    channelId = st.getText(0),
+                    startMs = st.getLong(1),
+                    endMs = st.getLong(2),
+                    title = st.getText(3),
+                    desc = if (st.isNull(4)) null else st.getText(4),
+                    hasArchive = st.getLong(5) > 0,
+                )
+            )
+            out
+        }
+    }
+
+    /** The FULL description of one programme (keyed by its start) — the details sheet's lazy read. */
+    suspend fun epgFullDesc(playlistId: String, channelId: String, startMs: Long): String? = mutex.withLock {
+        connection().prepare(
+            "SELECT desc FROM epg_programmes WHERE playlist_id = ? AND channel_id = ? AND start_ms = ? LIMIT 1"
+        ).use { st ->
+            st.bindText(1, playlistId); st.bindText(2, channelId); st.bindLong(3, startMs)
+            if (st.step() && !st.isNull(0)) st.getText(0) else null
         }
     }
 
@@ -355,7 +482,7 @@ internal object IptvContentDb {
         val terms = tokens.take(8).map { "%${it.lowercase()}%" }
         val where = terms.joinToString(" OR ") { "(lower(title) LIKE ? OR lower(coalesce(desc,'')) LIKE ?)" }
         connection().prepare(
-            "SELECT channel_id, start_ms, end_ms, title, desc FROM epg_programmes " +
+            "SELECT channel_id, start_ms, end_ms, title, desc, has_archive FROM epg_programmes " +
                 "WHERE playlist_id = ? AND start_ms < ? AND end_ms > ? AND ($where) " +
                 "ORDER BY start_ms LIMIT ?"
         ).use { st ->
@@ -371,6 +498,7 @@ internal object IptvContentDb {
                     endMs = st.getLong(2),
                     title = st.getText(3),
                     desc = if (st.isNull(4)) null else st.getText(4),
+                    hasArchive = st.getLong(5) > 0,
                 )
             )
             out
@@ -381,7 +509,7 @@ internal object IptvContentDb {
         // Grab the currently-airing programme (start <= now < end) plus the upcoming ones. Union keeps
         // it a single indexed pass without pulling the channel's whole day.
         connection().prepare(
-            "SELECT channel_id, start_ms, end_ms, title, desc FROM epg_programmes " +
+            "SELECT channel_id, start_ms, end_ms, title, desc, has_archive FROM epg_programmes " +
                 "WHERE playlist_id = ? AND channel_id = ? AND end_ms > ? ORDER BY start_ms LIMIT ?"
         ).use { st ->
             st.bindText(1, playlistId); st.bindText(2, channelId); st.bindLong(3, atMs); st.bindLong(4, limit.toLong())
@@ -393,6 +521,7 @@ internal object IptvContentDb {
                     endMs = st.getLong(2),
                     title = st.getText(3),
                     desc = if (st.isNull(4)) null else st.getText(4),
+                    hasArchive = st.getLong(5) > 0,
                 )
             )
             out
@@ -404,7 +533,7 @@ internal object IptvContentDb {
         val c = connection()
         c.execSQL("BEGIN IMMEDIATE")
         try {
-            for (table in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta", "epg_programmes", "epg_meta")) {
+            for (table in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta", "epg_programmes", "epg_meta", "epg_channel_fetch")) {
                 c.prepare("DELETE FROM $table WHERE playlist_id = ?").use { st -> st.bindText(1, playlistId); st.step() }
             }
             c.execSQL("COMMIT")
@@ -464,10 +593,12 @@ internal object IptvContentDb {
         val extCol = if (hasExt) "ext" else "NULL"
         val tvgCol = if (table == "channels") "tvg_id" else "NULL"
         val archiveCol = if (table == "channels") "tv_archive" else "NULL"
+        val tmpLinkCol = if (table == "channels") "use_http_tmp_link" else "NULL"
+        val lbCol = if (table == "channels") "use_load_balancing" else "NULL"
         val sql = if (categoryId == null)
-            "SELECT sid, name, logo, $tvgCol, category_id, url, $extCol, cmd, $archiveCol FROM $table WHERE playlist_id = ? ORDER BY name, sid LIMIT ? OFFSET ?"
+            "SELECT sid, name, logo, $tvgCol, category_id, url, $extCol, cmd, $archiveCol, $tmpLinkCol, $lbCol FROM $table WHERE playlist_id = ? ORDER BY name, sid LIMIT ? OFFSET ?"
         else
-            "SELECT sid, name, logo, $tvgCol, category_id, url, $extCol, cmd, $archiveCol FROM $table WHERE playlist_id = ? AND category_id = ? ORDER BY name, sid LIMIT ? OFFSET ?"
+            "SELECT sid, name, logo, $tvgCol, category_id, url, $extCol, cmd, $archiveCol, $tmpLinkCol, $lbCol FROM $table WHERE playlist_id = ? AND category_id = ? ORDER BY name, sid LIMIT ? OFFSET ?"
         return connection().prepare(sql).use { st ->
             st.bindText(1, playlistId)
             var i = 2
@@ -485,6 +616,8 @@ internal object IptvContentDb {
                     ext = if (st.isNull(6)) null else st.getText(6),
                     cmd = if (st.isNull(7)) null else st.getText(7),
                     hasArchive = !st.isNull(8) && st.getLong(8) > 0,
+                    useHttpTmpLink = !st.isNull(9) && st.getLong(9) > 0,
+                    useLoadBalancing = !st.isNull(10) && st.getLong(10) > 0,
                 )
             )
             out
@@ -503,10 +636,12 @@ internal object IptvContentDb {
         val extCol = if (hasExt) "ext" else "NULL"
         val tvgCol = if (table == "channels") "tvg_id" else "NULL"
         val archiveCol = if (table == "channels") "tv_archive" else "NULL"
+        val tmpLinkCol = if (table == "channels") "use_http_tmp_link" else "NULL"
+        val lbCol = if (table == "channels") "use_load_balancing" else "NULL"
         val sql = if (categoryId == null)
-            "SELECT sid, name, logo, $tvgCol, category_id, url, $extCol, cmd, $archiveCol FROM $table WHERE playlist_id = ? ORDER BY name"
+            "SELECT sid, name, logo, $tvgCol, category_id, url, $extCol, cmd, $archiveCol, $tmpLinkCol, $lbCol FROM $table WHERE playlist_id = ? ORDER BY name"
         else
-            "SELECT sid, name, logo, $tvgCol, category_id, url, $extCol, cmd, $archiveCol FROM $table WHERE playlist_id = ? AND category_id = ? ORDER BY name"
+            "SELECT sid, name, logo, $tvgCol, category_id, url, $extCol, cmd, $archiveCol, $tmpLinkCol, $lbCol FROM $table WHERE playlist_id = ? AND category_id = ? ORDER BY name"
         return connection().prepare(sql).use { st ->
             st.bindText(1, playlistId)
             if (categoryId != null) st.bindText(2, categoryId)
@@ -522,6 +657,8 @@ internal object IptvContentDb {
                     ext = if (st.isNull(6)) null else st.getText(6),
                     cmd = if (st.isNull(7)) null else st.getText(7),
                     hasArchive = !st.isNull(8) && st.getLong(8) > 0,
+                    useHttpTmpLink = !st.isNull(9) && st.getLong(9) > 0,
+                    useLoadBalancing = !st.isNull(10) && st.getLong(10) > 0,
                 )
             )
             out
@@ -590,7 +727,7 @@ internal object IptvContentDb {
             c.prepare("DELETE FROM categories WHERE playlist_id = ? AND type = ?").use { st ->
                 st.bindText(1, playlistId); st.bindText(2, IptvContentKind.LIVE.slug); st.step()
             }
-            c.prepare("INSERT OR REPLACE INTO channels(playlist_id, sid, category_id, name, logo, tvg_id, url, cmd, tv_archive) VALUES(?,?,?,?,?,?,?,?,?)").use { st ->
+            c.prepare("INSERT OR REPLACE INTO channels(playlist_id, sid, category_id, name, logo, tvg_id, url, cmd, tv_archive, use_http_tmp_link, use_load_balancing) VALUES(?,?,?,?,?,?,?,?,?,?,?)").use { st ->
                 for (r in channels) {
                     st.reset()
                     st.bindText(1, playlistId); st.bindLong(2, r.sid.toLong())
@@ -601,6 +738,8 @@ internal object IptvContentDb {
                     st.bindText(7, r.url)
                     if (r.cmd != null) st.bindText(8, r.cmd) else st.bindNull(8)
                     st.bindLong(9, if (r.hasArchive) 1L else 0L)
+                    st.bindLong(10, if (r.useHttpTmpLink) 1L else 0L)
+                    st.bindLong(11, if (r.useLoadBalancing) 1L else 0L)
                     st.step()
                 }
             }
@@ -663,7 +802,7 @@ internal object IptvContentDb {
 
     /** A single channel row by sid — rebuilds a favorited channel's URL (or Stalker cmd) after a cold launch. */
     suspend fun channelRow(playlistId: String, sid: Int): IptvStreamRow? = mutex.withLock {
-        connection().prepare("SELECT sid, name, logo, tvg_id, category_id, url, NULL, cmd, tv_archive FROM channels WHERE playlist_id = ? AND sid = ?").use { st ->
+        connection().prepare("SELECT sid, name, logo, tvg_id, category_id, url, NULL, cmd, tv_archive, use_http_tmp_link, use_load_balancing FROM channels WHERE playlist_id = ? AND sid = ?").use { st ->
             st.bindText(1, playlistId); st.bindLong(2, sid.toLong())
             if (st.step()) IptvStreamRow(
                 sid = st.getLong(0).toInt(),
@@ -675,6 +814,8 @@ internal object IptvContentDb {
                 ext = null,
                 cmd = if (st.isNull(7)) null else st.getText(7),
                 hasArchive = !st.isNull(8) && st.getLong(8) > 0,
+                useHttpTmpLink = !st.isNull(9) && st.getLong(9) > 0,
+                useLoadBalancing = !st.isNull(10) && st.getLong(10) > 0,
             ) else null
         }
     }

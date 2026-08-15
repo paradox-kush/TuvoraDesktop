@@ -233,6 +233,21 @@ data class PlayerPlaybackSnapshot(
      * radio stations, and without this every one of them would look permanently frozen.
      */
     val hasVideoTrack: Boolean = false,
+    /**
+     * mpv `frame-drop-count`: frames the VO dropped, including frames that could not be
+     * displayed on time. [videoProgressTicks] is fed by `estimated-vf-fps`, which measures the
+     * *filter chain* — decoding — rather than presentation; mpv has no true presented-frames
+     * property (verified against the manual), so this and [voDelayedFrameCount] are the closest
+     * VO-level signals to "did the picture reach the screen". Recorded for the live-freeze
+     * work; not a detection input yet. 0 on engines without the signal; may rebase when
+     * playback reloads, so consumers must diff defensively.
+     */
+    val voDroppedFrameCount: Long = 0L,
+    /**
+     * mpv `vo-delayed-frame-count`: mpv's estimate of vsyncs that took too long — a heuristic,
+     * per the manual. Same caveats and purpose as [voDroppedFrameCount].
+     */
+    val voDelayedFrameCount: Long = 0L,
 )
 
 /**

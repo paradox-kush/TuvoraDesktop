@@ -64,12 +64,18 @@ object PlayerStreamsRepository {
     private var episodeStreamsJob: Job? = null
     private var episodeStreamsRequestKey: String? = null
 
+    /**
+     * [forceMintIptv] — set ONLY by the in-player expired-link refresh: a Stalker row whose policy
+     * verdict is static would otherwise rebuild the very URL that just 401'd; the refresh needs a
+     * freshly minted create_link (see StalkerPlaybackLinkPolicy / resolveMovieUrl's forceMint).
+     */
     fun loadSources(
         type: String,
         videoId: String,
         season: Int? = null,
         episode: Int? = null,
         forceRefresh: Boolean = false,
+        forceMintIptv: Boolean = false,
     ) {
         fetchStreams(
             panelName = "sources",
@@ -78,6 +84,7 @@ object PlayerStreamsRepository {
             season = season,
             episode = episode,
             forceRefresh = forceRefresh,
+            forceMintIptv = forceMintIptv,
             stateFlow = _sourceState,
             requestKeyHolder = { sourceRequestKey },
             setRequestKey = { sourceRequestKey = it },
@@ -100,6 +107,7 @@ object PlayerStreamsRepository {
             season = season,
             episode = episode,
             forceRefresh = forceRefresh,
+            forceMintIptv = false,
             stateFlow = _episodeStreamsState,
             requestKeyHolder = { episodeStreamsRequestKey },
             setRequestKey = { episodeStreamsRequestKey = it },
@@ -136,6 +144,7 @@ object PlayerStreamsRepository {
         season: Int?,
         episode: Int?,
         forceRefresh: Boolean,
+        forceMintIptv: Boolean,
         stateFlow: MutableStateFlow<StreamsUiState>,
         requestKeyHolder: () -> String?,
         setRequestKey: (String?) -> Unit,
@@ -203,7 +212,11 @@ object PlayerStreamsRepository {
             val job = scope.launch {
                 if (isStalkerSource || registry.streamItemFor(videoId) == null) {
                     runCatchingUnlessCancelled {
-                        MetaDetailsRepository.ensureXtreamStreamRegistered(videoId, forceFresh = isStalkerSource)
+                        MetaDetailsRepository.ensureXtreamStreamRegistered(
+                            videoId,
+                            forceFresh = isStalkerSource,
+                            forceMint = forceMintIptv && isStalkerSource,
+                        )
                     }
                 }
                 val stream = registry.streamItemFor(videoId)

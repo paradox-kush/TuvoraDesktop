@@ -1088,6 +1088,20 @@ public:
         return videoFrameTicks_.load();
     }
 
+    // mpv's VO-level counters packed 32/32 into one JNI call — estimated-vf-fps above proves
+    // decoding, not presentation; these are the closest mpv has to "the picture reached the
+    // screen" (no true presented-frames property exists). High 32: frame-drop-count; low 32:
+    // vo-delayed-frame-count; both clamped so the packed value is never negative.
+    long long voFrameStats() {
+        long long dropped = int64Property("frame-drop-count", 0);
+        long long delayed = int64Property("vo-delayed-frame-count", 0);
+        if (dropped < 0) dropped = 0;
+        if (dropped > INT32_MAX) dropped = INT32_MAX;
+        if (delayed < 0) delayed = 0;
+        if (delayed > UINT32_MAX) delayed = UINT32_MAX;
+        return (dropped << 32) | delayed;
+    }
+
     bool isLoading() {
         bool paused = isPaused();
         bool eofReached = isEnded();
@@ -2377,6 +2391,12 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_videoFrameTicks(JN
     auto player = playerFromHandle(handle);
     // -1 means "no picture expected", which is also the right answer for a dead handle.
     return player ? player->videoFrameTicks() : -1;
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_voFrameStats(JNIEnv *, jobject, jlong handle) {
+    auto player = playerFromHandle(handle);
+    return player ? player->voFrameStats() : 0;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

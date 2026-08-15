@@ -50,6 +50,13 @@ object StalkerClient : IptvClient {
     // re-paging the whole catalog (the request storm that got a live portal to block us).
     private val rowCache = mutableMapOf<String, JsonObject>()
 
+    /** A row's use_http_tmp_link/use_load_balancing verdicts (null = key absent on the row). */
+    private data class LinkFlags(val useHttpTmpLink: Boolean?, val useLoadBalancing: Boolean?)
+
+    // Static-vs-mint evidence per row, keyed like [rowCache] — small enough to keep for the whole
+    // lineup (the raw 13MB rows are NOT retained; get_all_channels items never enter rowCache).
+    private val linkFlags = mutableMapOf<String, LinkFlags>()
+
     // The live lineup lives in IptvContentDb (P6): one get_all_channels per [LINEUP_TTL_MS],
     // replaced wholesale via replaceLiveLineup, every browse a local indexed read. That kills the
     // 13MB re-download every cold start AND makes a favorited channel playable offline — the cmd
@@ -73,6 +80,7 @@ object StalkerClient : IptvClient {
     /** Test seam: simulates a process death — in-memory caches gone, the SQLite store intact. */
     internal fun clearMemoryCachesForTest() {
         rowCache.clear()
+        linkFlags.clear()
         seasonCache.clear()
     }
 
@@ -83,8 +91,11 @@ object StalkerClient : IptvClient {
         val fp = fingerprint(acc)
         val existing = sessions[acc.id]
         if (existing != null && existing.fingerprint == fp) return@withLock existing.session
-        // Config changed (or first use) — the cached rows/cmds belong to the OLD portal identity.
+        // Config changed (or first use) — the cached rows/cmds belong to the OLD portal identity,
+        // and the replaced session's watchdog must not keep pinging it.
+        existing?.session?.shutdown()
         rowCache.keys.removeAll { it.startsWith("${acc.id}:") }
+        linkFlags.keys.removeAll { it.startsWith("${acc.id}:") }
         epgUnsupported.remove(acc.id)
         seasonCache.keys.removeAll { it.startsWith("${acc.id}:") }
         sessionFactory(acc).also { sessions[acc.id] = Entry(it, fp) }
@@ -184,6 +195,9 @@ object StalkerClient : IptvClient {
             if (items.isEmpty()) items = orderedList(acc, "itv", null)
             val rows = items.mapNotNull { item ->
                 val id = item.int("id")?.takeIf { it > 0 } ?: return@mapNotNull null
+                // The raw 13MB rows are dropped after this mapping, so the static-vs-mint flags
+                // must be picked off here or the whole lineup would lose its evidence.
+                rememberLinkFlags(acc.id, "itv", item, id)
                 com.nuvio.app.features.iptv.content.IptvStreamRow(
                     sid = id,
                     name = item.str("name").orEmpty(),
@@ -194,6 +208,10 @@ object StalkerClient : IptvClient {
                     ext = null,
                     cmd = item.str("cmd"),
                     hasArchive = (item.int("tv_archive") ?: 0) > 0,
+                    // Stored as plain booleans (false = flag absent OR panel said false — the
+                    // column cannot tell them apart), so reads treat only TRUE as evidence.
+                    useHttpTmpLink = item.flag("use_http_tmp_link") ?: false,
+                    useLoadBalancing = item.flag("use_load_balancing") ?: false,
                 )
             }
             // Nothing usable fetched: keep whatever lineup is already stored (stale beats empty),
@@ -540,16 +558,51 @@ object StalkerClient : IptvClient {
 
     // --- Fresh play-time resolution (create_link) -----------------------------
 
-    suspend fun resolveLiveUrl(acc: XtreamAccount, streamId: Int): String? {
+    /**
+     * [forceMint] is the one-shot 401/403/410 refresh ladder's entry: it bypasses the static
+     * verdict so a static play that died still gets exactly one fresh create_link.
+     */
+    suspend fun resolveLiveUrl(acc: XtreamAccount, streamId: Int, forceMint: Boolean = false): String? {
         val cmd = liveCmd(acc, streamId) ?: return null
+        staticUrlOrNull(acc, "itv", streamId, cmd, forceMint)?.let { return it }
         return createLink(acc, "itv", cmd)
     }
 
     /** [nameHint] lets a cold-start play (Library/Continue Watching) find the row via the portal's own
      *  search instead of scanning a 63k-item catalog — pass the registered title when you have it. */
-    suspend fun resolveMovieUrl(acc: XtreamAccount, streamId: Int, nameHint: String? = null): String? {
+    suspend fun resolveMovieUrl(acc: XtreamAccount, streamId: Int, nameHint: String? = null, forceMint: Boolean = false): String? {
         val cmd = vodCmd(acc, streamId, nameHint) ?: return null
+        staticUrlOrNull(acc, "vod", streamId, cmd, forceMint)?.let { return it }
         return createLink(acc, "vod", cmd)
+    }
+
+    /**
+     * The static play URL when [StalkerPlaybackLinkPolicy] rules create_link unnecessary for this
+     * row, else null (mint as always).
+     *
+     * Evidence arrives two ways: live rows via [rememberLinkFlags] (can prove true OR false),
+     * and stored lineup rows via [noteStoredFlags] (true only — see its note on why the boolean
+     * columns cannot prove false). A row with no evidence mints; cold-start static playback for
+     * known-false rows waits on a tri-state column.
+     */
+    private fun staticUrlOrNull(acc: XtreamAccount, type: String, id: Int, cmd: String, forceMint: Boolean): String? {
+        if (forceMint) return null
+        val flags = linkFlags[rowKey(acc.id, type, id)]
+        val decision = StalkerPlaybackLinkPolicy.decide(
+            useHttpTmpLink = flags?.useHttpTmpLink,
+            useLoadBalancing = flags?.useLoadBalancing,
+            cmd = cmd,
+        )
+        return (decision as? StalkerPlaybackLinkPolicy.Decision.Static)?.url
+    }
+
+    /** Keep a row's flag evidence — only when the row actually carries a flag key. */
+    private fun rememberLinkFlags(accId: String, type: String, item: JsonObject, id: Int) {
+        val tmp = item.flag("use_http_tmp_link")
+        val lb = item.flag("use_load_balancing")
+        if (tmp == null && lb == null) return
+        if (linkFlags.size > MAX_CACHED_ROWS) linkFlags.clear()   // same crude cap as rowCache
+        linkFlags[rowKey(accId, type, id)] = LinkFlags(tmp, lb)
     }
 
     /**
@@ -557,6 +610,9 @@ object StalkerClient : IptvClient {
      * `{"type":"series","series_id":536,"season_num":2}`), and the episode is passed as `series={n}` —
      * NOT the top-level series row, whose cmd is empty. [season] null = an old 2-part episode id from
      * before seasons were modelled; fall back to the first season we find.
+     *
+     * Episodes ALWAYS mint: the `series={n}` parameter is create_link's argument — the season cmd
+     * is a container reference, not a playable address, so the static-cmd policy never applies.
      */
     suspend fun resolveEpisodeUrl(acc: XtreamAccount, seriesId: Int, season: Int?, episodeNum: Int): String? {
         // Season cmd resolution, cheapest first: this session's cache -> the write-through rows
@@ -648,7 +704,24 @@ object StalkerClient : IptvClient {
         // The mirrored lineup carries every channel's cmd — playing a channel costs nothing but
         // the create_link itself, even on a cold start with the portal briefly unreachable.
         ensureLineup(acc)
-        return IptvContentDb.channelRow(acc.id, streamId)?.cmd ?: row(acc, "itv", streamId)?.str("cmd")
+        val stored = IptvContentDb.channelRow(acc.id, streamId)
+        if (stored != null) noteStoredFlags(acc.id, "itv", streamId, stored.useHttpTmpLink, stored.useLoadBalancing)
+        return stored?.cmd ?: row(acc, "itv", streamId)?.str("cmd")
+    }
+
+    /**
+     * Cold-start evidence off a stored lineup row. The columns are plain booleans, so only TRUE
+     * is evidence ("this panel flagged the row" — mint, protecting masked rows before any live
+     * catalog fetch); false/false stays "no evidence" and mints anyway, because the store cannot
+     * distinguish a panel that said false from a row written before the flags existed. Live
+     * in-session evidence (rememberLinkFlags) is never overwritten — it can also prove false.
+     */
+    private fun noteStoredFlags(accId: String, type: String, id: Int, tmpLink: Boolean, loadBalancing: Boolean) {
+        if (!tmpLink && !loadBalancing) return
+        val key = rowKey(accId, type, id)
+        if (linkFlags.containsKey(key)) return
+        if (linkFlags.size > MAX_CACHED_ROWS) linkFlags.clear()
+        linkFlags[key] = LinkFlags(tmpLink, loadBalancing)
     }
 
     private suspend fun vodCmd(acc: XtreamAccount, streamId: Int, nameHint: String? = null): String? =
@@ -689,7 +762,12 @@ object StalkerClient : IptvClient {
         // ponytail: crude cap, not an LRU — a full catalog is ~26k rows and we only need what was
         // actually browsed. Swap in an LRU only if this ever shows up in a memory profile.
         if (rowCache.size > MAX_CACHED_ROWS) rowCache.clear()
-        rows.forEach { r -> r.int("id")?.let { rowCache[rowKey(accId, type, it)] = r } }
+        rows.forEach { r ->
+            r.int("id")?.let {
+                rowCache[rowKey(accId, type, it)] = r
+                rememberLinkFlags(accId, type, r, it)
+            }
+        }
     }
 
     // --- request helpers ------------------------------------------------------
@@ -754,6 +832,18 @@ object StalkerClient : IptvClient {
     private fun JsonObject.str(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
     private fun JsonObject.int(key: String): Int? = str(key)?.trim()?.toIntOrNull()
     private fun JsonObject.long(key: String): Long? = str(key)?.trim()?.toLongOrNull()
+
+    /** Portal flags arrive as booleans, numbers or quoted strings — like the tv_archive parse.
+     *  Null = the key is absent (or unreadable), which callers treat as "no evidence". */
+    private fun JsonObject.flag(key: String): Boolean? {
+        val prim = this[key] as? JsonPrimitive ?: return null
+        return when (val s = prim.contentOrNull?.trim()?.lowercase()) {
+            null, "" -> null
+            "true" -> true
+            "false" -> false
+            else -> s.toIntOrNull()?.let { it != 0 }
+        }
+    }
 
     private const val MAX_ITEMS = 8000
     private const val MAX_PAGES = 200

@@ -1302,6 +1302,18 @@ compose.desktop {
             ?: System.getenv("NUVIO_DESKTOP_SMOKE_PLAYER_URL")
         jvmArgs += listOfNotNull(
             "-Dapple.awt.application.appearance=NSAppearanceNameDarkAqua",
+            // Explicit heap bound: without -Xmx the JVM's ergonomics claim 25% of machine
+            // RAM (4 GB heap on a 16 GB Mac) — an ambition, not a budget. 1 GiB is the
+            // ceiling the HIGH-tier budgets are sized against; if it's ever tight, that's
+            // a leak we want to fail fast in testing instead of silently eating a machine.
+            "-Xmx1g",
+            // Skia's GPU resource cache lives OUTSIDE the JVM heap (-Xmx can't see it).
+            // Skiko 0.144.6 parses this as digits + optional K/M/G suffix (bytes when
+            // bare; anything else throws) and applies it via
+            // DirectContext.setResourceCacheLimit — verified against the shipped jar.
+            // Unset would leave Skia's own per-context default (96 MB Ganesh); 256M keeps
+            // 4K/5K render-target headroom while making the ceiling explicit.
+            "-Dskiko.gpu.resourceCacheLimit=256M",
             "--add-opens=java.desktop/java.awt=ALL-UNNAMED",
             "--add-opens=java.desktop/sun.lwawt=ALL-UNNAMED",
             "--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED",

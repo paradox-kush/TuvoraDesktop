@@ -2,6 +2,7 @@ package com.nuvio.app.features.livetv
 
 import com.nuvio.app.features.epg.EpgMirrorRepository
 import com.nuvio.app.features.iptv.IptvClient
+import com.nuvio.app.features.iptv.IptvPanelGuard
 import com.nuvio.app.features.iptv.XtreamItemRegistry
 import com.nuvio.app.features.iptv.XtreamKind
 import com.nuvio.app.features.iptv.XtreamLiveRecents
@@ -37,15 +38,29 @@ object LiveTvData {
      * Resolves the playable source for a live channel id, mirroring `App.launchLiveChannel`:
      * registry lookup (sync then async for M3U/Stalker) → DoH-resolved live URL. Also records the
      * channel to the live "recently watched" LRU. Returns null if the URL can't be resolved.
+     *
+     * [forceMint] = this resolve is a RETRY after a playback failure: a Stalker static-cmd verdict
+     * would replay the dead URL, so the retry demands a fresh create_link instead.
      */
-    suspend fun resolveSource(contentId: String, name: String, logo: String?): LiveChannelSource? {
+    suspend fun resolveSource(contentId: String, name: String, logo: String?, forceMint: Boolean = false): LiveChannelSource? {
         val immediate = XtreamItemRegistry.liveStreamUrlFor(contentId)
-            ?: XtreamItemRegistry.liveStreamUrlForAsync(contentId)
+            ?: XtreamItemRegistry.liveStreamUrlForAsync(contentId, forceMint)
             ?: return null
         val dnsProvider = XtreamItemRegistry.dnsProviderFor(contentId)
         val playback = resolveLivePlaybackUrl(immediate, dnsProvider)
         XtreamLiveRecents.record(contentId, name, logo)
         return LiveChannelSource(url = playback.url, headers = playback.headers)
+    }
+
+    /**
+     * USER-driven Live TV retry (WP6): clears the panel breaker for the channel's account so the
+     * re-resolve the user just asked for is never met with a fast-fail. The automatic one-shot
+     * re-resolve must NOT call this — only a user action means "contact this host now".
+     */
+    fun resetPanelGuard(contentId: String) {
+        val parsed = XtreamItemRegistry.parseId(contentId) ?: return
+        XtreamRepository.uiState.value.accounts.firstOrNull { it.id == parsed.accountId }
+            ?.let { IptvPanelGuard.resetForAccount(it) }
     }
 
     /**

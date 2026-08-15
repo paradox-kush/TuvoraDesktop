@@ -123,7 +123,12 @@ internal fun LazyListScope.xtreamContentSettingsContent(
             categories = categories,
             isTablet = isTablet,
             onOpenType = { type ->
-                if (categories[type] == null) fetchAttempt++   // re-attempt a failed/stuck fetch
+                if (categories[type] == null) {
+                    // User-driven re-attempt after a failed fetch: clear the panel breaker FIRST
+                    // (WP6) so neither this refetch nor the checklist page it opens fast-fails.
+                    IptvPanelGuard.resetForAccount(account)
+                    fetchAttempt++
+                }
                 onOpenType(type)
             },
         )
@@ -213,7 +218,12 @@ internal fun LazyListScope.xtreamCategoryChecklistContent(
             categories = categories,
             failed = failed,
             isTablet = isTablet,
-            onRetry = { fetchAttempt++ },
+            onRetry = {
+                // User-driven retry: clear the panel breaker FIRST (WP6) so it can never
+                // fast-fail the very attempt the user just asked for.
+                IptvPanelGuard.resetForAccount(account)
+                fetchAttempt++
+            },
         )
     }
 }

@@ -148,6 +148,9 @@ object XtreamHubRepository {
     fun retryCategories() {
         val state = _uiState.value
         val accountId = state.selectedAccountId ?: return
+        // User-driven retry: clear the panel breaker FIRST (WP6) so it can never fast-fail the
+        // very attempt the user just asked for.
+        accountFor(accountId)?.let { IptvPanelGuard.resetForAccount(it) }
         showSection(accountId, state.section)
     }
 
