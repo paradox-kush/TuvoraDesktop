@@ -3,7 +3,6 @@ package com.nuvio.app.features.radar
 import com.nuvio.app.features.epg.EpgLang
 import com.nuvio.app.features.epg.EpgMirrorRepository
 import com.nuvio.app.features.epg.EpgNorm
-import com.nuvio.app.features.iptv.XtreamClient
 import com.nuvio.app.features.iptv.content.IptvContentDb
 import com.nuvio.app.features.iptv.XtreamItemRegistry
 import com.nuvio.app.features.iptv.XtreamProgram
@@ -364,39 +363,60 @@ object RadarChannelMatcher {
     }
 
     /**
-     * Catch-up Replay for a started/finished fixture on an archived channel: registers a
-     * synthetic live item carrying the timeshift URL and returns its contentId — it then
-     * plays through the exact same live route as everything else (no new plumbing).
-     * Returns null when the channel has no archive or the fixture hasn't started.
+     * A replayable programme on a matched channel — the bounds the docked Live TV screen turns
+     * into a catch-up session (the SAME session the guide's replays create: flag on, gates
+     * inherited, dialect walk + winner memory instead of one hardcoded timeshift URL shape).
+     *
+     * [contentId] stays the LIVE channel's id — the replay is a flag beside the live identity,
+     * never a synthetic registry item wearing a single-dialect URL.
      */
-    fun replayFor(match: ChannelMatch, fixture: RadarFixture): String? {
+    data class SportsReplay(
+        val contentId: String,
+        val channelName: String,
+        val logo: String?,
+        val programmeTitle: String,
+        val programmeStartMs: Long,
+        val programmeEndMs: Long,
+    )
+
+    /**
+     * Catch-up Replay for a started/finished fixture on an archived channel: the programme bounds
+     * to replay, from the matched EPG programme when there is one, else a default window opening
+     * 15 minutes before kickoff. Null when the channel has no archive, the fixture hasn't
+     * started, or the source can't serve catch-up.
+     */
+    fun replayFor(match: ChannelMatch, fixture: RadarFixture): SportsReplay? = replayDescriptor(
+        match = match,
+        fixture = fixture,
+        account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == match.channel.playlistId },
+        nowMs = RadarTime.nowMs(),
+    )
+
+    /** [replayFor]'s pure core, split so the refusal rules stay pinned by tests. */
+    internal fun replayDescriptor(
+        match: ChannelMatch,
+        fixture: RadarFixture,
+        account: com.nuvio.app.features.iptv.XtreamAccount?,
+        nowMs: Long,
+    ): SportsReplay? {
         val start = fixture.startEpochMs ?: return null
-        if (!match.channel.hasArchive || start > RadarTime.nowMs()) return null
-        val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == match.channel.playlistId }
-            ?: return null
-        // Timeshift/catch-up is an Xtream-only feature — there's no interface method for Stalker/M3U.
-        // Offering Replay for those would register a bogus fabricated URL, so skip it.
+        if (!match.channel.hasArchive || start > nowMs) return null
+        if (account == null) return null
+        // Timeshift/catch-up is an Xtream-only feature: a Stalker portal builds its archive links
+        // server-side (none of the walk's dialects apply) and an M3U playlist has no panel to ask.
         if (account.sourceType != com.nuvio.app.features.iptv.SOURCE_TYPE_XTREAM) return null
         val programme = match.programme
         val replayStart = programme?.startMs?.takeIf { it > 0 } ?: (start - 15 * 60 * 1000L)
         val durationMin = (((programme?.endMs ?: 0L) - (programme?.startMs ?: 0L)) / 60_000L)
             .toInt().takeIf { it in 30..360 } ?: 165
-        val contentId = XtreamItemRegistry.buildId(
-            account.id, com.nuvio.app.features.iptv.XtreamKind.LIVE.slug,
-            "${match.channel.streamId}r${replayStart / 60_000L}",
+        return SportsReplay(
+            contentId = match.channel.contentId,
+            channelName = match.channel.name,
+            logo = match.channel.logo,
+            programmeTitle = programme?.title ?: "${match.channel.name} · Replay",
+            programmeStartMs = replayStart,
+            programmeEndMs = replayStart + durationMin * 60_000L,
         )
-        XtreamItemRegistry.register(
-            com.nuvio.app.features.iptv.XtreamResolvedItem(
-                contentId = contentId,
-                accountId = account.id,
-                kind = com.nuvio.app.features.iptv.XtreamKind.LIVE,
-                name = "${match.channel.name} · Replay",
-                streamUrl = XtreamClient.liveTimeshiftUrl(account, match.channel.streamId, replayStart, durationMin),
-                logo = match.channel.logo,
-                streamType = "live",
-            )
-        )
-        return contentId
     }
 
     /**

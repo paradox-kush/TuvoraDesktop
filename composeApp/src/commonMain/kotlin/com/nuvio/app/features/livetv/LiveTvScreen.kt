@@ -69,6 +69,7 @@ import com.nuvio.app.core.analytics.LivePlaybackFreezeReporter
 import com.nuvio.app.core.analytics.LivePlaybackReconnector
 import com.nuvio.app.features.player.EnterImmersivePlayerMode
 import com.nuvio.app.features.player.LIVE_FREEZE_SURFACE_DOCKED
+import com.nuvio.app.features.player.LiveReplayLaunch
 import com.nuvio.app.features.player.onLiveSnapshot
 import com.nuvio.app.features.player.onLiveSnapshotStopped
 import com.nuvio.app.features.player.PlatformPlayerSurface
@@ -116,6 +117,9 @@ fun LiveTvScreen(
     initialLogo: String?,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Set when the launch replays one programme (a Sports Centre replay): the screen begins the
+     *  catch-up walk from these bounds instead of tuning the channel live. */
+    initialReplay: LiveReplayLaunch? = null,
 ) {
     val colors = MaterialTheme.nuvio.colors
 
@@ -178,14 +182,42 @@ fun LiveTvScreen(
     var catchUpNotice by remember { mutableStateOf<CatchUpNotice?>(null) }
     val isCatchUp = catchUp != null
 
+    // A launch that carries a replay must not tune the channel live first: on a
+    // max_connections=1 account that live tune would spend the viewer's single connection on a
+    // stream the replay immediately replaces. The live resolve stands down until the walk has
+    // begun (or refused, in which case the launch falls back to a plain live tune).
+    var pendingInitialReplay by remember { mutableStateOf(initialReplay != null) }
+    LaunchedEffect(Unit) {
+        val replay = initialReplay ?: return@LaunchedEffect
+        val request = LiveTvData.catchUpRequest(
+            initialContentId, replay.programmeStartMs, replay.programmeEndMs,
+        )
+        val session = beginLaunchReplay(
+            walk = dialectWalk,
+            request = request,
+            contentId = initialContentId,
+            programmeTitle = replay.programmeTitle,
+            startMs = replay.programmeStartMs,
+            endMs = replay.programmeEndMs,
+        )
+        if (session == null) {
+            // No recording after all (the playlist vanished or can't serve catch-up): the same
+            // notice a guide replay shows, over the live channel the viewer at least asked about.
+            catchUpNotice = CatchUpNotice.NO_RECORDING
+        } else {
+            catchUp = session
+        }
+        pendingInitialReplay = false
+    }
+
     // Resolve (or re-resolve on channel switch / retry) the playable source. A RETRY forces a
     // fresh Stalker create_link: with static-cmd playback the plain re-resolve would rebuild the
     // very URL that just failed (retryTick resets on channel switch, so a switch is never a mint).
     //
     // A replay owns its own resolution below — this effect must not overwrite the archive URL with
-    // the live one, so it stands down whenever a catch-up session is active.
-    LaunchedEffect(currentContentId, retryTick, isCatchUp) {
-        if (isCatchUp) return@LaunchedEffect
+    // the live one, so it stands down whenever a catch-up session is active or arriving.
+    LaunchedEffect(currentContentId, retryTick, isCatchUp, pendingInitialReplay) {
+        if (isCatchUp || pendingInitialReplay) return@LaunchedEffect
         source = null
         resolveError = false
         playbackError = null
@@ -268,26 +300,23 @@ fun LiveTvScreen(
         sheetTarget = null
         scope.launch {
             val request = LiveTvData.catchUpRequest(channel.contentId, programme.startMs, programme.endMs)
-            if (request == null) {
+            val session = beginLaunchReplay(
+                walk = dialectWalk,
+                request = request,
+                contentId = channel.contentId,
+                programmeTitle = programme.title,
+                startMs = programme.startMs,
+                endMs = programme.endMs,
+            )
+            if (session == null) {
                 catchUpNotice = CatchUpNotice.NO_RECORDING
                 return@launch
             }
-            when (val step = dialectWalk.begin(request)) {
-                is CatchUpDialectWalk.Step.Next -> {
-                    currentContentId = channel.contentId
-                    currentTitle = channel.name
-                    currentLogo = channel.logo
-                    catchUpNotice = null
-                    catchUp = CatchUpSession(
-                        contentId = channel.contentId,
-                        programmeTitle = programme.title,
-                        startMs = programme.startMs,
-                        endMs = programme.endMs,
-                        attempt = step.attempt,
-                    )
-                }
-                else -> catchUpNotice = CatchUpNotice.NO_RECORDING
-            }
+            currentContentId = channel.contentId
+            currentTitle = channel.name
+            currentLogo = channel.logo
+            catchUpNotice = null
+            catchUp = session
         }
     }
 
@@ -955,7 +984,7 @@ private const val STREAM_INFO_SETTLE_MS = 2500L
  * never re-reports success, and so a stream that stops LATER reads as the recording finishing
  * rather than as this dialect failing.
  */
-private data class CatchUpSession(
+internal data class CatchUpSession(
     val contentId: String,
     val programmeTitle: String,
     val startMs: Long,
@@ -963,6 +992,34 @@ private data class CatchUpSession(
     val attempt: CatchUpDialectWalk.Attempt,
     val proven: Boolean = false,
 )
+
+/**
+ * Begins the catch-up walk for one replay ask and answers the session to hold, or null when
+ * nothing can be replayed (no request could be built, or the walk had nothing to offer).
+ *
+ * The one begin path for BOTH ways into a replay — a guide cell tapped on this screen and a
+ * Sports Centre replay arriving with the launch — so every replay carries the same session shape:
+ * `isCatchUpPlayback` on the player surface is exactly "this returned non-null", the gates read
+ * it, and the walk it started advances on transport failure.
+ */
+internal fun beginLaunchReplay(
+    walk: CatchUpDialectWalk,
+    request: CatchUpDialectWalk.Request?,
+    contentId: String,
+    programmeTitle: String,
+    startMs: Long,
+    endMs: Long,
+): CatchUpSession? {
+    val step = request?.let(walk::begin)
+    if (step !is CatchUpDialectWalk.Step.Next) return null
+    return CatchUpSession(
+        contentId = contentId,
+        programmeTitle = programmeTitle,
+        startMs = startMs,
+        endMs = endMs,
+        attempt = step.attempt,
+    )
+}
 
 /** The programme whose sheet is open — only ever a START_OVER, the one state with two answers. */
 private data class ProgrammeSheetTarget(
