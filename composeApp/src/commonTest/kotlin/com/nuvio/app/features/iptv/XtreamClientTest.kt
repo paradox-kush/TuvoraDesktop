@@ -112,4 +112,46 @@ class XtreamClientTest {
         assertEquals(1700003600_000L, p.endMs)
         assertTrue(p.nowPlaying)
     }
+
+    /**
+     * Per-programme has_archive (get_simple_data_table rows) — the panel marking, recording by
+     * recording, what it kept. FlexInt already coerces the shapes; pinned anyway because a wrong
+     * decode here silently turns "the panel spoke" into "the panel was silent".
+     */
+    @Test
+    fun perProgrammeHasArchiveParsesFromIntStringAndAbsent() {
+        val json = Json { ignoreUnknownKeys = true }
+        val marked = json.decodeFromString<XtreamEpgEntryDto>("""{"has_archive":1}""")
+        val markedString = json.decodeFromString<XtreamEpgEntryDto>("""{"has_archive":"1"}""")
+        val unmarked = json.decodeFromString<XtreamEpgEntryDto>("""{"has_archive":0}""")
+        val absent = json.decodeFromString<XtreamEpgEntryDto>("""{}""")
+        val junk = json.decodeFromString<XtreamEpgEntryDto>("""{"has_archive":"soon"}""")
+
+        assertEquals(1, marked.hasArchive)
+        assertEquals(1, markedString.hasArchive)
+        assertEquals(0, unmarked.hasArchive)
+        assertNull(absent.hasArchive)
+        assertNull(junk.hasArchive)
+
+        // ...threads into the domain model as spoke-true / spoke-false / silent.
+        assertEquals(true, marked.toProgram().hasArchive)
+        assertEquals(true, markedString.toProgram().hasArchive)
+        assertEquals(false, unmarked.toProgram().hasArchive)
+        assertNull(absent.toProgram().hasArchive)
+        assertNull(junk.toProgram().hasArchive)
+
+        // ...and the hand-parse lane (shortEpg / get_simple_data_table) reads it the same way.
+        val row = json.parseToJsonElement(
+            """{"title":"VGl0bGU=","start_timestamp":"1700000000","stop_timestamp":"1700003600","now_playing":"1","has_archive":"1"}"""
+        ) as JsonObject
+        val programme = XtreamClient.parseEpgProgramme(row)
+        assertEquals("Title", programme.title)
+        assertEquals(1700000000_000L, programme.startMs)
+        assertTrue(programme.nowPlaying)
+        assertEquals(true, programme.hasArchive)
+        val silent = XtreamClient.parseEpgProgramme(
+            json.parseToJsonElement("""{"start_timestamp":"1700000000"}""") as JsonObject
+        )
+        assertNull(silent.hasArchive)
+    }
 }
