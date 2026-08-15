@@ -125,7 +125,8 @@ object XtreamAccountSyncService {
             if (ProfileRepository.activeProfileId != profileId) return@runCatching
             val playlists = usableRemoteAccounts(rows)
             if (playlists.isNotEmpty()) {
-                apply(profileId, reconcileLocalIds(playlists, XtreamRepository.uiState.value.accounts))
+                val local = XtreamRepository.uiState.value.accounts
+                apply(profileId, preserveDeviceLocalPrefs(reconcileLocalIds(playlists, local), local))
                 return@runCatching
             }
             // Zero usable rows (empty table, or only a newer client's unknown source types)
@@ -304,6 +305,33 @@ internal fun reconcileLocalIds(pulled: List<XtreamAccount>, local: List<XtreamAc
  */
 internal fun usableRemoteAccounts(rows: List<PlaylistRow>): List<XtreamAccount> =
     rows.mapNotNull { it.toAccount() }
+
+/**
+ * Carries this device's catch-up and guide preferences across a pull (NuvioTV's twin of the same
+ * name).
+ *
+ * A pull REPLACES the account list with objects rebuilt from the wire, so any field the payload
+ * does not carry comes back as its constructor default. The catch-up container preference, the
+ * manual time correction, the LEARNED dialect winner and the guide EPG offset are deliberately not
+ * on the wire — they tune ONE panel's behaviour as reached from THIS device, and a shared column
+ * would need a backend migration to hold them.
+ *
+ * Without this, every sync would silently reset them, which is exactly the kind of "my setting
+ * keeps un-setting itself" bug that is impossible to report and miserable to find. internal for
+ * tests.
+ */
+internal fun preserveDeviceLocalPrefs(
+    pulled: List<XtreamAccount>,
+    local: List<XtreamAccount>,
+): List<XtreamAccount> = pulled.map { acc ->
+    val match = local.firstOrNull { it.id == acc.id } ?: return@map acc
+    acc.copy(
+        catchUpPreferM3u8 = match.catchUpPreferM3u8,
+        catchUpTimeCorrectionMinutes = match.catchUpTimeCorrectionMinutes,
+        catchUpWinner = match.catchUpWinner,
+        guideEpgCorrectionMinutes = match.guideEpgCorrectionMinutes,
+    )
+}
 
 /** The wire source types this client fully understands — the push's full-replace scope. Unknown
  *  (future) types stay outside the scope, so they can never be deleted by this client. */

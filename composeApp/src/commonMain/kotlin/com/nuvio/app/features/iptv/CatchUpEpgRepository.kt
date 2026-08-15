@@ -133,7 +133,10 @@ internal object CatchUpEpgRepository {
     suspend fun panelFacts(account: XtreamAccount): PanelFacts {
         if (account.id !in panelFactsFetched) {
             panelFactsFetched.add(account.id)
-            clockOffsets[account.id] = XtreamClient.serverClockOffsetMs(account)
+            // The clock half is the session memo the guide's epoch-skew correction shares — if a
+            // liar short-EPG response already measured it, this is free. The replay math below is
+            // unchanged.
+            clockOffsets[account.id] = XtreamPanelClock.measuredOffsetMs(account)
             allowedFormats[account.id] = XtreamClient.allowedOutputFormats(account)
         }
         val measured = clockOffsets[account.id]
@@ -151,6 +154,7 @@ internal object CatchUpEpgRepository {
         panelFactsFetched.remove(accountId)
         clockOffsets.remove(accountId)
         allowedFormats.remove(accountId)
+        XtreamPanelClock.forget(accountId)
     }
 
     data class PanelFacts(

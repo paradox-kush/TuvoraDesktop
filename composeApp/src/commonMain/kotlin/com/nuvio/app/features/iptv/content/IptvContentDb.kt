@@ -404,6 +404,21 @@ internal object IptvContentDb {
     }
 
     /**
+     * Forgets when this playlist's channels were last refilled, WITHOUT touching their rows.
+     *
+     * The guide-offset setting (fix 2) needs this: stored programmes were corrected under the OLD
+     * offset, and the six-hour fetch gate would otherwise keep showing them long after the user
+     * changed the setting to fix exactly what they are looking at. Open stamps make the next focus
+     * refetch-and-replace per channel; the stale rows stay readable until then.
+     */
+    suspend fun resetEpgFetchStamps(playlistId: String) = mutex.withLock {
+        connection().prepare("DELETE FROM epg_channel_fetch WHERE playlist_id = ?").use { st ->
+            st.bindText(1, playlistId)
+            st.step()
+        }
+    }
+
+    /**
      * Windowed guide read: programmes overlapping [fromMs, toMs) for one channel, ordered by
      * start, desc truncated to its first 600 chars (SUBSTR runs in SQLite, so a feed's 4KB
      * synopsis never lands in the heap — [epgFullDesc] fetches the whole text on demand).
