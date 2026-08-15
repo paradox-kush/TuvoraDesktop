@@ -395,6 +395,11 @@ private fun ExoPlayerSurface(
 
         val loadControl = DefaultLoadControl.Builder()
             .setTargetBufferBytes(playerTargetBufferBytes(context))
+            // media3's default is already false, but the byte cap above only binds while it is:
+            // below minBufferMs loading continues whenever `prioritizeTimeOverSizeThresholds ||
+            // !targetBufferSizeReached`, so flipping to true would buffer past the cap that
+            // field OOMs forced us onto. Pinned explicitly (twin of mobile, WP2).
+            .setPrioritizeTimeOverSizeThresholds(false)
             .setBufferDurationsMs(
                 15_000,
                 70_000,
