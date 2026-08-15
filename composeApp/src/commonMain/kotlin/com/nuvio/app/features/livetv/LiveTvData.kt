@@ -3,6 +3,7 @@ package com.nuvio.app.features.livetv
 import com.nuvio.app.features.epg.EpgMirrorRepository
 import com.nuvio.app.features.iptv.CatchUpDialectWalk
 import com.nuvio.app.features.iptv.CatchUpEpgRepository
+import com.nuvio.app.features.iptv.EpgSourceLadder
 import com.nuvio.app.features.iptv.CatchUpWinnerStore
 import com.nuvio.app.features.iptv.IptvClient
 import com.nuvio.app.features.iptv.IptvPanelGuard
@@ -114,8 +115,14 @@ object LiveTvData {
     }
 
     /**
-     * Programme window for a channel — the panel's own short EPG (now + upcoming) with a fallback to
-     * the mirrored canonical EPG when the provider ships no per-stream EPG (the common case).
+     * Programme window for a channel, resolved through [EpgSourceLadder]: (future) manual mapping
+     * → the playlist's own short EPG if its rows pass the sanity gate → the mirrored canonical
+     * EPG → nothing. The answering rung is remembered per (account, channel) for the session, so
+     * a channel the mirror feeds doesn't re-ask the panel on every guide window.
+     *
+     * The old `.ifEmpty { mirror }` fallback lives on inside the ladder as the empty case, but
+     * present-and-garbage no longer beats absent: rows that bracket nothing (the wa12 shape the
+     * epoch-skew correction could not prove) fall to the mirror instead of suppressing it.
      */
     suspend fun programmes(contentId: String, limit: Int = 8): List<XtreamProgram> {
         val parsed = XtreamItemRegistry.parseId(contentId) ?: return emptyList()
@@ -123,13 +130,24 @@ object LiveTvData {
         val streamId = parsed.id.toIntOrNull() ?: return emptyList()
         val account = XtreamRepository.uiState.value.accounts
             .firstOrNull { it.id == parsed.accountId } ?: return emptyList()
-        val fromPanel = runCatching {
-            IptvClient.forAccount(account).shortEpg(account, streamId, limit).getOrDefault(emptyList())
-        }.getOrDefault(emptyList())
-        if (fromPanel.isNotEmpty()) return fromPanel
-        return runCatching {
-            EpgMirrorRepository.nowNextProgrammes(account.id, streamId, TraktPlatformClock.nowEpochMs())
-        }.getOrDefault(emptyList())
+        val nowMs = TraktPlatformClock.nowEpochMs()
+        return EpgSourceLadder.resolveAndRemember(
+            memory = EpgSourceLadder.sessionMemory,
+            accountId = account.id,
+            streamId = streamId,
+            nowMs = nowMs,
+            manual = null,   // the manual-mapping seam — see [EpgSourceLadder.ManualResolver]
+            provider = {
+                runCatching {
+                    IptvClient.forAccount(account).shortEpg(account, streamId, limit).getOrDefault(emptyList())
+                }.getOrDefault(emptyList())
+            },
+            mirror = {
+                runCatching {
+                    EpgMirrorRepository.nowNextProgrammes(account.id, streamId, nowMs)
+                }.getOrDefault(emptyList())
+            },
+        ).programmes
     }
 
     // --- Catch-up ------------------------------------------------------------------------------
