@@ -162,7 +162,12 @@ fun LiveTvScreen(
     }
     // Always re-resolve on retry: live links carry expiring tokens (Stalker create_link is
     // single-use/short-TTL), so controller.retry() would just replay the dead URL.
-    val onRetry: () -> Unit = { retryTick++ }
+    // USER retry only: reset the panel breaker first (WP6) so the re-resolve is never met with a
+    // fast-fail — the AUTOMATIC one-shot re-resolve below must not reset.
+    val onRetry: () -> Unit = {
+        LiveTvData.resetPanelGuard(currentContentId)
+        retryTick++
+    }
 
     // One AUTOMATIC fresh re-resolve per resolved URL: a mid-watch 401 (token expired, or the
     // portal session was rotated by another device on the same MAC) recovers invisibly; a second

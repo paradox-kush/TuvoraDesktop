@@ -50,7 +50,7 @@ object XtreamClient : IptvClient {
 
     /** `user_info` object from the no-action player_api call, parsed loosely. */
     private suspend fun userInfo(url: String, dnsProvider: String?): JsonObject? =
-        runCatching { json.parseToJsonElement(httpGetText(url, dnsProvider)).jsonObject["user_info"] as? JsonObject }.getOrNull()
+        runCatching { json.parseToJsonElement(panelGetText(url, dnsProvider)).jsonObject["user_info"] as? JsonObject }.getOrNull()
 
     override suspend fun liveCategories(acc: XtreamAccount) = categories(acc, "get_live_categories")
     override suspend fun vodCategories(acc: XtreamAccount) = categories(acc, "get_vod_categories")
@@ -172,7 +172,7 @@ object XtreamClient : IptvClient {
 
     override suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int): Result<List<XtreamProgram>> = call {
         val url = playerApi(acc, "get_short_epg") + "&stream_id=$streamId&limit=$limit"
-        val root = runCatching { json.parseToJsonElement(httpGetText(url, acc.dnsProvider)).jsonObject }.getOrNull() ?: return@call emptyList()
+        val root = runCatching { json.parseToJsonElement(panelGetText(url, acc.dnsProvider)).jsonObject }.getOrNull() ?: return@call emptyList()
         (root["epg_listings"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }.map { o -> parseEpgProgramme(o) }
     }
 
@@ -196,7 +196,7 @@ object XtreamClient : IptvClient {
      * panel sends `info: []` — a known quirk — so callers fall back to bare Xtream metadata.
      */
     override suspend fun vodInfo(acc: XtreamAccount, vodId: Int): Result<XtreamVodDetail?> = call {
-        val text = httpGetText(playerApi(acc, "get_vod_info") + "&vod_id=$vodId", acc.dnsProvider)
+        val text = panelGetText(playerApi(acc, "get_vod_info") + "&vod_id=$vodId", acc.dnsProvider)
         val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return@call null
         val info = root["info"] as? JsonObject   // null when the panel sends info: []
         val movieData = root["movie_data"] as? JsonObject
@@ -216,7 +216,7 @@ object XtreamClient : IptvClient {
      * list ships empty stream_icons. null = the panel has no art for it either.
      */
     suspend fun vodArtwork(acc: XtreamAccount, vodId: Int): Result<String?> = call {
-        val text = httpGetText(playerApi(acc, "get_vod_info") + "&vod_id=$vodId", acc.dnsProvider)
+        val text = panelGetText(playerApi(acc, "get_vod_info") + "&vod_id=$vodId", acc.dnsProvider)
         val info = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()?.get("info") as? JsonObject
         info?.get("movie_image").asStringOrNull()?.takeIf { it.isNotBlank() }
             ?: info?.get("cover_big").asStringOrNull()?.takeIf { it.isNotBlank() }
@@ -224,7 +224,7 @@ object XtreamClient : IptvClient {
 
     /** Series half of [vodArtwork] (get_series_info `info.cover`). */
     suspend fun seriesArtwork(acc: XtreamAccount, seriesId: Int): Result<String?> = call {
-        val text = httpGetText(playerApi(acc, "get_series_info") + "&series_id=$seriesId", acc.dnsProvider)
+        val text = panelGetText(playerApi(acc, "get_series_info") + "&series_id=$seriesId", acc.dnsProvider)
         val info = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()?.get("info") as? JsonObject
         info?.get("cover").asStringOrNull()?.takeIf { it.isNotBlank() }
     }
@@ -236,7 +236,7 @@ object XtreamClient : IptvClient {
      * decode throws on the first `info: []` and loses every episode — so we walk the JSON instead.
      */
     override suspend fun seriesInfo(acc: XtreamAccount, seriesId: Int): Result<XtreamSeriesDetail?> = call {
-        val text = httpGetText(playerApi(acc, "get_series_info") + "&series_id=$seriesId", acc.dnsProvider)
+        val text = panelGetText(playerApi(acc, "get_series_info") + "&series_id=$seriesId", acc.dnsProvider)
         val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return@call null
         val info = root["info"] as? JsonObject
         val episodes = (root["episodes"] as? JsonObject).orEmptyEntries().flatMap { (seasonKey, seasonEps) ->
@@ -313,6 +313,15 @@ object XtreamClient : IptvClient {
 
     // --- internals -----------------------------------------------------------
 
+    /**
+     * The client's whole-body transport, admission-checked (WP6): every player_api request this
+     * client sends funnels through here or [streamArray]/[streamArrayInto], so the per-origin
+     * breaker sees each panel request exactly once. A refused admission throws the policy's
+     * distinct [PanelHostFastFailException] before any bytes move.
+     */
+    private suspend fun panelGetText(url: String, dnsProvider: String?): String =
+        IptvPanelGuard.guard.guardedPanelRequest(url) { httpGetText(url, dnsProvider) }
+
     private fun String.splitCsv(): List<String> = split(",").mapNotNull { it.trim().ifBlank { null } }
 
     private suspend fun categories(acc: XtreamAccount, action: String): Result<List<XtreamCategory>> = call {
@@ -371,7 +380,11 @@ object XtreamClient : IptvClient {
         map: (JsonObject) -> T?,
     ): List<T> {
         val parser = XtreamCatalogIndexParser(json, map)
-        httpStreamLines(url, userAgent = null, dnsProvider = acc.dnsProvider) { parser.accept(it) }
+        // Guarded like panelGetText (WP6). A parser throw classifies as HTTP_RESPONSE — body
+        // bytes arrived, which is all the breaker measures.
+        IptvPanelGuard.guard.guardedPanelRequest(url) {
+            httpStreamLines(url, userAgent = null, dnsProvider = acc.dnsProvider) { parser.accept(it) }
+        }
         return parser.finish()
     }
 
@@ -383,7 +396,9 @@ object XtreamClient : IptvClient {
         onItem: (T) -> Unit,
     ): Int {
         val parser = XtreamCatalogIndexParser(json, map, sink = onItem)
-        httpStreamLines(url, userAgent = null, dnsProvider = acc.dnsProvider) { parser.accept(it) }
+        IptvPanelGuard.guard.guardedPanelRequest(url) {
+            httpStreamLines(url, userAgent = null, dnsProvider = acc.dnsProvider) { parser.accept(it) }
+        }
         return parser.finishCount()
     }
 

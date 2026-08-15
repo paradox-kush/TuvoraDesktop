@@ -2,6 +2,7 @@ package com.nuvio.app.features.livetv
 
 import com.nuvio.app.features.epg.EpgMirrorRepository
 import com.nuvio.app.features.iptv.IptvClient
+import com.nuvio.app.features.iptv.IptvPanelGuard
 import com.nuvio.app.features.iptv.XtreamItemRegistry
 import com.nuvio.app.features.iptv.XtreamKind
 import com.nuvio.app.features.iptv.XtreamLiveRecents
@@ -49,6 +50,17 @@ object LiveTvData {
         val playback = resolveLivePlaybackUrl(immediate, dnsProvider)
         XtreamLiveRecents.record(contentId, name, logo)
         return LiveChannelSource(url = playback.url, headers = playback.headers)
+    }
+
+    /**
+     * USER-driven Live TV retry (WP6): clears the panel breaker for the channel's account so the
+     * re-resolve the user just asked for is never met with a fast-fail. The automatic one-shot
+     * re-resolve must NOT call this — only a user action means "contact this host now".
+     */
+    fun resetPanelGuard(contentId: String) {
+        val parsed = XtreamItemRegistry.parseId(contentId) ?: return
+        XtreamRepository.uiState.value.accounts.firstOrNull { it.id == parsed.accountId }
+            ?.let { IptvPanelGuard.resetForAccount(it) }
     }
 
     /**
