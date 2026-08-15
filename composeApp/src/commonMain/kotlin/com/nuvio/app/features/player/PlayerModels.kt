@@ -13,6 +13,20 @@ import nuvio.composeapp.generated.resources.player_ios_preset_sdr_tone_mapped_de
 import nuvio.composeapp.generated.resources.player_ios_preset_sdr_tone_mapped_label
 import org.jetbrains.compose.resources.stringResource
 
+/**
+ * A live launch that is really a catch-up REPLAY of one programme (a Sports Centre replay).
+ *
+ * Carried BESIDE the live identity rather than as a new content type — the launch keeps
+ * `streamType = "live"` and the LIVE channel's id, and the docked Live TV screen turns these
+ * bounds into the same catch-up session the guide's replays create: flag on, gates inherited,
+ * dialect walk on transport failure.
+ */
+data class LiveReplayLaunch(
+    val programmeTitle: String,
+    val programmeStartMs: Long,
+    val programmeEndMs: Long,
+)
+
 data class PlayerLaunch(
     val profileId: Int,
     val title: String,
@@ -46,6 +60,8 @@ data class PlayerLaunch(
     val initialPositionMs: Long = 0L,
     val initialProgressFraction: Float? = null,
     val contentLanguage: String? = null,
+    /** Set when this live launch replays one programme through catch-up — see [LiveReplayLaunch]. */
+    val liveReplay: LiveReplayLaunch? = null,
 )
 
 object PlayerLaunchStore {

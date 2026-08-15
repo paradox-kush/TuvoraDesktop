@@ -97,6 +97,7 @@ fun SportsHubScreen(
     onAddPlaylist: () -> Unit,
     modifier: Modifier = Modifier,
     onOpenRecording: (String) -> Unit = {},
+    onPlayReplay: (RadarChannelMatcher.SportsReplay) -> Unit = {},
 ) {
     val state by RadarRepository.uiState.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) {
@@ -173,6 +174,7 @@ fun SportsHubScreen(
             onAddPlaylist = onAddPlaylist,
             onDismiss = { sheetFixture = null },
             onOpenRecording = onOpenRecording,
+            onPlayReplay = onPlayReplay,
         )
     }
 }
@@ -1201,6 +1203,8 @@ internal fun MatchChannelsSheet(
     onAddPlaylist: () -> Unit,
     onDismiss: () -> Unit,
     onOpenRecording: (String) -> Unit = {},
+    /** A catch-up replay of the fixture's programme — carries the bounds the player needs. */
+    onPlayReplay: (RadarChannelMatcher.SportsReplay) -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val xtreamState by XtreamRepository.uiState.collectAsStateWithLifecycle()
@@ -1356,13 +1360,16 @@ internal fun MatchChannelsSheet(
                 else -> LazyColumn {
                     items(matches, key = { it.channel.contentId }) { match ->
                         // Started/finished + archived channel -> catch-up Replay of the programme.
-                        val replayId = if (fixtureStarted) RadarChannelMatcher.replayFor(match, fixture) else null
+                        val replay = if (fixtureStarted) RadarChannelMatcher.replayFor(match, fixture) else null
                         ChannelMatchRow(
                             match = match,
-                            onReplay = replayId?.let { id ->
+                            onReplay = replay?.let { r ->
                                 {
+                                    // The LIVE channel resolves the stream; the replay bounds ride
+                                    // beside it and the Live TV screen begins the catch-up walk.
+                                    RadarChannelMatcher.ensurePlayable(match)
                                     onDismiss()
-                                    onPlayChannel(id)
+                                    onPlayReplay(r)
                                 }
                             },
                         ) {

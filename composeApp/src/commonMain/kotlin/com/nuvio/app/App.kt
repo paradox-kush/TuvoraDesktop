@@ -49,6 +49,7 @@ import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import com.nuvio.app.features.iptv.IptvPlaybackGate
 import com.nuvio.app.features.iptv.IptvRefreshScheduler
 import com.nuvio.app.features.iptv.XtreamHubScreen
+import com.nuvio.app.features.radar.RadarChannelMatcher
 import com.nuvio.app.features.radar.SportsHubScreen
 import com.nuvio.app.features.iptv.XtreamItemRegistry
 import com.nuvio.app.features.iptv.XtreamLiveRecents
@@ -201,6 +202,7 @@ import com.nuvio.app.features.library.toMetaPreview
 import com.nuvio.app.features.notifications.EpisodeReleaseNotificationsRepository
 import com.nuvio.app.features.p2p.P2pConsentDialog
 import com.nuvio.app.features.p2p.P2pSettingsRepository
+import com.nuvio.app.features.player.LiveReplayLaunch
 import com.nuvio.app.features.player.PlayerLaunch
 import com.nuvio.app.features.player.PlayerLaunchStore
 import com.nuvio.app.features.livetv.LiveTvScreen
@@ -1416,7 +1418,13 @@ private fun MainAppContent(
     // IP-rewritten (with a Host header) on Android before it reaches mpv; iOS/https are a no-op. Any
     // failure falls back to the original URL, so playback never breaks. The DoH step is a network call,
     // so the whole launch runs on a coroutine (both call sites already tolerate async).
-    fun launchLiveChannel(contentId: String, name: String, logo: String?, resolvedUrl: String) {
+    fun launchLiveChannel(
+        contentId: String,
+        name: String,
+        logo: String?,
+        resolvedUrl: String,
+        replay: LiveReplayLaunch? = null,
+    ) {
         // The new docked Live TV screen resolves + switches channels itself, so it only needs the
         // channel identity. The URL is still resolved here so a placeholder payload is well-formed
         // and the LiveTvScreen's own resolve step is warm.
@@ -1433,22 +1441,29 @@ private fun MainAppContent(
             videoId = contentId,
             parentMetaId = contentId,
             parentMetaType = "tv",
+            liveReplay = replay,
         )
         navController.navigate(LiveTvRoute(launchId = PlayerLaunchStore.put(liveLaunch)))
     }
 
-    fun playLiveXtreamChannel(contentId: String, name: String, logo: String?, url: String?) {
+    fun playLiveXtreamChannel(
+        contentId: String,
+        name: String,
+        logo: String?,
+        url: String?,
+        replay: LiveReplayLaunch? = null,
+    ) {
         // A BLANK url is a placeholder, not a real stream: M3U keeps the URL only in the content DB,
         // and Stalker resolves a fresh single-use create_link at play time. Both must fall through to
         // the async resolve — treating "" as present would hand mpv an empty URL.
         val immediate = url?.takeIf { it.isNotBlank() } ?: XtreamItemRegistry.liveStreamUrlFor(contentId)
         if (immediate != null) {
-            launchLiveChannel(contentId, name, logo, immediate)
+            launchLiveChannel(contentId, name, logo, immediate, replay)
             return
         }
         coroutineScope.launch {
             val resolved = XtreamItemRegistry.liveStreamUrlForAsync(contentId) ?: return@launch
-            launchLiveChannel(contentId, name, logo, resolved)
+            launchLiveChannel(contentId, name, logo, resolved, replay)
         }
     }
 
@@ -2234,6 +2249,22 @@ private fun MainAppContent(
                                                 name = item?.name ?: "Live TV",
                                                 logo = item?.logo ?: item?.poster,
                                                 url = item?.streamUrl,
+                                            )
+                                        },
+                                        // A Sports replay is the SAME live launch plus the
+                                        // programme bounds: the Live TV screen begins the
+                                        // catch-up walk from them instead of tuning live.
+                                        onPlaySportsReplay = { replay ->
+                                            playLiveXtreamChannel(
+                                                contentId = replay.contentId,
+                                                name = replay.channelName,
+                                                logo = replay.logo,
+                                                url = XtreamItemRegistry.get(replay.contentId)?.streamUrl,
+                                                replay = LiveReplayLaunch(
+                                                    programmeTitle = replay.programmeTitle,
+                                                    programmeStartMs = replay.programmeStartMs,
+                                                    programmeEndMs = replay.programmeEndMs,
+                                                ),
                                             )
                                         },
                                         onIptvFavoriteChannel = { contentId ->
@@ -3417,6 +3448,7 @@ private fun MainAppContent(
                         initialContentId = launch.videoId,
                         initialTitle = launch.title,
                         initialLogo = launch.logo,
+                        initialReplay = launch.liveReplay,
                         onBack = onBack,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -4090,6 +4122,7 @@ private fun AppTabHost(
     onPosterLongClick: ((MetaPreview) -> Unit)? = null,
     onIptvAddProvider: () -> Unit = {},
     onPlayLiveChannel: (String) -> Unit = {},
+    onPlaySportsReplay: (RadarChannelMatcher.SportsReplay) -> Unit = {},
     onIptvFavoriteChannel: (String) -> Unit = {},
     onOpenSportsTab: () -> Unit = {},
     onLibraryPosterClick: ((LibraryItem) -> Unit)? = null,
@@ -4139,6 +4172,7 @@ private fun AppTabHost(
                 onInitialHomeContentRendered = onInitialHomeContentRendered,
                 onOpenSportsTab = onOpenSportsTab,
                 onPlaySportsChannel = onPlayLiveChannel,
+                onPlaySportsReplay = onPlaySportsReplay,
                 onAddIptvPlaylist = onIptvAddProvider,
             )
         }
@@ -4197,6 +4231,10 @@ private fun AppTabHost(
                                 onOpenRecording = { id ->
                                     XtreamItemRegistry.get(id)?.toMetaPreview()?.let { onPosterClick?.invoke(it) }
                                 },
+                                // Replays ride the live route with the programme bounds beside the
+                                // id — the Live TV screen turns them into a catch-up session
+                                // (flag + gates).
+                                onPlayReplay = onPlaySportsReplay,
                             )
                         }
 
@@ -4243,6 +4281,7 @@ private fun AppHomeTabContent(
     onInitialHomeContentRendered: () -> Unit,
     onOpenSportsTab: () -> Unit = {},
     onPlaySportsChannel: (String) -> Unit = {},
+    onPlaySportsReplay: (RadarChannelMatcher.SportsReplay) -> Unit = {},
     onAddIptvPlaylist: () -> Unit = {},
 ) {
     val animateCollectionGifsProvider = remember(tabsRouteActiveState, homeSelected) {
@@ -4261,6 +4300,7 @@ private fun AppHomeTabContent(
         onFirstCatalogRendered = onInitialHomeContentRendered,
         onOpenSportsTab = onOpenSportsTab,
         onPlaySportsChannel = onPlaySportsChannel,
+        onPlaySportsReplay = onPlaySportsReplay,
         onAddIptvPlaylist = onAddIptvPlaylist,
     )
 }

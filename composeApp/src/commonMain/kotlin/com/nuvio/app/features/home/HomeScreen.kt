@@ -127,6 +127,7 @@ fun HomeScreen(
     onFirstCatalogRendered: (() -> Unit)? = null,
     onOpenSportsTab: () -> Unit = {},
     onPlaySportsChannel: (String) -> Unit = {},
+    onPlaySportsReplay: (com.nuvio.app.features.radar.RadarChannelMatcher.SportsReplay) -> Unit = {},
     onAddIptvPlaylist: () -> Unit = {},
 ) {
     LaunchedEffect(Unit) {
@@ -927,6 +928,7 @@ fun HomeScreen(
                     onOpenRecording = { id ->
                         XtreamItemRegistry.get(id)?.toMetaPreview()?.let { onPosterClick?.invoke(it) }
                     },
+                    onPlayReplay = onPlaySportsReplay,
                 )
             }
 
