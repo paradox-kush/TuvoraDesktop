@@ -31,6 +31,8 @@ import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.NuvioActionLabel
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.nuvio
+import com.nuvio.app.features.epg.EpgMirrorRepository
+import com.nuvio.app.features.iptv.content.IptvContentDb
 import com.nuvio.app.features.settings.SettingsGroup
 import com.nuvio.app.features.settings.SettingsGroupDivider
 import com.nuvio.app.features.settings.SettingsNavigationRow
@@ -136,10 +138,14 @@ internal fun LazyListScope.xtreamContentSettingsContent(
             },
         )
 
-        if (CatchUpEpgRepository.supportsCatchUp(account)) {
+        val supportsCatchUp = CatchUpEpgRepository.supportsCatchUp(account)
+        if (supportsCatchUp) {
             CatchUpSettings(account = account, isTablet = isTablet)
-            GuideSettings(account = account, isTablet = isTablet)
         }
+        // The Guide section shows for every playlist type: the EPG-source coverage line applies
+        // to all of them (the mirror is wired for Xtream, M3U and Stalker alike). The manual
+        // offset row stays Xtream-only — it corrects the panel short-EPG lane the others lack.
+        GuideSettings(account = account, isTablet = isTablet, showOffsetRow = supportsCatchUp)
     }
 }
 
@@ -218,43 +224,91 @@ private fun CatchUpSettings(account: XtreamAccount, isTablet: Boolean) {
  * offset, XUI's `epg_shift`). Setting it overrides auto; 0 returns to auto, not to "+0".
  */
 @Composable
-private fun GuideSettings(account: XtreamAccount, isTablet: Boolean) {
+private fun GuideSettings(account: XtreamAccount, isTablet: Boolean, showOffsetRow: Boolean) {
     val tokens = MaterialTheme.nuvio
     val scope = rememberCoroutineScope()
     val correction = account.guideEpgCorrectionMinutes
         .coerceIn(CATCH_UP_CORRECTION_MIN_MINUTES, CATCH_UP_CORRECTION_MAX_MINUTES)
 
+    // Read-only EPG-source coverage — cheap by construction: one mirror mapping read + the
+    // in-memory session tally (+ the stored ingest count where one exists). Never a lineup
+    // scan, never a panel call — coverage must not cost what it reports on.
+    var coverage by remember(account.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(account.id) {
+        coverage = guideEpgCoverageLine(account.id)
+    }
+
     SettingsSection(title = "Guide", isTablet = isTablet) {
-        SettingsGroup(isTablet = isTablet) {
-            SettingsNavigationRow(
-                title = "Guide EPG offset",
-                description = "Shifts guide times when programmes show at the wrong hour. " +
-                    "Auto detects most wrong-clock panels. Currently ${formatGuideOffset(correction)}. " +
-                    "Tap to step by 30 minutes; wraps back to Auto past +14 h.",
-                isTablet = isTablet,
-                onClick = {
-                    val next = correction + CORRECTION_STEP_MINUTES
-                    val wrapped = if (next > CATCH_UP_CORRECTION_MAX_MINUTES) CATCH_UP_CORRECTION_MIN_MINUTES else next
-                    XtreamRepository.updateOptions(account.id) { acc ->
-                        acc.copy(guideEpgCorrectionMinutes = wrapped)
-                    }
-                    // Stored guide rows were corrected under the OLD offset and the fetch gate
-                    // would keep showing them for hours — open the stamps so the next focus
-                    // refetches. Same load-bearing-invalidation shape as the replay row's forget().
-                    scope.launch {
-                        runCatching { com.nuvio.app.features.iptv.content.IptvContentDb.resetEpgFetchStamps(account.id) }
-                    }
-                },
-                trailingContent = {
-                    Text(
-                        text = formatGuideOffset(correction),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = tokens.colors.textSecondary,
-                    )
-                },
+        if (showOffsetRow) {
+            SettingsGroup(isTablet = isTablet) {
+                SettingsNavigationRow(
+                    title = "Guide EPG offset",
+                    description = "Shifts guide times when programmes show at the wrong hour. " +
+                        "Auto detects most wrong-clock panels. Currently ${formatGuideOffset(correction)}. " +
+                        "Tap to step by 30 minutes; wraps back to Auto past +14 h.",
+                    isTablet = isTablet,
+                    onClick = {
+                        val next = correction + CORRECTION_STEP_MINUTES
+                        val wrapped = if (next > CATCH_UP_CORRECTION_MAX_MINUTES) CATCH_UP_CORRECTION_MIN_MINUTES else next
+                        XtreamRepository.updateOptions(account.id) { acc ->
+                            acc.copy(guideEpgCorrectionMinutes = wrapped)
+                        }
+                        // Stored guide rows were corrected under the OLD offset and the fetch gate
+                        // would keep showing them for hours — open the stamps so the next focus
+                        // refetches. Same load-bearing-invalidation shape as the replay row's forget().
+                        scope.launch {
+                            runCatching { com.nuvio.app.features.iptv.content.IptvContentDb.resetEpgFetchStamps(account.id) }
+                        }
+                        // Sources measured under the old offset are stale too: a channel that fell
+                        // to the mirror because its rows looked skewed deserves a fresh panel ask.
+                        EpgSourceLadder.sessionMemory.forgetAccount(account.id)
+                    },
+                    trailingContent = {
+                        Text(
+                            text = formatGuideOffset(correction),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = tokens.colors.textSecondary,
+                        )
+                    },
+                )
+            }
+        }
+        coverage?.let { line ->
+            Text(
+                text = line,
+                style = MaterialTheme.typography.bodySmall,
+                color = tokens.colors.textMuted,
+                modifier = Modifier.padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s10),
             )
         }
     }
+}
+
+/**
+ * The guide's EPG-source coverage, per playlist: how far the backup guide (the mirrored canonical
+ * EPG) reaches, and which rung has actually fed each channel browsed this session. The mapped
+ * count is the mirror's streamId→epgId table for this playlist (one indexed read); the total is
+ * the stored ingest count where one exists (M3U/Stalker) — Xtream lineups aren't ingested, so
+ * their line shows the mapped figure alone rather than paying a panel call to count.
+ */
+private suspend fun guideEpgCoverageLine(accountId: String): String {
+    val mapped = runCatching { EpgMirrorRepository.mappingFor(accountId).size }.getOrDefault(0)
+    val total = runCatching { IptvContentDb.ingestMeta(accountId)?.liveCount }.getOrNull()
+        ?.takeIf { it > 0 }
+    val coverage = when {
+        mapped <= 0 -> "Backup guide (EPG mirror): no channels matched yet."
+        total != null -> "Backup guide (EPG mirror): $mapped of $total channels matched."
+        else -> "Backup guide (EPG mirror): $mapped channels matched."
+    }
+    val tally = EpgSourceLadder.sessionMemory.tally(accountId)
+    if (tally.total == 0) return coverage
+    val parts = buildList {
+        if (tally.manual > 0) add("manual ${tally.manual}")
+        if (tally.provider > 0) add("provider ${tally.provider}")
+        if (tally.mirror > 0) add("backup ${tally.mirror}")
+        if (tally.none > 0) add("none ${tally.none}")
+    }
+    return coverage + "\nGuide sources this session — " + parts.joinToString(" · ") + "."
 }
 
 private const val CORRECTION_STEP_MINUTES = 30
