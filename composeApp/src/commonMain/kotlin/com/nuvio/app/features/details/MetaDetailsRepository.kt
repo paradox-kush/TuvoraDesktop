@@ -650,11 +650,13 @@ object MetaDetailsRepository {
      * default. Returns true once a playable item is registered. Called from the direct-play path
      * (StreamsRepository) so it doesn't have to go through the detail screen first.
      */
-    suspend fun ensureXtreamStreamRegistered(id: String, forceFresh: Boolean = false): Boolean {
+    suspend fun ensureXtreamStreamRegistered(id: String, forceFresh: Boolean = false, forceMint: Boolean = false): Boolean {
         // A blank registered URL is a Stalker placeholder — fall through to resolve it fresh.
         // [forceFresh] skips the cache short-circuit: Stalker create_link URLs are single-use /
         // short-TTL, so a replay (or a mid-playback 401) must mint a NEW link even though the
-        // registry still holds the previous, already-consumed one.
+        // registry still holds the previous, already-consumed one. [forceMint] additionally
+        // bypasses the static-cmd verdict (StalkerPlaybackLinkPolicy): the in-player 401 refresh
+        // must not rebuild the very static URL that just died.
         val existing = XtreamItemRegistry.getOrLoad(id)
         if (!forceFresh && existing != null && !existing.streamUrl.isNullOrBlank()) return true
         XtreamRepository.ensureLoaded()
@@ -667,7 +669,7 @@ object MetaDetailsRepository {
         if (account.sourceType == com.nuvio.app.features.iptv.SOURCE_TYPE_STALKER) {
             val stalker = com.nuvio.app.features.iptv.stalker.StalkerClient
             val url = when (parsed.kind) {
-                XtreamKind.VOD -> parsed.id.toIntOrNull()?.let { stalker.resolveMovieUrl(account, it, existing?.name) }
+                XtreamKind.VOD -> parsed.id.toIntOrNull()?.let { stalker.resolveMovieUrl(account, it, existing?.name, forceMint) }
                 XtreamKind.EPISODE -> {
                     // "{seriesId}_{season}_{episode}"; a legacy 2-part id has no season -> null.
                     val parts = parsed.id.split("_")

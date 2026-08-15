@@ -166,8 +166,11 @@ object XtreamItemRegistry {
      * Resolves a live channel's URL for either source. For Xtream it's the synchronous rebuild; for
      * M3U it reads the stored line from the content DB (ingesting first if this playlist was never
      * browsed on this device). Used by the cold-launch play path when the registry is empty.
+     *
+     * [forceMint] rides the 401-refresh ladder into Stalker's resolver: a static-cmd verdict would
+     * rebuild the very URL that just died, so the refresh demands a fresh create_link.
      */
-    suspend fun liveStreamUrlForAsync(contentId: String): String? {
+    suspend fun liveStreamUrlForAsync(contentId: String, forceMint: Boolean = false): String? {
         liveStreamUrlFor(contentId)?.let { return it }
         val parsed = parseId(contentId) ?: return null
         if (parsed.kind != XtreamKind.LIVE) return null
@@ -178,7 +181,7 @@ object XtreamItemRegistry {
                 M3UClient.ensureIngested(account)
                 M3UClient.liveUrlFor(account, streamId)
             }
-            SOURCE_TYPE_STALKER -> com.nuvio.app.features.iptv.stalker.StalkerClient.resolveLiveUrl(account, streamId)
+            SOURCE_TYPE_STALKER -> com.nuvio.app.features.iptv.stalker.StalkerClient.resolveLiveUrl(account, streamId, forceMint)
             else -> null
         }
     }
