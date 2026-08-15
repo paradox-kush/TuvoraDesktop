@@ -12,7 +12,7 @@ import kotlin.test.assertNull
 class StreamInfoFormatTest {
 
     @Test
-    fun `resolution matches the TV panel, including the quality shorthand`() {
+    fun `resolution matches the TV panel including the quality shorthand`() {
         // Verified against a live capture of the TV panel playing a 1920x804 scope source.
         assertEquals("1920 × 804 (1080p)", StreamInfoFormat.resolution(1920, 804))
         assertEquals("1920 × 1080 (1080p)", StreamInfoFormat.resolution(1920, 1080))
@@ -22,7 +22,7 @@ class StreamInfoFormatTest {
     }
 
     @Test
-    fun `letterboxed widescreen is classified on width, not cropped height`() {
+    fun `letterboxed widescreen is classified on width rather than cropped height`() {
         // The failure this guards: keying off height alone demotes scope films to 720p.
         assertEquals("1920 × 800 (1080p)", StreamInfoFormat.resolution(1920, 800))
     }
@@ -35,7 +35,7 @@ class StreamInfoFormatTest {
     }
 
     @Test
-    fun `bitrate keeps one decimal for megabits, like the TV panel`() {
+    fun `bitrate keeps one decimal for megabits like the TV panel`() {
         // Verified against the live capture: 2229472 bps rendered as "2.2 Mbps".
         assertEquals(StreamInfoFormat.Bitrate("2.2", isMegabits = true), StreamInfoFormat.bitrate(2_229_472))
         assertEquals(StreamInfoFormat.Bitrate("6.0", isMegabits = true), StreamInfoFormat.bitrate(6_000_000))
