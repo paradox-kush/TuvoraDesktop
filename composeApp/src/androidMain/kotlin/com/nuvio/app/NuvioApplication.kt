@@ -1,7 +1,10 @@
 package com.nuvio.app
 
 import android.app.Application
+import android.content.ComponentCallbacks2
 import com.nuvio.app.core.analytics.PostHogPrivacy
+import com.nuvio.app.core.memory.AndroidMemoryTierProbe
+import com.nuvio.app.core.memory.AppMemory
 import com.nuvio.app.features.settings.SentrySettingsRepository
 import com.nuvio.app.features.settings.SentrySettingsStorage
 import com.posthog.PostHog
@@ -26,6 +29,8 @@ class NuvioApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Resolve the memory tier once, before anything sizes a cache from it.
+        AndroidMemoryTierProbe.tier(this)
         SentrySettingsStorage.initialize(this)
         SentrySettingsRepository.ensureLoaded()
         val crashReportsEnabled = SentrySettingsRepository.enabled.value
@@ -76,6 +81,14 @@ class NuvioApplication : Application() {
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
+        // Since Android 14 only these two constants fire (the rest died in 14, formally
+        // deprecated in 15) — both mean the UI left the screen: drop every registered
+        // cache. Truth is on disk; the windows repopulate on return.
+        if (level == ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN ||
+            level == ComponentCallbacks2.TRIM_MEMORY_BACKGROUND
+        ) {
+            AppMemory.trimCaches()
+        }
         AppExitReporter.recordMemorySnapshot(this, "trim_memory", level)
     }
 }
