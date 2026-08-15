@@ -141,12 +141,13 @@ class StalkerStaticCmdTest {
     }
 
     /**
-     * INTEGRATION(WP1) contract pin: DB-cached rows carry no flags yet, so a cold start (in-memory
-     * caches gone, SQLite store intact) has no flag evidence and must MINT — the safe rule. When
-     * WP1's persisted flag columns land, this play becomes static and this test flips with it.
+     * Cold start (in-memory caches gone, SQLite store intact): the stored flag columns are plain
+     * booleans, so false/false cannot prove the panel said false — it reads as "no evidence" and
+     * MINTS, the safe rule. Stored TRUE flags also mint (they are evidence for minting). Static
+     * cold-start playback therefore waits on a tri-state column; this pin flips with it.
      */
     @Test
-    fun `a cold start play from the store mints until WP1 persists flags`() = runBlocking {
+    fun `a cold start play from the store still mints`() = runBlocking {
         val acc = account("sc-cold")
         StalkerClient.liveChannels(acc, null).getOrThrow()
         StalkerClient.clearMemoryCachesForTest()
