@@ -43,7 +43,7 @@ fun LivePlaybackFreezeReporter.onLiveSnapshot(
     if (!isArmed && started) {
         onLivePlaybackStarted(
             profile = LivePlaybackFreezeReporter.Profile(
-                engine = engine()?.lowercase() ?: "unknown",
+                engine = engine()?.lowercase() ?: LivePlaybackFreezeReporter.ENGINE_UNKNOWN,
                 streamContainer = LivePlaybackFreezeReporter.streamContainerOf(streamUrl),
                 iptvKind = LivePlaybackFreezeReporter.iptvKindOf(contentId),
                 surface = surface,
@@ -53,6 +53,13 @@ fun LivePlaybackFreezeReporter.onLiveSnapshot(
             videoProgressTicks = snapshot.videoProgressTicks,
         )
         reconnector.reset()
+    }
+
+    // The controller lands in its own effect and can lose the race against the first playing
+    // snapshot, so keep asking until the engine is named — otherwise every event from the
+    // losing side reports "unknown", which is exactly what the Android fleet data showed.
+    if (needsEngine) {
+        engine()?.takeIf { it.isNotBlank() }?.let { onEngineKnown(it.lowercase()) }
     }
 
     val decision = onSample(

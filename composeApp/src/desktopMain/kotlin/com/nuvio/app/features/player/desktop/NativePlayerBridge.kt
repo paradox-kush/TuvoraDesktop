@@ -66,6 +66,18 @@ internal object NativePlayerBridge {
      * carried on advancing the playhead.
      */
     external fun videoFrameTicks(handle: Long): Long
+
+    /**
+     * mpv's VO-level counters, packed 32/32 into one JNI call. `estimated-vf-fps` (which feeds
+     * [videoFrameTicks]) measures the filter chain, i.e. decoding; mpv has no true
+     * presented-frames property, so these are the closest VO-level signals to "the picture
+     * reached the screen". Snapshot diagnostics only for now.
+     *
+     * High 32 bits: `frame-drop-count` (frames the VO dropped). Low 32 bits:
+     * `vo-delayed-frame-count` (mpv's delayed-vsync estimate). Both clamped non-negative in
+     * the native bridges, so the packed value is never negative; 0 for a dead handle.
+     */
+    external fun voFrameStats(handle: Long): Long
     external fun isLoading(handle: Long): Boolean
     external fun isEnded(handle: Long): Boolean
     external fun isPaused(handle: Long): Boolean

@@ -240,7 +240,7 @@ class LivePlaybackFreezePolicyTest {
     }
 
     @Test
-    fun `everything stopping is still a plain stall, not a video stall`() {
+    fun `everything stopping is still a plain stall rather than a video stall`() {
         // A dead pipe already had a kind; a stopped picture only reclassifies it when the
         // playhead is genuinely still moving.
         val decision = LivePlaybackFreezePolicy.evaluate(
