@@ -148,19 +148,23 @@ fun XtreamHubScreen(
     val renderableCategories = visibleCategories.filterNot { it.loaded && it.items.isEmpty() }
     val favoriteTitle = stringResource(Res.string.compose_iptv_hub_favorites)
     val recentTitle = stringResource(Res.string.compose_iptv_hub_recent)
-    val liveSpecialCategories = remember(isLive, localLibraryItems, liveRecents, favoriteTitle, recentTitle) {
-        if (!isLive) {
+    // Both rails are scoped to the SELECTED account: the stores keep one flat profile-wide list
+    // across every playlist, and these rails sit inside one provider's hub.
+    val accountPrefix = state.selectedAccountId?.let { XtreamItemRegistry.accountPrefix(it) }
+    val liveSpecialCategories = remember(isLive, localLibraryItems, liveRecents, favoriteTitle, recentTitle, accountPrefix) {
+        if (!isLive || accountPrefix == null) {
             emptyList()
         } else {
             buildList {
                 localLibraryItems
-                    .filter { XtreamItemRegistry.isLiveId(it.id) }
+                    .filter { XtreamItemRegistry.isLiveId(it.id) && it.id.startsWith(accountPrefix) }
                     .map { it.toMetaPreview() }
                     .takeIf { it.isNotEmpty() }
                     ?.let { items ->
                         add(XtreamHubCategory(SPECIAL_FAVORITES_ID, favoriteTitle, items, loaded = true))
                     }
                 liveRecents
+                    .filter { it.contentId.startsWith(accountPrefix) }
                     .map { it.toMetaPreview() }
                     .takeIf { it.isNotEmpty() }
                     ?.let { items ->
