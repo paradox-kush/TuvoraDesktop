@@ -72,6 +72,7 @@ import androidx.media3.ui.SubtitleView
 import androidx.media3.ui.CaptionStyleCompat
 import com.nuvio.app.R
 import com.nuvio.app.AppExitReporter
+import com.nuvio.app.features.iptv.CatchUpPlayback
 import com.nuvio.app.features.streams.normalizeStreamType
 import `is`.xyz.mpv.BaseMPVView
 import `is`.xyz.mpv.MPV
@@ -105,6 +106,7 @@ actual fun PlatformPlayerSurface(
     sourceResponseHeaders: Map<String, String>,
     externalSubtitles: List<com.nuvio.app.features.streams.StreamSubtitle>,
     streamType: String?,
+    isCatchUpPlayback: Boolean,
     useYoutubeChunkedPlayback: Boolean,
     modifier: Modifier,
     playWhenReady: Boolean,
@@ -187,7 +189,12 @@ actual fun PlatformPlayerSurface(
                 sourceAudioUrl = sourceAudioUrl,
                 sourceHeaders = sourceHeaders,
                 externalSubtitles = externalSubtitles,
-                isLiveStream = forceLibmpvForLive,
+                // The ENGINE choice stays live (a replay arrives down the same pipe, so it
+                // needs libmpv exactly as much), but this flag drives rejoin-the-live-edge on
+                // surface return and zeroes the reported duration. Both are wrong for a
+                // recording: the first throws away the viewer's position, the second hides the
+                // timeline the replay actually has.
+                isLiveStream = CatchUpPlayback.rejoinsLiveEdge(streamType, isCatchUpPlayback),
                 modifier = modifier,
                 playWhenReady = playWhenReady,
                 resizeMode = resizeMode,
