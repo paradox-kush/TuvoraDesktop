@@ -173,16 +173,23 @@ object XtreamClient : IptvClient {
     override suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int): Result<List<XtreamProgram>> = call {
         val url = playerApi(acc, "get_short_epg") + "&stream_id=$streamId&limit=$limit"
         val root = runCatching { json.parseToJsonElement(httpGetText(url, acc.dnsProvider)).jsonObject }.getOrNull() ?: return@call emptyList()
-        (root["epg_listings"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }.map { o ->
-            XtreamProgram(
-                title = decodeXtreamBase64(o["title"].asStringOrNull()),
-                description = decodeXtreamBase64(o["description"].asStringOrNull()),
-                startMs = (o["start_timestamp"].asStringOrNull()?.toLongOrNull() ?: 0L) * 1000,
-                endMs = (o["stop_timestamp"].asStringOrNull()?.toLongOrNull() ?: 0L) * 1000,
-                nowPlaying = o["now_playing"].asIntOrNull() == 1,
-            )
-        }
+        (root["epg_listings"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }.map { o -> parseEpgProgramme(o) }
     }
+
+    /**
+     * One EPG row -> domain model, every field read tolerantly (the same rows come back from
+     * get_short_epg AND get_simple_data_table; only the latter carries has_archive). internal
+     * for tests.
+     */
+    internal fun parseEpgProgramme(o: JsonObject): XtreamProgram = XtreamProgram(
+        title = decodeXtreamBase64(o["title"].asStringOrNull()),
+        description = decodeXtreamBase64(o["description"].asStringOrNull()),
+        startMs = (o["start_timestamp"].asStringOrNull()?.toLongOrNull() ?: 0L) * 1000,
+        endMs = (o["stop_timestamp"].asStringOrNull()?.toLongOrNull() ?: 0L) * 1000,
+        nowPlaying = o["now_playing"].asIntOrNull() == 1,
+        // Any positive count is a mark; junk or absence stays null — silence, not "no".
+        hasArchive = o["has_archive"].asIntOrNull()?.let { it > 0 },
+    )
 
     /**
      * VOD detail for synthetic-meta + TMDB enrichment. Returns null (not a failure) when the
@@ -267,38 +274,38 @@ object XtreamClient : IptvClient {
     override fun liveStreamUrl(acc: XtreamAccount, streamId: Int): String = streamUrl(acc, "live", streamId, "ts")
 
     /**
-     * Catch-up (tv_archive) replay URL — XUI's standard timeshift path form.
-     * ponytail: start is UTC-derived; panels technically interpret it in the SERVER's
-     * timezone, so a mis-set panel replays offset — reading server_info.timezone and
-     * shifting is the upgrade path if providers surface that in practice.
+     * Catch-up (tv_archive) replay URL — XUI's standard timeshift path form (the first entry of
+     * [liveTimeshiftUrls]). Empty only for blank credentials, which [XtreamCatchUp.candidateUrls]
+     * refuses to build garbage for — callers are Xtream-gated so it doesn't happen, but a crash
+     * would be the worst answer.
      */
-    fun liveTimeshiftUrl(acc: XtreamAccount, streamId: Int, startEpochMs: Long, durationMinutes: Int): String {
-        val base = acc.baseUrl.trimEnd('/')
-        val start = formatTimeshiftStart(startEpochMs)
-        return "$base/timeshift/${acc.username.encodeURLPathPart()}/${acc.password.encodeURLPathPart()}/$durationMinutes/$start/$streamId.ts"
-    }
+    fun liveTimeshiftUrl(acc: XtreamAccount, streamId: Int, startEpochMs: Long, durationMinutes: Int): String =
+        liveTimeshiftUrls(acc, streamId, startEpochMs, durationMinutes).firstOrNull().orEmpty()
 
-    /** Epoch ms -> "YYYY-MM-DD:HH-MM" in UTC (no kotlinx-datetime; Hinnant civil-from-days). */
-    private fun formatTimeshiftStart(epochMs: Long): String {
-        val totalSecs = epochMs / 1000
-        val days = totalSecs.floorDiv(86_400)
-        val secsOfDay = totalSecs.mod(86_400L)
-        // Hinnant civil_from_days
-        val z = days + 719_468
-        val era = (if (z >= 0) z else z - 146_096) / 146_097
-        val doe = z - era * 146_097
-        val yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365
-        val y = yoe + era * 400
-        val doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
-        val mp = (5 * doy + 2) / 153
-        val d = doy - (153 * mp + 2) / 5 + 1
-        val m = if (mp < 10) mp + 3 else mp - 9
-        val year = if (m <= 2) y + 1 else y
-        val hh = secsOfDay / 3600
-        val mm = (secsOfDay % 3600) / 60
-        fun pad(n: Long) = n.toString().padStart(2, '0')
-        return "$year-${pad(m)}-${pad(d)}:${pad(hh)}-${pad(mm)}"
-    }
+    /**
+     * Every catch-up URL worth trying for this channel, best-known first — panels disagree about
+     * the shape and none advertise which they speak, so the caller walks the list until one plays
+     * (CatchUpDialectWalk owns the walking policy). The first entry is the form Tuvora has always
+     * sent; the date maths and dialects live in [XtreamCatchUp] (KMP twin of NuvioTV's).
+     */
+    fun liveTimeshiftUrls(
+        acc: XtreamAccount,
+        streamId: Int,
+        startEpochMs: Long,
+        durationMinutes: Int,
+        containerExtension: String? = null,
+        serverOffsetMs: Long? = null,
+    ): List<String> = XtreamCatchUp.candidateUrls(
+        baseUrl = acc.baseUrl,
+        username = acc.username,
+        password = acc.password,
+        streamId = streamId,
+        startMs = startEpochMs,
+        endMs = startEpochMs + durationMinutes * 60_000L,
+        containerExtension = containerExtension,
+        serverOffsetMs = serverOffsetMs,
+    )
+
     override fun episodeStreamUrl(acc: XtreamAccount, episodeId: String, ext: String): String {
         val base = acc.baseUrl.trimEnd('/')
         return "$base/series/${acc.username.encodeURLPathPart()}/${acc.password.encodeURLPathPart()}/$episodeId.${ext.ifBlank { "mp4" }}"
@@ -410,7 +417,10 @@ internal fun XtreamEpgEntryDto.toProgram(): XtreamProgram = XtreamProgram(
     description = decodeXtreamBase64(description),
     startMs = (startTimestamp?.toLongOrNull() ?: 0L) * 1000,
     endMs = (stopTimestamp?.toLongOrNull() ?: 0L) * 1000,
-    nowPlaying = nowPlaying == 1
+    nowPlaying = nowPlaying == 1,
+    // FlexInt already coerced "1"/true; any positive count is a mark, junk decoded to null stays
+    // null — silence, not "no".
+    hasArchive = hasArchive?.let { it > 0 }
 )
 
 /** Xtream base64-encodes EPG title/description. Returns "" on null/garbage rather than throwing. */

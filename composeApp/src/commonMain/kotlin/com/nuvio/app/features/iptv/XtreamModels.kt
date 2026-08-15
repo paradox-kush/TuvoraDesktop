@@ -112,7 +112,11 @@ data class XtreamEpgEntryDto(
     val description: String? = null,      // base64
     @SerialName("start_timestamp") val startTimestamp: String? = null,
     @SerialName("stop_timestamp") val stopTimestamp: String? = null,
-    @Serializable(with = FlexIntSerializer::class) @SerialName("now_playing") val nowPlaying: Int? = null
+    @Serializable(with = FlexIntSerializer::class) @SerialName("now_playing") val nowPlaying: Int? = null,
+    // Per-programme archive flag (get_simple_data_table rows; get_short_epg omits it): the panel
+    // saying, recording by recording, what it actually kept — the strongest catch-up signal
+    // there is. Panels send int or "1"; absent -> null = the panel said nothing.
+    @Serializable(with = FlexIntSerializer::class) @SerialName("has_archive") val hasArchive: Int? = null
 )
 
 // --- Domain models ----------------------------------------------------------
@@ -253,7 +257,12 @@ data class XtreamProgram(
     val description: String,
     val startMs: Long,
     val endMs: Long,
-    val nowPlaying: Boolean
+    val nowPlaying: Boolean,
+    /**
+     * Per-programme `has_archive`: true/false = the panel spoke, null = it said nothing (every
+     * get_short_epg row). Feeds [XtreamCatchUp.actionFor]'s positive override.
+     */
+    val hasArchive: Boolean? = null
 )
 
 data class XtreamAccountInfo(
