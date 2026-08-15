@@ -72,6 +72,8 @@ import androidx.media3.ui.SubtitleView
 import androidx.media3.ui.CaptionStyleCompat
 import com.nuvio.app.R
 import com.nuvio.app.AppExitReporter
+import com.nuvio.app.core.memory.AndroidMemoryTierProbe
+import com.nuvio.app.core.memory.MemoryTier
 import com.nuvio.app.features.iptv.CatchUpPlayback
 import com.nuvio.app.features.streams.normalizeStreamType
 import `is`.xyz.mpv.BaseMPVView
@@ -1811,16 +1813,16 @@ private fun libmpvCacheBytes(): Int =
  * the 256MB growth limit most phones grant this app (no largeHeap), and the field showed the
  * consequence: OutOfMemoryError at the growth limit on flagships and low_memory_kills on
  * everything else, minutes into a stream. Budget a quarter of the real heap instead, and less
- * on declared low-RAM devices.
+ * on LOW-tier devices — the shared [MemoryTier] selector (isLowRamDevice OR memoryClass ≤ 192)
+ * rather than the raw flag, so low-memory-class devices that never set it are covered too.
  */
 private fun playerTargetBufferBytes(context: Context): Int = playerTargetBufferBytes(
-    isLowRamDevice = (context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager)
-        ?.isLowRamDevice == true,
+    tier = AndroidMemoryTierProbe.tier(context),
     maxHeapBytes = Runtime.getRuntime().maxMemory(),
 )
 
-internal fun playerTargetBufferBytes(isLowRamDevice: Boolean, maxHeapBytes: Long): Int {
-    if (isLowRamDevice) return 24 * 1024 * 1024
+internal fun playerTargetBufferBytes(tier: MemoryTier, maxHeapBytes: Long): Int {
+    if (tier == MemoryTier.LOW) return 24 * 1024 * 1024
     return (maxHeapBytes / 4)
         .coerceIn(24L * 1024 * 1024, 64L * 1024 * 1024)
         .toInt()
