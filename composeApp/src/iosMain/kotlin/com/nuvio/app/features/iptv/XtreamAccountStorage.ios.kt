@@ -45,4 +45,11 @@ internal actual object XtreamAccountStorage {
     actual fun saveRefreshStateJson(profileId: Int, json: String) {
         NSUserDefaults.standardUserDefaults.setObject(json, forKey = "xtream_refresh_state_$profileId")
     }
+
+    actual fun loadHubSelectionJson(profileId: Int): String? =
+        NSUserDefaults.standardUserDefaults.stringForKey("xtream_hub_selection_$profileId")
+
+    actual fun saveHubSelectionJson(profileId: Int, json: String) {
+        NSUserDefaults.standardUserDefaults.setObject(json, forKey = "xtream_hub_selection_$profileId")
+    }
 }

@@ -54,4 +54,11 @@ internal actual object XtreamAccountStorage {
     actual fun saveRefreshStateJson(profileId: Int, json: String) {
         preferences?.edit()?.putString("xtream_refresh_state_$profileId", json)?.apply()
     }
+
+    actual fun loadHubSelectionJson(profileId: Int): String? =
+        preferences?.getString("xtream_hub_selection_$profileId", null)
+
+    actual fun saveHubSelectionJson(profileId: Int, json: String) {
+        preferences?.edit()?.putString("xtream_hub_selection_$profileId", json)?.apply()
+    }
 }

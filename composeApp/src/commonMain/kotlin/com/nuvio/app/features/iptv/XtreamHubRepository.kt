@@ -117,11 +117,17 @@ object XtreamHubRepository {
         // Warm the canonical-EPG mirror (12h TTL, no-op when fresh) — it backs the hub's
         // now/next whenever the panel's own EPG is missing.
         scope.launch { com.nuvio.app.features.epg.EpgMirrorRepository.ensureFresh() }
-        val accounts = XtreamRepository.uiState.value.accounts.filter { it.enabled }
+        val all = XtreamRepository.uiState.value.accounts
+        val accounts = all.filter { it.enabled }
         val current = _uiState.value
-        val selected = current.selectedAccountId?.takeIf { id -> accounts.any { it.id == id } }
-            ?: accounts.firstOrNull()?.id
-        val section = clampSection(accounts.firstOrNull { it.id == selected }, current.section)
+        // Fix 1 (sticky provider): a fresh hub state (cold start, or right after resetForProfile)
+        // restores the last on-screen provider + tab; a live in-memory selection is the truth.
+        val remembered = if (current.selectedAccountId == null) {
+            parseHubSelection(XtreamAccountStorage.loadHubSelectionJson(com.nuvio.app.features.profiles.ProfileRepository.activeProfileId))
+        } else null
+        val selected = resolveStickyAccount(current.selectedAccountId, remembered?.accountId, all)
+        val wanted = remembered?.let { resolveStickySection(it.section, current.section) } ?: current.section
+        val section = clampSection(accounts.firstOrNull { it.id == selected }, wanted)
         _uiState.update { it.copy(accounts = accounts, selectedAccountId = selected, section = section) }
         if (selected != null) {
             showSection(selected, section)
@@ -133,6 +139,7 @@ object XtreamHubRepository {
         if (_uiState.value.selectedAccountId == accountId) return
         val section = clampSection(accountFor(accountId), _uiState.value.section)
         _uiState.update { it.copy(selectedAccountId = accountId, section = section) }
+        rememberSelection()
         showSection(accountId, section)
         maybePrefetch(accountId)
     }
@@ -141,7 +148,17 @@ object XtreamHubRepository {
         if (_uiState.value.section == section) return
         val accountId = _uiState.value.selectedAccountId ?: return
         _uiState.update { it.copy(section = section) }
+        rememberSelection()
         showSection(accountId, section)
+    }
+
+    /** Fix 1: persist the on-screen provider + tab (device-local, per profile) for the next entry. */
+    private fun rememberSelection() {
+        val st = _uiState.value
+        XtreamAccountStorage.saveHubSelectionJson(
+            com.nuvio.app.features.profiles.ProfileRepository.activeProfileId,
+            encodeHubSelection(XtreamHubSelection(accountId = st.selectedAccountId, section = st.section.name)),
+        )
     }
 
     /** Re-fetch the current section's category list after a failed load (error-card retry). */
