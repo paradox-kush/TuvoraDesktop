@@ -47,6 +47,22 @@ class LivePlaybackFreezeReporter(
     val isFreezeOpen: Boolean get() = freezeActive
 
     /**
+     * Whether the armed profile is still missing its engine. The profile is captured on the
+     * first playing snapshot, and on Android that snapshot can beat the platform surface
+     * handing its controller over — the race that had every Android event say "unknown". The
+     * wiring keeps asking until [onEngineKnown] fills it in.
+     */
+    val needsEngine: Boolean get() = armed && profile?.engine == ENGINE_UNKNOWN
+
+    /** Fills in the engine on the armed profile once it can be named. Never overwrites one. */
+    fun onEngineKnown(engine: String) {
+        val active = profile ?: return
+        if (active.engine != ENGINE_UNKNOWN) return
+        if (engine.isBlank() || engine == ENGINE_UNKNOWN) return
+        profile = active.copy(engine = engine)
+    }
+
+    /**
      * Records that a reconnect was fired for the open freeze, and rebases movement tracking on
      * the rebuilt player. A reconnected live stream restarts its timeline near zero, so without
      * rebasing the jump away from the old position would read as the picture coming back before
@@ -158,7 +174,18 @@ class LivePlaybackFreezeReporter(
             is LivePlaybackFreezePolicy.Decision.Start -> {
                 freezeActive = true
                 freezeKind = decision.kind
-                freezeStartedAtMs = nowMs
+                // The viewer's clock on a video-only freeze started when the last frame
+                // rendered, not when the detection threshold fired ~6s later. Basing it at
+                // detection shipped fleet frozen_ms values below the threshold itself —
+                // impossible by construction. `lastVideoAdvanceAtMs` still holds the true
+                // stall start here: the ticks did not move this sample, so the mark above
+                // did not touch it. The playhead kinds keep the detection basis the fleet
+                // has been read with since the detector shipped.
+                freezeStartedAtMs = if (decision.kind == LivePlaybackFreezePolicy.Kind.VIDEO_STALLED) {
+                    lastVideoAdvanceAtMs
+                } else {
+                    nowMs
+                }
                 freezeStartBufferedAheadMs = bufferedAheadMs
                 freezeMaxBufferedAheadMs = bufferedAheadMs
                 freezeStartState = state
@@ -297,6 +324,9 @@ class LivePlaybackFreezeReporter(
 
     companion object {
         const val EVENT = "live_playback_freeze"
+
+        /** Placeholder engine until the platform surface hands over a controller to name it. */
+        const val ENGINE_UNKNOWN = "unknown"
 
         /** Per playback session. A channel that freezes repeatedly is proven by the first few. */
         const val MAX_EVENTS_PER_SESSION = 3
