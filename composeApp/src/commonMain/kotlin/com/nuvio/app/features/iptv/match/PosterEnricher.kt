@@ -29,6 +29,26 @@ import kotlinx.coroutines.launch
  *  - Three consecutive transport failures pause the drain for a minute — a panel outage must
  *    not turn the queue into a hammer.
  */
+/**
+ * Removes the head entry of [map] and returns its value, or null when [map] is empty.
+ *
+ * Kotlin/Native invalidates a `MutableMap.MutableEntry` the instant its backing entry is removed —
+ * the JVM leaves the entry object readable, Native does not, so `map.remove(entry.key)` followed by
+ * a read of `entry.value` aborts the process with SIGABRT. That is what crashed iOS build 119 (it
+ * surfaced as an unhandled coroutine failure because [PosterEnricher.drain] runs in a bare
+ * `launch`). Copying the value out through the iterator BEFORE removing is the only safe order.
+ *
+ * Pinned by `PosterQueueHeadTest`, which only proves anything when it runs on Native —
+ * `:composeApp:iosSimulatorArm64Test`, not the JVM host run.
+ */
+internal fun <K, V> removeHead(map: MutableMap<K, V>): V? {
+    val iterator = map.entries.iterator()
+    if (!iterator.hasNext()) return null
+    val head = iterator.next().value
+    iterator.remove()
+    return head
+}
+
 internal object PosterEnricher {
 
     internal data class PosterUpdate(val accountId: String, val kind: MatchKind, val sid: Int, val poster: String)
@@ -86,16 +106,11 @@ internal object PosterEnricher {
     private suspend fun drain() {
         while (true) {
             val req = synchronized(lock) {
-                val iterator = queue.entries.iterator()
-                if (!iterator.hasNext()) {
+                val request = removeHead(queue)
+                if (request == null) {
                     workers--
                     return
                 }
-                // Kotlin/Native invalidates a HashMap.Entry as soon as its backing entry is
-                // removed. Copy the request first, then remove through the iterator; reading
-                // entry.key/value after queue.remove(entry.key) aborts iOS with SIGABRT.
-                val request = iterator.next().value
-                iterator.remove()
                 attempted.add(request.key)
                 request
             }
