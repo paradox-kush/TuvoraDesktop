@@ -32,6 +32,7 @@ import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.settings.SettingsGroup
 import com.nuvio.app.features.settings.SettingsGroupDivider
+import com.nuvio.app.features.settings.SettingsNavigationRow
 import com.nuvio.app.features.settings.SettingsSection
 import com.nuvio.app.features.settings.SettingsSwitchRow
 
@@ -132,7 +133,88 @@ internal fun LazyListScope.xtreamContentSettingsContent(
                 onOpenType(type)
             },
         )
+
+        if (CatchUpEpgRepository.supportsCatchUp(account)) {
+            CatchUpSettings(account = account, isTablet = isTablet)
+        }
     }
+}
+
+/**
+ * The two catch-up escape hatches, per playlist.
+ *
+ * Both exist because panels lie in ways detection can't fix. The container preference is the
+ * scrub-bar knob — the default TS-first order is iptvnator's field-proven one, and a failing m3u8
+ * still walks back to TS, so flipping it costs reliability only on panels that serve HLS badly.
+ * The time correction is the one every mature player ships (iptvsimple's `catchup-correction`,
+ * TiviMate's per-playlist EPG offset) because a geo-mismatched panel reports a clock that is
+ * simply wrong, and no amount of measuring it helps.
+ */
+@Composable
+private fun CatchUpSettings(account: XtreamAccount, isTablet: Boolean) {
+    val tokens = MaterialTheme.nuvio
+    val correction = account.catchUpTimeCorrectionMinutes
+        .coerceIn(CATCH_UP_CORRECTION_MIN_MINUTES, CATCH_UP_CORRECTION_MAX_MINUTES)
+
+    SettingsSection(title = "Catch-up", isTablet = isTablet) {
+        SettingsGroup(isTablet = isTablet) {
+            SettingsSwitchRow(
+                title = "Prefer m3u8 (enables scrubbing)",
+                description = if (account.catchUpPreferM3u8) {
+                    "Asks the panel for HLS first, so replays have a progress bar. Falls back to TS."
+                } else {
+                    "Asks the panel for TS first — the more reliable default. Replays usually can't scrub."
+                },
+                checked = account.catchUpPreferM3u8,
+                isTablet = isTablet,
+                onCheckedChange = { on ->
+                    XtreamRepository.updateOptions(account.id) { acc -> acc.copy(catchUpPreferM3u8 = on) }
+                },
+            )
+            SettingsGroupDivider(isTablet = isTablet)
+            SettingsNavigationRow(
+                title = "Time correction",
+                description = "Shifts replay start times when the panel's clock is wrong. " +
+                    "Currently ${formatCorrection(correction)}. Tap to step by 30 minutes; " +
+                    "wraps back to none past +14 h.",
+                isTablet = isTablet,
+                onClick = {
+                    val next = correction + CORRECTION_STEP_MINUTES
+                    val wrapped = if (next > CATCH_UP_CORRECTION_MAX_MINUTES) CATCH_UP_CORRECTION_MIN_MINUTES else next
+                    XtreamRepository.updateOptions(account.id) { acc ->
+                        acc.copy(catchUpTimeCorrectionMinutes = wrapped)
+                    }
+                    // The measured offset is cached per session and this rides on top of it.
+                    CatchUpEpgRepository.forget(account.id)
+                },
+                trailingContent = {
+                    Text(
+                        text = formatCorrection(correction),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = tokens.colors.textSecondary,
+                    )
+                },
+            )
+        }
+        Text(
+            text = "Catch-up replays programmes your provider recorded. Only channels the provider " +
+                "marks with an archive can be replayed — on most playlists that is a small handful.",
+            style = MaterialTheme.typography.bodySmall,
+            color = tokens.colors.textMuted,
+            modifier = Modifier.padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s10),
+        )
+    }
+}
+
+private const val CORRECTION_STEP_MINUTES = 30
+
+private fun formatCorrection(minutes: Int): String {
+    if (minutes == 0) return "None"
+    val sign = if (minutes > 0) "+" else "−"
+    val abs = if (minutes < 0) -minutes else minutes
+    val h = abs / 60
+    val m = abs % 60
+    return if (m == 0) "$sign${h}h" else "$sign${h}h ${m}m"
 }
 
 @Composable

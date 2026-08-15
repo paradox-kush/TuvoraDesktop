@@ -317,6 +317,15 @@ expect fun PlatformPlayerSurface(
     sourceResponseHeaders: Map<String, String> = emptyMap(),
     externalSubtitles: List<com.nuvio.app.features.streams.StreamSubtitle> = emptyList(),
     streamType: String? = null,
+    /**
+     * This source is a CATCH-UP recording arriving down the live pipe.
+     *
+     * Carried BESIDE [streamType] rather than replacing it: the archive is still delivered as a
+     * live stream and the engine selection depends on that, so a new content type would ripple
+     * through every comparison in the app while fixing nothing. Live-only behaviour reads
+     * `live && !isCatchUpPlayback` — see CatchUpPlayback.
+     */
+    isCatchUpPlayback: Boolean = false,
     useYoutubeChunkedPlayback: Boolean = false,
     modifier: Modifier = Modifier,
     playWhenReady: Boolean = true,

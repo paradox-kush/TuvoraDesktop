@@ -25,6 +25,7 @@ import androidx.compose.ui.interop.UIKitViewController
 import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import co.touchlab.kermit.Logger
+import com.nuvio.app.features.iptv.CatchUpPlayback
 import com.nuvio.app.features.streams.normalizeStreamType
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.useContents
@@ -49,6 +50,7 @@ actual fun PlatformPlayerSurface(
     sourceResponseHeaders: Map<String, String>,
     externalSubtitles: List<com.nuvio.app.features.streams.StreamSubtitle>,
     streamType: String?,
+    isCatchUpPlayback: Boolean,
     useYoutubeChunkedPlayback: Boolean,
     modifier: Modifier,
     playWhenReady: Boolean,
@@ -287,7 +289,9 @@ actual fun PlatformPlayerSurface(
     // Load file and set initial state
     LaunchedEffect(bridge, sourceUrl, sourceAudioUrl, sourceHeaders, externalSubtitles) {
         bridge.applyIosVideoOutputSettings(latestPlayerSettings.value)
-        bridge.setIsLiveStream(normalizeStreamType(streamType) == "live")
+        // A replay must NOT reload-to-live-edge on foreground: it would skip the viewer to the
+        // end of the recording they were part-way through.
+        bridge.setIsLiveStream(CatchUpPlayback.rejoinsLiveEdge(streamType, isCatchUpPlayback))
         bridge.loadFileWithAudio(
             videoUrl = sourceUrl,
             audioUrl = sourceAudioUrl,

@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,10 +28,15 @@ import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -49,9 +55,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.nuvio.app.core.ui.NuvioModalBottomSheet
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.PlatformBackHandler
 import com.nuvio.app.core.ui.nuvio
+import com.nuvio.app.core.ui.nuvioSafeBottomPadding
+import com.nuvio.app.features.iptv.CatchUpDialectWalk
+import com.nuvio.app.features.iptv.CatchUpPlayback
+import com.nuvio.app.features.iptv.XtreamCatchUp
 import com.nuvio.app.features.iptv.XtreamProgram
 import com.nuvio.app.core.analytics.Breadcrumbs
 import com.nuvio.app.core.analytics.LivePlaybackFreezeReporter
@@ -76,6 +87,12 @@ import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.action_back
 import nuvio.composeapp.generated.resources.compose_iptv_hub_epg_next
+import nuvio.composeapp.generated.resources.compose_livetv_catchup_badge
+import nuvio.composeapp.generated.resources.compose_livetv_catchup_no_recording
+import nuvio.composeapp.generated.resources.compose_livetv_catchup_no_scrub
+import nuvio.composeapp.generated.resources.compose_livetv_catchup_session_limit
+import nuvio.composeapp.generated.resources.compose_livetv_catchup_start_over
+import nuvio.composeapp.generated.resources.compose_livetv_catchup_watch_live
 import nuvio.composeapp.generated.resources.compose_livetv_error_tap_retry
 import nuvio.composeapp.generated.resources.compose_livetv_exit_fullscreen
 import nuvio.composeapp.generated.resources.compose_livetv_fullscreen
@@ -140,17 +157,35 @@ fun LiveTvScreen(
     val requestedProgrammes = remember { mutableSetOf<String>() }
 
     var nowMs by remember { mutableStateOf(TraktPlatformClock.nowEpochMs()) }
+    // Where the guide's five-hour window sits. Starts live; travels back through the archive.
+    var guideAnchorMs by remember { mutableStateOf(GuideTimeTravel.anchorForNow(nowMs)) }
     LaunchedEffect(Unit) {
         while (true) {
-            nowMs = TraktPlatformClock.nowEpochMs()
             delay(30_000)
+            val next = TraktPlatformClock.nowEpochMs()
+            // The live window follows the clock; a window the viewer travelled to stays put.
+            guideAnchorMs = GuideTimeTravel.onClockTick(guideAnchorMs, nowMs, next)
+            nowMs = next
         }
     }
+
+    // --- Catch-up state ------------------------------------------------------------------
+    // One walk per screen: it single-flights per account and supersedes its own stale attempts,
+    // so re-creating it per replay would throw away exactly the guards it exists for.
+    val dialectWalk = remember { CatchUpDialectWalk(LiveTvData.winnerMemory()) }
+    var catchUp by remember { mutableStateOf<CatchUpSession?>(null) }
+    var sheetTarget by remember { mutableStateOf<ProgrammeSheetTarget?>(null) }
+    var catchUpNotice by remember { mutableStateOf<CatchUpNotice?>(null) }
+    val isCatchUp = catchUp != null
 
     // Resolve (or re-resolve on channel switch / retry) the playable source. A RETRY forces a
     // fresh Stalker create_link: with static-cmd playback the plain re-resolve would rebuild the
     // very URL that just failed (retryTick resets on channel switch, so a switch is never a mint).
-    LaunchedEffect(currentContentId, retryTick) {
+    //
+    // A replay owns its own resolution below — this effect must not overwrite the archive URL with
+    // the live one, so it stands down whenever a catch-up session is active.
+    LaunchedEffect(currentContentId, retryTick, isCatchUp) {
+        if (isCatchUp) return@LaunchedEffect
         source = null
         resolveError = false
         playbackError = null
@@ -159,6 +194,16 @@ fun LiveTvScreen(
             forceMint = retryTick > 0,
         )
         if (resolved == null) resolveError = true else source = resolved
+    }
+
+    // Each attempt the dialect walk hands back becomes a real playback try — never an out-of-band
+    // probe, which on a max_connections=1 account kicks the viewer's own live stream.
+    LaunchedEffect(catchUp?.attempt?.token) {
+        val session = catchUp ?: return@LaunchedEffect
+        source = null
+        resolveError = false
+        playbackError = null
+        source = LiveTvData.catchUpSource(session.contentId, session.attempt.url)
     }
     // Always re-resolve on retry: live links carry expiring tokens (Stalker create_link is
     // single-use/short-TTL), so controller.retry() would just replay the dead URL.
@@ -173,12 +218,93 @@ fun LiveTvScreen(
     // portal session was rotated by another device on the same MAC) recovers invisibly; a second
     // failure on the freshly minted link means the channel/account is the problem — surface the
     // error pill instead of hammering the portal.
+    //
+    // Never during a replay: there the dialect walk owns failure, and a re-resolve would rebuild
+    // the LIVE url for a viewer who asked for a recording.
     var autoRefreshBurntUrl by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(playbackError) {
+        if (isCatchUp) return@LaunchedEffect
         val failedUrl = source?.url ?: return@LaunchedEffect
         if (playbackError != null && autoRefreshBurntUrl != failedUrl) {
             autoRefreshBurntUrl = failedUrl
             retryTick++
+        }
+    }
+
+    /** Leaves the replay and returns the screen to the live channel it belongs to. */
+    fun exitCatchUp() {
+        catchUp = null
+        source = null
+        playbackError = null
+        retryTick = 0
+    }
+
+    /**
+     * Reports the outcome of the current attempt to the walk and follows its answer.
+     *
+     * TRANSPORT advances the ladder, DECODE stops it, exhaustion ends it with nothing pinned — a
+     * dead stream_id or a panel briefly down must not poison the learned winner.
+     */
+    fun onCatchUpFailure(message: String?) {
+        val session = catchUp ?: return
+        if (session.proven) return
+        if (CatchUpPlayback.isSessionLimit(message)) {
+            catchUpNotice = CatchUpNotice.SESSION_LIMIT
+            exitCatchUp()
+            return
+        }
+        when (val step = dialectWalk.onFailure(session.attempt.token, CatchUpPlayback.failureKind(message))) {
+            is CatchUpDialectWalk.Step.Next -> catchUp = session.copy(attempt = step.attempt)
+            CatchUpDialectWalk.Step.Stale -> Unit   // a superseded walk's late answer — ignore
+            else -> {
+                catchUpNotice = CatchUpNotice.NO_RECORDING
+                exitCatchUp()
+            }
+        }
+    }
+
+    /** Opens a replay: the walk picks the first URL to try, and the sheet (if any) closes. */
+    fun startCatchUp(channel: LiveGuideChannel, programme: XtreamProgram) {
+        sheetTarget = null
+        scope.launch {
+            val request = LiveTvData.catchUpRequest(channel.contentId, programme.startMs, programme.endMs)
+            if (request == null) {
+                catchUpNotice = CatchUpNotice.NO_RECORDING
+                return@launch
+            }
+            when (val step = dialectWalk.begin(request)) {
+                is CatchUpDialectWalk.Step.Next -> {
+                    currentContentId = channel.contentId
+                    currentTitle = channel.name
+                    currentLogo = channel.logo
+                    catchUpNotice = null
+                    catchUp = CatchUpSession(
+                        contentId = channel.contentId,
+                        programmeTitle = programme.title,
+                        startMs = programme.startMs,
+                        endMs = programme.endMs,
+                        attempt = step.attempt,
+                    )
+                }
+                else -> catchUpNotice = CatchUpNotice.NO_RECORDING
+            }
+        }
+    }
+
+    /** The OK rule, split by state — the artifact's decision 2. */
+    fun onProgrammeAction(
+        channel: LiveGuideChannel,
+        programme: XtreamProgram,
+        action: XtreamCatchUp.ProgrammeAction,
+    ) {
+        when (action) {
+            // Finished and replayable: one press plays it, TiviMate-style. There is only one
+            // destination, so a sheet would be a dialog asking "yes?".
+            XtreamCatchUp.ProgrammeAction.REPLAY -> startCatchUp(channel, programme)
+            // Airing on an archive channel: "restart this" and "join it live" are both reasonable
+            // and neither is obviously default, so this is the ONE state that gets two buttons.
+            XtreamCatchUp.ProgrammeAction.START_OVER -> sheetTarget = ProgrammeSheetTarget(channel, programme)
+            else -> Unit
         }
     }
 
@@ -188,18 +314,43 @@ fun LiveTvScreen(
     }
 
     // Load programmes for any channel that asks (lazy, cached, de-duped).
-    val onNeedProgrammes: (String) -> Unit = { contentId ->
-        if (requestedProgrammes.add(contentId)) {
-            scope.launch {
-                val list = LiveTvData.programmes(contentId)
-                if (list.isNotEmpty()) programmes[contentId] = list
-            }
+    //
+    // De-duped per (channel, window): the old key was the channel alone, which was right when the
+    // guide only ever showed now-forward, and would mean nothing ever reloads once it can travel.
+    val loadWindow: suspend (String) -> Unit = { contentId ->
+        val fromMs = guideAnchorMs
+        val toMs = GuideTimeTravel.windowEndMs(guideAnchorMs)
+        val history = LiveTvData.historyProgrammes(contentId, fromMs, toMs)
+        if (history.isNotEmpty()) {
+            programmes[contentId] = history
+        } else if (!GuideTimeTravel.isTravelling(guideAnchorMs, nowMs)) {
+            // No stored history and we're on the live window: the panel's now-and-next is still
+            // the best answer, and it is what every non-Xtream playlist has.
+            val list = LiveTvData.programmes(contentId)
+            if (list.isNotEmpty()) programmes[contentId] = list
+        } else {
+            programmes.remove(contentId)
         }
     }
-    // Always keep the current channel's programmes warm for the now-bar.
-    LaunchedEffect(currentContentId) { onNeedProgrammes(currentContentId) }
+    val onNeedProgrammes: (String) -> Unit = { contentId ->
+        if (requestedProgrammes.add("$contentId@$guideAnchorMs")) {
+            scope.launch { loadWindow(contentId) }
+        }
+    }
+    // The FOCUSED channel — and only it — gets its full history pulled. A page of rows each
+    // fetching its own table is exactly how a guide turns 2 MB into 40 MB on a 1 GB box.
+    LaunchedEffect(currentContentId) {
+        onNeedProgrammes(currentContentId)
+        LiveTvData.ensureHistory(currentContentId)
+        requestedProgrammes.remove("$currentContentId@$guideAnchorMs")
+        loadWindow(currentContentId)
+    }
 
     fun switchTo(channel: LiveGuideChannel) {
+        // A replay is never zapped away by the live path: the tap is deliberate, so it lands, but
+        // the archive session is torn down first rather than leaving a replay URL wearing another
+        // channel's identity. See CatchUpPlayback.allowsChannelChange.
+        if (!CatchUpPlayback.allowsChannelChange(isCatchUp)) exitCatchUp()
         if (channel.contentId == currentContentId) return
         currentContentId = channel.contentId
         currentTitle = channel.name
@@ -306,7 +457,8 @@ fun LiveTvScreen(
             ) {
                 LivePlayerSurface(
                     source = source,
-                    title = currentTitle,
+                    isCatchUpPlayback = isCatchUp,
+                    title = catchUp?.programmeTitle ?: currentTitle,
                     // Desktop renders its player controls in a native layer ON TOP of Compose, so
                     // every overlay below is invisible there and the native close button is the
                     // only exit a desktop viewer can see. It does nothing unless this screen
@@ -317,12 +469,29 @@ fun LiveTvScreen(
                             action = action,
                             fullscreen = fullscreen,
                             setFullscreen = ::setFullscreen,
-                            onBack = onBack,
+                            // On desktop the native close button is the ONLY exit a viewer can
+                            // see, so it has to leave the REPLAY first — otherwise Back would drop
+                            // them out of Live TV entirely rather than back to the live channel.
+                            onBack = if (isCatchUp) ::exitCatchUp else onBack,
                         )
                     },
                     onControllerReady = { controller = it },
                     onSnapshot = {
                         snapshot = it
+                        val session = catchUp
+                        if (session != null && !session.proven) {
+                            when {
+                                // The attempt played: pin the winner and stop walking.
+                                it.isPlaying || it.positionMs > 0L -> {
+                                    dialectWalk.onSuccess(session.attempt.token)
+                                    catchUp = session.copy(proven = true)
+                                }
+                                // A live/catch-up URL that never opens can report NO error at all —
+                                // mpv surfaces it as an immediate end-of-file. Without this the
+                                // walk would sit on its first dialect forever.
+                                it.isEnded -> onCatchUpFailure(playbackError)
+                            }
+                        }
                         if (!playbackStartRecorded.value && (it.positionMs > 0L || it.isPlaying)) {
                             playbackStartRecorded.value = true
                             Breadcrumbs.playbackStarted(
@@ -333,23 +502,32 @@ fun LiveTvScreen(
                                 nowMs = TraktPlatformClock.nowEpochMs(),
                             )
                         }
-                        freezeReporter.onLiveSnapshot(
-                            snapshot = it,
-                            engine = { controller?.getStreamInfo()?.playerEngine },
-                            streamUrl = source?.url,
-                            contentId = currentContentId,
-                            surface = LIVE_FREEZE_SURFACE_DOCKED,
-                            reconnector = freezeReconnector,
-                            // Re-resolve rather than controller.retry(): live links carry
-                            // expiring tokens, so replaying the same URL can reconnect to a
-                            // link the provider has already invalidated.
-                            reconnect = onRetry,
-                            // Video-only freeze: the stream is still delivering audio, so reset
-                            // the decoder before spending a live link on a re-resolve.
-                            resetVideo = { controller?.resetVideoPipeline() == true },
-                        )
+                        // The watchdog reports a fault when a live stream ENDS, because a live
+                        // channel has no end. A recording ending is the recording finishing, so
+                        // armed against a replay it would report a freeze on every successful
+                        // catch-up and spend a provider connection re-minting a working URL.
+                        if (CatchUpPlayback.armsFreezeWatchdog(isCatchUp)) {
+                            freezeReporter.onLiveSnapshot(
+                                snapshot = it,
+                                engine = { controller?.getStreamInfo()?.playerEngine },
+                                streamUrl = source?.url,
+                                contentId = currentContentId,
+                                surface = LIVE_FREEZE_SURFACE_DOCKED,
+                                reconnector = freezeReconnector,
+                                // Re-resolve rather than controller.retry(): live links carry
+                                // expiring tokens, so replaying the same URL can reconnect to a
+                                // link the provider has already invalidated.
+                                reconnect = onRetry,
+                                // Video-only freeze: the stream is still delivering audio, so reset
+                                // the decoder before spending a live link on a re-resolve.
+                                resetVideo = { controller?.resetVideoPipeline() == true },
+                            )
+                        }
                     },
-                    onError = { playbackError = it },
+                    onError = { message ->
+                        playbackError = message
+                        if (message != null) onCatchUpFailure(message)
+                    },
                 )
 
                 // Re-read per channel: switching channels in place keeps this composable
@@ -387,10 +565,12 @@ fun LiveTvScreen(
                 if (fullscreen) {
                     FullscreenControls(
                         visible = controlsVisible,
-                        title = currentTitle,
+                        title = catchUp?.programmeTitle ?: currentTitle,
                         isPlaying = snapshot.isPlaying,
                         showPlayPause = showPlayPause,
                         danger = colors.danger,
+                        accent = colors.accent,
+                        isCatchUp = isCatchUp,
                         onPlayPause = { if (snapshot.isPlaying) controller?.pause() else controller?.play() },
                         onExitFullscreen = { setFullscreen(false) },
                         onBack = onBack,
@@ -400,25 +580,70 @@ fun LiveTvScreen(
                         isPlaying = snapshot.isPlaying,
                         showPlayPause = showPlayPause,
                         danger = colors.danger,
+                        accent = colors.accent,
+                        isCatchUp = isCatchUp,
                         onPlayPause = { if (snapshot.isPlaying) controller?.pause() else controller?.play() },
                         onEnterFullscreen = { setFullscreen(true) },
-                        onBack = onBack,
+                        onBack = if (isCatchUp) ::exitCatchUp else onBack,
+                    )
+                }
+
+                // The replay's own transport, docked below the chrome. A live channel has no
+                // finite timeline and gets nothing here — which is what this screen has always
+                // shown.
+                //
+                // Desktop draws its player controls in a NATIVE layer above Compose, so this bar
+                // is only visible on the platforms whose controls are Compose. It is left in place
+                // rather than gated because the native layer owns its own scrubber, and hiding a
+                // Compose overlay that is already covered buys nothing but a divergence.
+                catchUp?.let { session ->
+                    CatchUpScrubBar(
+                        session = session,
+                        snapshot = snapshot,
+                        streamUrl = source?.url,
+                        nowMs = nowMs,
+                        colors = colors,
+                        onSeek = { controller?.seekTo(it) },
+                        modifier = Modifier.align(Alignment.BottomCenter),
                     )
                 }
             }
 
             if (!fullscreen) {
+                catchUpNotice?.let { notice ->
+                    CatchUpNoticeBar(notice = notice, colors = colors, onDismiss = { catchUpNotice = null })
+                }
                 NowBar(logo = currentLogo, title = currentTitle, nowNext = nowNext, nowMs = nowMs, colors = colors)
                 LiveGuideGrid(
                     channels = channels,
                     currentContentId = currentContentId,
                     nowMs = nowMs,
+                    windowStartMs = guideAnchorMs,
+                    // The panel's per-channel window is not in the browse catalog, and an unknown
+                    // one is deliberately permissive: `tv_archive` is the real flag, and hiding a
+                    // feature the provider supports is worse than a press that fails.
+                    catchUpDays = 0,
                     programmesOf = { programmes[it] },
                     onNeedProgrammes = onNeedProgrammes,
                     onSelectChannel = ::switchTo,
+                    onProgrammeAction = ::onProgrammeAction,
+                    onTravel = { guideAnchorMs = it },
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
             }
+        }
+
+        sheetTarget?.let { target ->
+            ProgrammeSheet(
+                target = target,
+                nowMs = nowMs,
+                onDismiss = { sheetTarget = null },
+                onStartOver = { startCatchUp(target.channel, target.programme) },
+                onWatchLive = {
+                    sheetTarget = null
+                    switchTo(target.channel)
+                },
+            )
         }
     }
 }
@@ -515,12 +740,14 @@ private fun NowBar(
     }
 }
 
-/** Portrait overlay: back + LIVE + fullscreen button on top, play/pause centered. */
+/** Portrait overlay: back + LIVE (or CATCH-UP) + fullscreen button on top, play/pause centered. */
 @Composable
 private fun DockedPlayerOverlay(
     isPlaying: Boolean,
     showPlayPause: Boolean,
     danger: Color,
+    accent: Color,
+    isCatchUp: Boolean,
     onPlayPause: () -> Unit,
     onEnterFullscreen: () -> Unit,
     onBack: () -> Unit,
@@ -534,7 +761,7 @@ private fun DockedPlayerOverlay(
         ) {
             OverlayIconButton(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(Res.string.action_back), onBack)
             Spacer(Modifier.width(NuvioTokens.Space.s8))
-            LiveBadge(danger)
+            if (isCatchUp) CatchUpBadge(accent) else LiveBadge(danger)
             Spacer(Modifier.weight(1f))
             OverlayIconButton(Icons.Filled.Fullscreen, stringResource(Res.string.compose_livetv_fullscreen), onEnterFullscreen)
         }
@@ -558,6 +785,8 @@ private fun FullscreenControls(
     isPlaying: Boolean,
     showPlayPause: Boolean,
     danger: Color,
+    accent: Color,
+    isCatchUp: Boolean,
     onPlayPause: () -> Unit,
     onExitFullscreen: () -> Unit,
     onBack: () -> Unit,
@@ -573,7 +802,7 @@ private fun FullscreenControls(
         ) {
             OverlayIconButton(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(Res.string.action_back), onBack)
             Spacer(Modifier.width(NuvioTokens.Space.s12))
-            LiveBadge(danger)
+            if (isCatchUp) CatchUpBadge(accent) else LiveBadge(danger)
             Spacer(Modifier.width(NuvioTokens.Space.s12))
             Text(
                 text = title,
@@ -611,6 +840,7 @@ private fun FullscreenControls(
 @Composable
 private fun LivePlayerSurface(
     source: LiveChannelSource?,
+    isCatchUpPlayback: Boolean,
     title: String,
     onControlsAction: (PlayerControlsAction) -> Boolean,
     onControllerReady: (PlayerEngineController) -> Unit,
@@ -627,7 +857,11 @@ private fun LivePlayerSurface(
         PlatformPlayerSurface(
             sourceUrl = current.url,
             sourceHeaders = current.headers,
+            // A replay stays streamType "live": the archive arrives down the same pipe and the
+            // Android engine selection depends on it. What makes it different is the flag beside
+            // it, which every live-only behaviour reads.
             streamType = "live",
+            isCatchUpPlayback = isCatchUpPlayback,
             modifier = Modifier.fillMaxSize(),
             playWhenReady = true,
             resizeMode = PlayerResizeMode.Fit,
@@ -708,3 +942,301 @@ private fun OverlayIconButton(
 
 /** How long to let mpv measure a bitrate before reading the stream info. */
 private const val STREAM_INFO_SETTLE_MS = 2500L
+
+// ---------------------------------------------------------------------------------------------
+// Catch-up
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * One replay in progress.
+ *
+ * [attempt] is the dialect walk's current candidate; a new token means a new URL to try, and it is
+ * what the effect keys on. [proven] latches on the first frame so a walk that has already won
+ * never re-reports success, and so a stream that stops LATER reads as the recording finishing
+ * rather than as this dialect failing.
+ */
+private data class CatchUpSession(
+    val contentId: String,
+    val programmeTitle: String,
+    val startMs: Long,
+    val endMs: Long,
+    val attempt: CatchUpDialectWalk.Attempt,
+    val proven: Boolean = false,
+)
+
+/** The programme whose sheet is open — only ever a START_OVER, the one state with two answers. */
+private data class ProgrammeSheetTarget(
+    val channel: LiveGuideChannel,
+    val programme: XtreamProgram,
+)
+
+/**
+ * Why a replay didn't happen. Both are things the VIEWER can act on, which is the whole reason
+ * they aren't a generic playback error: "catch-up is broken" sends people to Discord blaming the
+ * app for a provider's missing recording or their own subscription's connection cap.
+ */
+private enum class CatchUpNotice { NO_RECORDING, SESSION_LIMIT }
+
+@Composable
+private fun CatchUpBadge(accent: Color) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(NuvioTokens.Radius.xs))
+            .background(accent)
+            .padding(horizontal = NuvioTokens.Space.s8, vertical = NuvioTokens.Space.s2),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Replay,
+            contentDescription = null,
+            tint = Color.Black,
+            modifier = Modifier.size(10.dp),
+        )
+        Text(
+            text = stringResource(Res.string.compose_livetv_catchup_badge),
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.Black,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+/**
+ * The replay transport.
+ *
+ * Whether the viewer gets a draggable handle is the PROVIDER's call, not ours: a panel answering
+ * `.m3u8` sends a playlist with every segment's duration and it scrubs; one answering `.ts` sends
+ * a progressive stream with no duration and it does not. Same programme, same app. So the
+ * unseekable case draws a flat bar and says why, rather than a handle that ignores drags — an
+ * absent control reads as a provider fact, a dead one reads as a broken app.
+ */
+@Composable
+private fun CatchUpScrubBar(
+    session: CatchUpSession,
+    snapshot: PlayerPlaybackSnapshot,
+    streamUrl: String?,
+    nowMs: Long,
+    colors: com.nuvio.app.core.ui.NuvioColorTokens,
+    onSeek: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val seekable = CatchUpPlayback.isSeekable(streamUrl)
+    // The programme's own length is the timeline, not the engine's reported duration: a timeshift
+    // stream frequently reports nothing, or the whole remaining archive.
+    val durationMs = (session.endMs - session.startMs).coerceAtLeast(1L)
+    val maxSeekMs = CatchUpPlayback.maxSeekPositionMs(session.startMs, session.endMs, nowMs)
+    var scrubbingMs by remember(session.attempt.token) { mutableStateOf<Long?>(null) }
+    val positionMs = scrubbingMs ?: snapshot.positionMs.coerceIn(0L, durationMs)
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.55f))
+            .padding(horizontal = NuvioTokens.Space.s12, vertical = NuvioTokens.Space.s6),
+    ) {
+        if (seekable) {
+            Slider(
+                value = positionMs.toFloat(),
+                onValueChange = { scrubbingMs = it.toLong().coerceIn(0L, maxSeekMs) },
+                onValueChangeFinished = {
+                    scrubbingMs?.let(onSeek)
+                    scrubbingMs = null
+                },
+                // The right edge stops short of live: the segments either side of it have not been
+                // written yet, so a seek there asks the panel for something that does not exist.
+                valueRange = 0f..durationMs.toFloat(),
+                colors = SliderDefaults.colors(
+                    thumbColor = colors.accent,
+                    activeTrackColor = colors.accent,
+                    inactiveTrackColor = Color.White.copy(alpha = 0.25f),
+                ),
+                modifier = Modifier.fillMaxWidth().height(20.dp),
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(NuvioTokens.Radius.full))
+                    .background(Color.White.copy(alpha = 0.16f)),
+            )
+            Spacer(Modifier.height(NuvioTokens.Space.s4))
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = liveClockLabel(session.startMs + positionMs),
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White.copy(alpha = 0.85f),
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = if (seekable) {
+                    liveClockLabel(session.endMs)
+                } else {
+                    stringResource(Res.string.compose_livetv_catchup_no_scrub)
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White.copy(alpha = 0.6f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** Says something TRUE when a replay doesn't happen, and gets out of the way on a tap. */
+@Composable
+private fun CatchUpNoticeBar(
+    notice: CatchUpNotice,
+    colors: com.nuvio.app.core.ui.NuvioColorTokens,
+    onDismiss: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(colors.danger.copy(alpha = 0.14f))
+            .clickable(onClick = onDismiss)
+            .padding(horizontal = NuvioTokens.Space.s12, vertical = NuvioTokens.Space.s8),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = when (notice) {
+                CatchUpNotice.NO_RECORDING -> stringResource(Res.string.compose_livetv_catchup_no_recording)
+                CatchUpNotice.SESSION_LIMIT -> stringResource(Res.string.compose_livetv_catchup_session_limit)
+            },
+            style = MaterialTheme.typography.labelMedium,
+            color = colors.textPrimary,
+        )
+    }
+}
+
+/**
+ * The programme sheet, shown for exactly one state: a programme airing NOW on a channel that keeps
+ * an archive, where "restart this" and "join it live" are both reasonable and neither is the
+ * obvious default. Every other state has one destination and plays on a single press.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProgrammeSheet(
+    target: ProgrammeSheetTarget,
+    nowMs: Long,
+    onDismiss: () -> Unit,
+    onStartOver: () -> Unit,
+    onWatchLive: () -> Unit,
+) {
+    val colors = MaterialTheme.nuvio.colors
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // The guide's rows carry a description truncated in SQL; the sheet is the ONE place the whole
+    // synopsis is read, and it is read lazily so a feed's 4 KB blurbs never sit in the guide page.
+    var fullDescription by remember(target.programme.startMs) { mutableStateOf(target.programme.description) }
+    LaunchedEffect(target.channel.contentId, target.programme.startMs) {
+        LiveTvData.programmeDescription(target.channel.contentId, target.programme.startMs)
+            ?.takeIf { it.isNotBlank() }
+            ?.let { fullDescription = it }
+    }
+
+    NuvioModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = NuvioTokens.Space.s20)
+                .padding(bottom = nuvioSafeBottomPadding(NuvioTokens.Space.s16)),
+            verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
+        ) {
+            Text(
+                text = buildString {
+                    append(target.channel.name.uppercase())
+                    append(" · ")
+                    append(liveClockLabel(target.programme.startMs))
+                    append("–")
+                    append(liveClockLabel(target.programme.endMs))
+                    append(" · ")
+                    append(XtreamCatchUp.durationMinutes(target.programme.startMs, target.programme.endMs))
+                    append(" MIN")
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = target.programme.title,
+                style = MaterialTheme.typography.titleMedium,
+                color = colors.textPrimary,
+                fontWeight = FontWeight.Bold,
+            )
+            if (fullDescription.isNotBlank()) {
+                Text(
+                    text = fullDescription,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.textSecondary,
+                    maxLines = 6,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.height(NuvioTokens.Space.s4))
+            Row(horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8)) {
+                SheetActionButton(
+                    icon = Icons.Filled.Replay,
+                    label = stringResource(Res.string.compose_livetv_catchup_start_over),
+                    background = colors.accent,
+                    contentColor = colors.onAccent,
+                    onClick = onStartOver,
+                    modifier = Modifier.weight(1f),
+                )
+                SheetActionButton(
+                    icon = Icons.Filled.PlayArrow,
+                    label = stringResource(Res.string.compose_livetv_catchup_watch_live),
+                    background = Color.Transparent,
+                    contentColor = colors.textPrimary,
+                    border = colors.borderSubtle,
+                    onClick = onWatchLive,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SheetActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    background: Color,
+    contentColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    border: Color? = null,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(NuvioTokens.Radius.button))
+            .then(
+                if (border != null) {
+                    Modifier.border(NuvioTokens.Border.thin, border, RoundedCornerShape(NuvioTokens.Radius.button))
+                } else {
+                    Modifier
+                },
+            )
+            .background(background)
+            .clickable(onClick = onClick)
+            .padding(vertical = NuvioTokens.Space.s12),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(imageVector = icon, contentDescription = null, tint = contentColor, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(NuvioTokens.Space.s6))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = contentColor,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}

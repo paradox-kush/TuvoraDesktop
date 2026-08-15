@@ -154,6 +154,20 @@ data class CategorySelections(
     val allNull: Boolean get() = live == null && movies == null && series == null
 }
 
+/**
+ * The catch-up URL shape this panel was last PROVEN to answer, plus the container preference it
+ * was proven under. [CatchUpWinnerStore] declines to offer it when the preference has since
+ * changed — otherwise flipping "prefer m3u8" would be inert on every account that already learned
+ * a TS dialect. [dialect] is a [CatchUpDialectWalk.Dialect] name; an unrecognised one reads as
+ * "nothing learned" so a value written by a newer build can never throw.
+ */
+@Serializable
+data class CatchUpWinner(
+    val formatsSignature: String,
+    val dialect: String,
+    val preferM3u8: Boolean = false,
+)
+
 // Playlist-manager option fields are ADDITIVE with defaults so JSON persisted by older
 // builds (and legacy sync rows) decodes unchanged — same storage keys, no migration.
 @Serializable
@@ -185,7 +199,36 @@ data class XtreamAccount(
     val serialNumber: String? = null,                         // optional STB serial override (else derived from MAC)
     val deviceId: String? = null,                             // optional STB device id override (else derived from MAC)
     val sendDeviceId: Boolean = true,                         // send derived/overridden device identity on get_profile
+    // --- Catch-up (tv_archive replay) options -------------------------------------------------
+    /**
+     * Ask the panel for `.m3u8` catch-up first instead of `.ts`. Off by default: TS is what
+     * iptvnator ships after evidently finding it the more dependable answer in the field, and a
+     * failing m3u8 still walks back to TS either way. On, the viewer gets a seekable replay on
+     * panels that serve HLS — which is most of what "catch-up" means to them.
+     */
+    val catchUpPreferM3u8: Boolean = false,
+    /**
+     * Manual clock correction for this playlist, in MINUTES (−720..+840, i.e. −12 h..+14 h).
+     *
+     * The panel's own clock pair is derived automatically ([ServerClockOffset]), but every mature
+     * player ships this escape hatch — iptvsimple's `catchup-correction`, TiviMate's per-playlist
+     * EPG offset, XUI's server-side `epg_shift` — because geo-mismatched panels that lie about
+     * their own clock are common enough that auto-derivation alone strands those users.
+     */
+    val catchUpTimeCorrectionMinutes: Int = 0,
+    /** What shape this panel last answered — learned, not configured. See [CatchUpWinnerStore]. */
+    val catchUpWinner: CatchUpWinner? = null,
 )
+
+/** The manual correction, clamped to the range the settings UI offers, as milliseconds. */
+fun XtreamAccount.catchUpTimeCorrectionMs(): Long =
+    catchUpTimeCorrectionMinutes.coerceIn(CATCH_UP_CORRECTION_MIN_MINUTES, CATCH_UP_CORRECTION_MAX_MINUTES) * 60_000L
+
+/** −12 h. Matches iptvsimple's `catchup-correction` range, which is the de-facto spec. */
+const val CATCH_UP_CORRECTION_MIN_MINUTES: Int = -12 * 60
+
+/** +14 h — the widest real UTC offset (Kiritimati), so no panel is out of reach. */
+const val CATCH_UP_CORRECTION_MAX_MINUTES: Int = 14 * 60
 
 fun XtreamAccount.typeEnabled(type: String): Boolean = type in contentTypes
 

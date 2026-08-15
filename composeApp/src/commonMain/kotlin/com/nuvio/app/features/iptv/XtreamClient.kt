@@ -192,6 +192,67 @@ object XtreamClient : IptvClient {
     )
 
     /**
+     * One channel's FULL guide table, streamed straight to [onProgramme].
+     *
+     * `get_short_epg` returns now-and-next only, so this is the sole source of the PAST programmes
+     * a catch-up guide exists to show. It is also the biggest EPG body the app asks any panel for,
+     * which is why it never lands in a String: rows are admitted or refused one at a time against
+     * [CatchUpEpgPolicy]'s window, so a provider keeping a fortnight of schedule costs the same
+     * heap as one keeping a day.
+     *
+     * Throws on a truncated or listings-less body (see [XtreamEpgTableParser.finish]) — the caller
+     * replaces the channel's stored rows wholesale, so a partial answer must never look complete.
+     */
+    internal suspend fun simpleDataTableInto(
+        acc: XtreamAccount,
+        streamId: Int,
+        nowMs: Long,
+        catchUpDays: Int,
+        onProgramme: (XtreamProgram) -> Unit,
+    ): Int {
+        val url = playerApi(acc, "get_simple_data_table") + "&stream_id=$streamId"
+        val parser = XtreamEpgTableParser(json, nowMs, catchUpDays, onProgramme)
+        // Guarded like every other panel request (WP6) so the breaker counts it exactly once.
+        IptvPanelGuard.guard.guardedPanelRequest(url) {
+            httpStreamLines(url, userAgent = null, dnsProvider = acc.dnsProvider) { parser.feed(it) }
+        }
+        return parser.finish()
+    }
+
+    /**
+     * The panel's UTC offset measured from `server_info`'s clock PAIR, or null when the panel
+     * doesn't send one.
+     *
+     * Replay `start` strings are interpreted in the PANEL's timezone, so a panel in New York
+     * replaying a programme described in UTC lands hours off. The pair beats the panel's own
+     * `timezone` field, which is routinely junk or missing — see [ServerClockOffset].
+     *
+     * `server_info` is deliberately read as loose JSON rather than through a DTO: panels disagree
+     * about the types of its other fields (`port` arrives as a bare int), and a strict decode
+     * throwing on one of them would lose the clock pair too.
+     */
+    internal suspend fun serverClockOffsetMs(acc: XtreamAccount): Long? = runCatching {
+        val root = json.parseToJsonElement(panelGetText(playerApi(acc), acc.dnsProvider)).jsonObject
+        val server = root["server_info"] as? JsonObject ?: return@runCatching null
+        val timestampNow = server["timestamp_now"].asStringOrNull()?.toLongOrNull() ?: return@runCatching null
+        ServerClockOffset.offsetMs(server["time_now"].asStringOrNull(), timestampNow)
+    }.getOrNull()
+
+    /**
+     * What the panel says it can emit (`allowed_output_formats`), for pruning the dialect ladder.
+     *
+     * Absent on three of three real panels measured, so "unknown = prune nothing" is the normal
+     * path rather than an edge case — null here means exactly that.
+     */
+    internal suspend fun allowedOutputFormats(acc: XtreamAccount): List<String>? = runCatching {
+        val root = json.parseToJsonElement(panelGetText(playerApi(acc), acc.dnsProvider)).jsonObject
+        val server = root["server_info"] as? JsonObject ?: return@runCatching null
+        (server["allowed_output_formats"] as? JsonArray)
+            ?.mapNotNull { it.asStringOrNull() }
+            ?.takeIf { it.isNotEmpty() }
+    }.getOrNull()
+
+    /**
      * VOD detail for synthetic-meta + TMDB enrichment. Returns null (not a failure) when the
      * panel sends `info: []` — a known quirk — so callers fall back to bare Xtream metadata.
      */
@@ -438,8 +499,39 @@ internal fun XtreamEpgEntryDto.toProgram(): XtreamProgram = XtreamProgram(
     hasArchive = hasArchive?.let { it > 0 }
 )
 
-/** Xtream base64-encodes EPG title/description. Returns "" on null/garbage rather than throwing. */
+/**
+ * Xtream base64-encodes EPG title/description — except on the panels that don't.
+ *
+ * Catching the decoder's throw is not enough of a fallback: a SHORT plain title is frequently
+ * valid base64 by accident ("News" is four characters straight from the alphabet), so the decode
+ * succeeds and returns mojibake. Nothing downstream can tell that apart from a real title, and it
+ * lands in the guide, the programme sheet and the now-bar.
+ *
+ * So the decode has to be checked rather than merely attempted: the input must actually look like
+ * base64, and the RESULT must look like text. Invalid UTF-8 decodes to replacement characters
+ * rather than throwing, which is exactly the case a try/catch misses.
+ *
+ * Returns "" on null/blank rather than throwing.
+ */
 internal fun decodeXtreamBase64(s: String?): String {
     if (s.isNullOrBlank()) return ""
-    return runCatching { s.trim().decodeBase64String() }.getOrDefault(s)
+    val trimmed = s.trim()
+    if (!looksBase64(trimmed)) return trimmed
+    val decoded = runCatching { trimmed.decodeBase64String() }.getOrNull() ?: return trimmed
+    return if (isPlausibleText(decoded)) decoded else trimmed
+}
+
+/** Cheap shape test: anything outside the alphabet (a space, a colon) settles it immediately. */
+private fun looksBase64(value: String): Boolean {
+    if (value.length < 2) return false
+    return value.all { it.isLetterOrDigit() && it.code < 128 || it == '+' || it == '/' || it == '=' }
+}
+
+/**
+ * Whether a decode produced text rather than bytes that happen to be printable-ish. Replacement
+ * characters mean the bytes were not UTF-8; C0 controls mean they were not text at all.
+ */
+private fun isPlausibleText(value: String): Boolean {
+    if (value.isEmpty()) return false
+    return value.none { it == '�' || (it.code < 0x20 && it != '\n' && it != '\r' && it != '\t') }
 }
