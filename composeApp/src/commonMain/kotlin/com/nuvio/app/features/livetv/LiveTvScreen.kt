@@ -147,12 +147,17 @@ fun LiveTvScreen(
         }
     }
 
-    // Resolve (or re-resolve on channel switch / retry) the playable source.
+    // Resolve (or re-resolve on channel switch / retry) the playable source. A RETRY forces a
+    // fresh Stalker create_link: with static-cmd playback the plain re-resolve would rebuild the
+    // very URL that just failed (retryTick resets on channel switch, so a switch is never a mint).
     LaunchedEffect(currentContentId, retryTick) {
         source = null
         resolveError = false
         playbackError = null
-        val resolved = LiveTvData.resolveSource(currentContentId, currentTitle, currentLogo)
+        val resolved = LiveTvData.resolveSource(
+            currentContentId, currentTitle, currentLogo,
+            forceMint = retryTick > 0,
+        )
         if (resolved == null) resolveError = true else source = resolved
     }
     // Always re-resolve on retry: live links carry expiring tokens (Stalker create_link is
@@ -194,6 +199,7 @@ fun LiveTvScreen(
         currentContentId = channel.contentId
         currentTitle = channel.name
         currentLogo = channel.logo
+        retryTick = 0   // a fresh channel is a first tune, not a retry — its resolve must not mint
     }
 
     // ---- Orientation / fullscreen state ----

@@ -651,6 +651,9 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
                 season = season,
                 episode = episode,
                 forceRefresh = true,
+                // A static-cmd Stalker verdict would rebuild the URL that just 401'd — the
+                // refresh needs a genuinely fresh create_link.
+                forceMintIptv = true,
             )
 
             var pollCount = 0
@@ -684,7 +687,18 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
             return@launch
         }
 
-        val refreshedUrl = stream.playableDirectUrl
+        // A matched-lane Stalker candidate is DEFERRED ("stalker-deferred:…") — listing never
+        // mints. The refresh must hand the engine a REAL url, and it forces the mint: a
+        // static-cmd verdict here would rebuild the very URL that just died.
+        val refreshedUrl = stream.playableDirectUrl?.let { candidate ->
+            if (com.nuvio.app.features.iptv.match.XtreamStreamSource.isDeferred(candidate)) {
+                runCatchingUnlessCancelled {
+                    com.nuvio.app.features.iptv.match.XtreamStreamSource.resolveDeferredUrl(candidate, forceMint = true)
+                }.getOrNull()
+            } else {
+                candidate
+            }
+        }
         if (refreshedUrl.isNullOrBlank() || refreshedUrl == failedUrl) {
             iptvRefreshLog.w { "replacement URL unusable (blank=${refreshedUrl.isNullOrBlank()} sameAsFailed=${refreshedUrl == failedUrl})" }
             errorMessage = message

@@ -37,10 +37,13 @@ object LiveTvData {
      * Resolves the playable source for a live channel id, mirroring `App.launchLiveChannel`:
      * registry lookup (sync then async for M3U/Stalker) → DoH-resolved live URL. Also records the
      * channel to the live "recently watched" LRU. Returns null if the URL can't be resolved.
+     *
+     * [forceMint] = this resolve is a RETRY after a playback failure: a Stalker static-cmd verdict
+     * would replay the dead URL, so the retry demands a fresh create_link instead.
      */
-    suspend fun resolveSource(contentId: String, name: String, logo: String?): LiveChannelSource? {
+    suspend fun resolveSource(contentId: String, name: String, logo: String?, forceMint: Boolean = false): LiveChannelSource? {
         val immediate = XtreamItemRegistry.liveStreamUrlFor(contentId)
-            ?: XtreamItemRegistry.liveStreamUrlForAsync(contentId)
+            ?: XtreamItemRegistry.liveStreamUrlForAsync(contentId, forceMint)
             ?: return null
         val dnsProvider = XtreamItemRegistry.dnsProviderFor(contentId)
         val playback = resolveLivePlaybackUrl(immediate, dnsProvider)
