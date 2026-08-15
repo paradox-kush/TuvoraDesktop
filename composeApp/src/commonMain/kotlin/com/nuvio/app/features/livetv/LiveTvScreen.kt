@@ -619,10 +619,10 @@ fun LiveTvScreen(
                     currentContentId = currentContentId,
                     nowMs = nowMs,
                     windowStartMs = guideAnchorMs,
-                    // The panel's per-channel window is not in the browse catalog, and an unknown
-                    // one is deliberately permissive: `tv_archive` is the real flag, and hiding a
-                    // feature the provider supports is worse than a press that fails.
-                    catchUpDays = 0,
+                    // Travel floor = the deepest window any visible channel declares; each cell
+                    // judges replayability against its own channel's window. 0 (panel silent)
+                    // stays permissive: `tv_archive` is the real flag.
+                    catchUpDays = channels.maxOfOrNull { it.catchUpDays } ?: 0,
                     programmesOf = { programmes[it] },
                     onNeedProgrammes = onNeedProgrammes,
                     onSelectChannel = ::switchTo,

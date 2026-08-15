@@ -28,8 +28,12 @@ object GuideTimeTravel {
     /** One press (or one drag off the edge) moves the window by this much. */
     const val PAGE_MS = 2 * HOUR_MS
 
-    /** The live window: the slot boundary at or before now, so "now" sits just in from the left. */
-    fun anchorForNow(nowMs: Long): Long = floorToSlot(nowMs)
+    /** How much past the LIVE view shows by default — the approved mockups draw recent history
+     *  in the resting guide, so replay is discoverable without pressing Earlier. */
+    const val LIVE_LOOKBACK_MS = HOUR_MS
+
+    /** The live window: anchored one hour back, so recent past is visible and "now" sits inside. */
+    fun anchorForNow(nowMs: Long): Long = floorToSlot(nowMs - LIVE_LOOKBACK_MS)
 
     /**
      * The furthest back the window may go.

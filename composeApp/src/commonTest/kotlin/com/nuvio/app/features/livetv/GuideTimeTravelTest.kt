@@ -16,11 +16,14 @@ class GuideTimeTravelTest {
     private val now = 1_710_000_000_000L + 11 * 60_000L
 
     @Test
-    fun `the live anchor is the slot boundary at or before now`() {
+    fun `the live anchor shows an hour of past by default`() {
         val anchor = GuideTimeTravel.anchorForNow(now)
-        assertTrue(anchor <= now, "the anchor must not be in the future")
-        assertTrue(now - anchor < GuideTimeTravel.SLOT_MINUTES * 60_000L, "the anchor must be the NEAREST boundary")
-        assertEquals(0L, anchor % (GuideTimeTravel.SLOT_MINUTES * 60_000L), "the anchor must sit on a slot boundary")
+        val slotMs = GuideTimeTravel.SLOT_MINUTES * 60_000L
+        // The resting guide draws recent history (the approved mockups), so the anchor sits one
+        // lookback behind now, floored to a slot boundary.
+        assertTrue(anchor <= now - GuideTimeTravel.LIVE_LOOKBACK_MS, "the anchor must expose the lookback window")
+        assertTrue((now - GuideTimeTravel.LIVE_LOOKBACK_MS) - anchor < slotMs, "the anchor must be the nearest boundary below the lookback point")
+        assertEquals(0L, anchor % slotMs, "the anchor must sit on a slot boundary")
     }
 
     @Test

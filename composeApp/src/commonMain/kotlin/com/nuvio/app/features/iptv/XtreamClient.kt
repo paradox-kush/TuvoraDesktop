@@ -71,6 +71,8 @@ object XtreamClient : IptvClient {
                 epgChannelId = o["epg_channel_id"].asStringOrNull(),
                 categoryId = o["category_id"].asStringOrNull(),
                 hasArchive = (o["tv_archive"].asIntOrNull() ?: 0) > 0,
+                // String on exactly the archive-bearing rows in the field — asIntOrNull is lenient.
+                catchUpDays = (o["tv_archive_duration"].asIntOrNull() ?: 0).coerceAtLeast(0),
                 streamUrl = streamUrl(acc, "live", id, "ts")
             )
         }

@@ -39,6 +39,8 @@ data class LiveGuideChannel(
      * is a mode the whole playlist is in.
      */
     val hasArchive: Boolean = false,
+    /** The panel's per-channel window (days); 0 = panel silent → the permissive rules apply. */
+    val catchUpDays: Int = 0,
 )
 
 /**
@@ -101,6 +103,7 @@ object LiveTvData {
                 streamId = ch.streamId,
                 categoryId = ch.categoryId,
                 hasArchive = supportsCatchUp && ch.hasArchive,
+                catchUpDays = ch.catchUpDays,
             )
         }
         return if (currentCategory != null) {

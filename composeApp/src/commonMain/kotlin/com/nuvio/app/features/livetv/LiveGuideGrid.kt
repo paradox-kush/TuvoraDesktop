@@ -190,7 +190,7 @@ fun LiveGuideGrid(
                     windowStartMs = windowStartMs,
                     windowEndMs = windowEndMs,
                     nowMs = nowMs,
-                    catchUpDays = catchUpDays,
+                    catchUpDays = channel.catchUpDays,
                     totalWidth = totalWidth,
                     timeScroll = timeScroll,
                     accent = colors.accent,

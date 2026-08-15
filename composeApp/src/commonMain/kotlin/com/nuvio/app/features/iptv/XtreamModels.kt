@@ -270,6 +270,8 @@ data class XtreamChannel(
     val epgChannelId: String?,
     val categoryId: String?,
     val hasArchive: Boolean,
+    /** Panel-declared catch-up window in days; 0 = unknown (three real panels: 3 vs 7, so never assume). */
+    val catchUpDays: Int = 0,
     val streamUrl: String
 )
 
