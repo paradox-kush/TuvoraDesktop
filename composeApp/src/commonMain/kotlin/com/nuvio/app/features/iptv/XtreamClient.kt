@@ -175,8 +175,31 @@ object XtreamClient : IptvClient {
     override suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int): Result<List<XtreamProgram>> = call {
         val url = playerApi(acc, "get_short_epg") + "&stream_id=$streamId&limit=$limit"
         val root = runCatching { json.parseToJsonElement(panelGetText(url, acc.dnsProvider)).jsonObject }.getOrNull() ?: return@call emptyList()
-        (root["epg_listings"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }.map { o -> parseEpgProgramme(o) }
+        val rows = (root["epg_listings"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+        // Epoch-skew gate (XtreamEpochSkew): the manual per-playlist offset wins outright, and the
+        // clock pair is fetched ONLY once a response has actually voted LIAR — honest panels (the
+        // population) never pay a request or a changed byte for the lie, per the onnipsite probe.
+        val manualOffsetMs = acc.guideEpgCorrectionMs()
+        val offsetMs = when {
+            manualOffsetMs != null -> manualOffsetMs
+            epgSkewVerdict(rows) == XtreamEpochSkew.Verdict.LIAR -> XtreamEpochSkew.effectiveOffsetMs(
+                null, XtreamEpochSkew.Verdict.LIAR, XtreamPanelClock.measuredOffsetMs(acc),
+            )
+            else -> 0L
+        }
+        rows.map { o -> parseEpgProgramme(o).shiftedBy(offsetMs) }
     }
+
+    /**
+     * One response's [XtreamEpochSkew] vote over the (start string, epoch) pairs already in its
+     * rows — the wa12/onnipsite separator. internal for tests.
+     */
+    internal fun epgSkewVerdict(rows: List<JsonObject>): XtreamEpochSkew.Verdict =
+        XtreamEpochSkew.verdictOf(
+            rows.map { o ->
+                o["start"].asStringOrNull() to o["start_timestamp"].asStringOrNull()?.trim()?.toLongOrNull()
+            }
+        )
 
     /**
      * One EPG row -> domain model, every field read tolerantly (the same rows come back from
@@ -213,7 +236,12 @@ object XtreamClient : IptvClient {
         onProgramme: (XtreamProgram) -> Unit,
     ): Int {
         val url = playerApi(acc, "get_simple_data_table") + "&stream_id=$streamId"
-        val parser = XtreamEpgTableParser(json, nowMs, catchUpDays, onProgramme)
+        // The stream parse can't suspend mid-body, so the clock pair is resolved up front when
+        // auto-detection could need it (manual unset). Session-memoized in XtreamPanelClock —
+        // usually already seeded by a liar short-EPG response or a replay's panelFacts.
+        val manualOffsetMs = acc.guideEpgCorrectionMs()
+        val clockPairOffsetMs = if (manualOffsetMs == null) XtreamPanelClock.measuredOffsetMs(acc) else null
+        val parser = XtreamEpgTableParser(json, nowMs, catchUpDays, manualOffsetMs, clockPairOffsetMs, onProgramme)
         // Guarded like every other panel request (WP6) so the breaker counts it exactly once.
         IptvPanelGuard.guard.guardedPanelRequest(url) {
             httpStreamLines(url, userAgent = null, dnsProvider = acc.dnsProvider) { parser.feed(it) }
@@ -500,6 +528,20 @@ internal fun XtreamEpgEntryDto.toProgram(): XtreamProgram = XtreamProgram(
     // null — silence, not "no".
     hasArchive = hasArchive?.let { it > 0 }
 )
+
+/**
+ * The epoch-skew correction, applied to one programme. Only REAL epochs move: an absent timestamp
+ * parses to 0, and a "corrected" 0 would be negative garbage that `actionFor`'s degenerate-row
+ * guard could no longer recognise as absent. A zero shift returns the same instance — the honest
+ * path stays byte-identical.
+ */
+internal fun XtreamProgram.shiftedBy(offsetMs: Long): XtreamProgram {
+    if (offsetMs == 0L) return this
+    return copy(
+        startMs = if (startMs > 0) startMs + offsetMs else startMs,
+        endMs = if (endMs > 0) endMs + offsetMs else endMs,
+    )
+}
 
 /**
  * Xtream base64-encodes EPG title/description — except on the panels that don't.

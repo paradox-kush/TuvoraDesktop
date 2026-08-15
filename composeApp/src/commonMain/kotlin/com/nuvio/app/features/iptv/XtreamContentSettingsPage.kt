@@ -23,6 +23,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,6 +36,7 @@ import com.nuvio.app.features.settings.SettingsGroupDivider
 import com.nuvio.app.features.settings.SettingsNavigationRow
 import com.nuvio.app.features.settings.SettingsSection
 import com.nuvio.app.features.settings.SettingsSwitchRow
+import kotlinx.coroutines.launch
 
 /**
  * Which playlist (and, on the checklist sub-page, which content type) the "Content & Categories"
@@ -136,6 +138,7 @@ internal fun LazyListScope.xtreamContentSettingsContent(
 
         if (CatchUpEpgRepository.supportsCatchUp(account)) {
             CatchUpSettings(account = account, isTablet = isTablet)
+            GuideSettings(account = account, isTablet = isTablet)
         }
     }
 }
@@ -206,6 +209,54 @@ private fun CatchUpSettings(account: XtreamAccount, isTablet: Boolean) {
     }
 }
 
+/**
+ * The guide's per-playlist escape hatch, beside the catch-up ones.
+ *
+ * Auto-detection ([XtreamEpochSkew]) repairs panels whose EPG epochs are their own wall clock —
+ * the measured wa12 lie — but a residue of panels is wrong in ways no measurement reaches, and
+ * every mature player ships a manual EPG shift for exactly them (TiviMate's per-playlist EPG
+ * offset, XUI's `epg_shift`). Setting it overrides auto; 0 returns to auto, not to "+0".
+ */
+@Composable
+private fun GuideSettings(account: XtreamAccount, isTablet: Boolean) {
+    val tokens = MaterialTheme.nuvio
+    val scope = rememberCoroutineScope()
+    val correction = account.guideEpgCorrectionMinutes
+        .coerceIn(CATCH_UP_CORRECTION_MIN_MINUTES, CATCH_UP_CORRECTION_MAX_MINUTES)
+
+    SettingsSection(title = "Guide", isTablet = isTablet) {
+        SettingsGroup(isTablet = isTablet) {
+            SettingsNavigationRow(
+                title = "Guide EPG offset",
+                description = "Shifts guide times when programmes show at the wrong hour. " +
+                    "Auto detects most wrong-clock panels. Currently ${formatGuideOffset(correction)}. " +
+                    "Tap to step by 30 minutes; wraps back to Auto past +14 h.",
+                isTablet = isTablet,
+                onClick = {
+                    val next = correction + CORRECTION_STEP_MINUTES
+                    val wrapped = if (next > CATCH_UP_CORRECTION_MAX_MINUTES) CATCH_UP_CORRECTION_MIN_MINUTES else next
+                    XtreamRepository.updateOptions(account.id) { acc ->
+                        acc.copy(guideEpgCorrectionMinutes = wrapped)
+                    }
+                    // Stored guide rows were corrected under the OLD offset and the fetch gate
+                    // would keep showing them for hours — open the stamps so the next focus
+                    // refetches. Same load-bearing-invalidation shape as the replay row's forget().
+                    scope.launch {
+                        runCatching { com.nuvio.app.features.iptv.content.IptvContentDb.resetEpgFetchStamps(account.id) }
+                    }
+                },
+                trailingContent = {
+                    Text(
+                        text = formatGuideOffset(correction),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = tokens.colors.textSecondary,
+                    )
+                },
+            )
+        }
+    }
+}
+
 private const val CORRECTION_STEP_MINUTES = 30
 
 private fun formatCorrection(minutes: Int): String {
@@ -216,6 +267,10 @@ private fun formatCorrection(minutes: Int): String {
     val m = abs % 60
     return if (m == 0) "$sign${h}h" else "$sign${h}h ${m}m"
 }
+
+/** Same scale as [formatCorrection] but 0 reads "Auto": unset means detect, not "+0". */
+private fun formatGuideOffset(minutes: Int): String =
+    if (minutes == 0) "Auto" else formatCorrection(minutes)
 
 @Composable
 private fun ContentTypeList(

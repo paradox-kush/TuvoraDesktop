@@ -2,6 +2,8 @@ package com.nuvio.app.features.iptv
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 
 /**
  * Incremental parser for one channel's `get_simple_data_table` response,
@@ -22,12 +24,20 @@ import kotlinx.serialization.json.JsonObject
  * element, so every lenient quirk (base64, int-or-quoted-string, `has_archive`) behaves exactly as
  * it does on the short-EPG path.
  *
+ * Epoch-skew correction ([XtreamEpochSkew]) happens HERE, before the keep-window: [manualOffsetMs]
+ * (the per-playlist setting) wins outright; otherwise the response votes the liar equality and a
+ * proven liar's epochs get [clockPairOffsetMs] subtracted. While the vote is open, rows wait in a
+ * small bounded buffer — the window has to judge CORRECTED epochs, or a shifted panel's forward
+ * edge would be refused at parse.
+ *
  * Not thread-safe — one instance per response, driven from the transport's reader thread.
  */
 internal class XtreamEpgTableParser(
     private val json: Json,
     private val nowMs: Long,
     private val catchUpDays: Int,
+    manualOffsetMs: Long? = null,
+    private val clockPairOffsetMs: Long? = null,
     private val onProgramme: (XtreamProgram) -> Unit,
 ) {
     // Outer scan: hunting `"epg_listings":` then its `[`.
@@ -41,6 +51,13 @@ internal class XtreamEpgTableParser(
     // Element capture, once inside the array.
     private var depth = 0
     private val element = StringBuilder()
+
+    // Epoch-skew vote (XtreamEpochSkew): with a manual offset the vote never opens and nothing is
+    // buffered; otherwise parsed rows wait here (bounded) until the verdict fixes the offset.
+    private var resolvedOffsetMs: Long? = manualOffsetMs
+    private val pendingRows = ArrayList<XtreamProgram>()
+    private var liarVotes = 0
+    private var honestVotes = 0
 
     /** Rows delivered to [onProgramme]. */
     var deliveredCount: Int = 0
@@ -69,6 +86,9 @@ internal class XtreamEpgTableParser(
     fun finish(): Int {
         check(started) { "expected an epg_listings array, got none" }
         check(finished) { "epg_listings response ended mid-array" }
+        // A short table can end with the vote still open — resolve from whatever voted. (A
+        // truncated body threw above, so a partial answer can never flush a half-vote.)
+        if (resolvedOffsetMs == null) resolveVoteAndFlush()
         return deliveredCount
     }
 
@@ -147,6 +167,42 @@ internal class XtreamEpgTableParser(
             skippedCount++
             return
         }
+
+        val resolved = resolvedOffsetMs
+        if (resolved != null) {
+            admit(programme.shiftedBy(resolved))
+            return
+        }
+
+        // Vote from the raw fields (the string is never stored; parseEpgProgramme already
+        // multiplied the epoch to ms, so the vote reads the element's own seconds).
+        when (XtreamEpochSkew.vote(obj.rawString("start"), obj.rawString("start_timestamp")?.trim()?.toLongOrNull())) {
+            true -> liarVotes++
+            false -> honestVotes++
+            null -> Unit
+        }
+        pendingRows.add(programme)
+        if (liarVotes + honestVotes >= XtreamEpochSkew.SAMPLE_VOTE_CAP ||
+            pendingRows.size >= XtreamEpochSkew.PENDING_ROW_CAP
+        ) {
+            resolveVoteAndFlush()
+        }
+    }
+
+    /** Fixes the response's offset from the vote and releases the held rows in arrival order. */
+    private fun resolveVoteAndFlush() {
+        val offset = XtreamEpochSkew.effectiveOffsetMs(
+            null,
+            XtreamEpochSkew.verdict(liarVotes, honestVotes),
+            clockPairOffsetMs,
+        )
+        resolvedOffsetMs = offset
+        pendingRows.forEach { admit(it.shiftedBy(offset)) }
+        pendingRows.clear()
+    }
+
+    /** The window judges CORRECTED epochs — the reason rows wait for the vote at all. */
+    private fun admit(programme: XtreamProgram) {
         if (!CatchUpEpgPolicy.keepsRow(programme.startMs, programme.endMs, nowMs, catchUpDays)) {
             skippedCount++
             return
@@ -154,6 +210,8 @@ internal class XtreamEpgTableParser(
         deliveredCount++
         onProgramme(programme)
     }
+
+    private fun JsonObject.rawString(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
 
     private companion object {
         const val LISTINGS_KEY = "epg_listings"

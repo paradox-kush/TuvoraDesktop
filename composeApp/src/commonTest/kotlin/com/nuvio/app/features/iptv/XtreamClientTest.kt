@@ -154,4 +154,77 @@ class XtreamClientTest {
         )
         assertNull(silent.hasArchive)
     }
+
+    // --- the short-EPG lane's epoch-skew pieces (the wa12 lie) --------------------------------
+
+    /** 2026-08-15 00:00:00 UTC — the probe day. */
+    private val probeDay = 1_786_752_000L
+
+    private fun rows(vararg raw: String): List<JsonObject> {
+        val json = Json { ignoreUnknownKeys = true }
+        return raw.map { json.parseToJsonElement(it) as JsonObject }
+    }
+
+    /** A wa12-shaped listing: the epoch equals its own start string read as UTC (+2h wall clock). */
+    private fun liarRow(h: Int, m: Int): String {
+        fun pad(v: Int) = v.toString().padStart(2, '0')
+        val startSec = probeDay + h * 3600L + m * 60L
+        return """{"start":"2026-08-15 ${pad(h)}:${pad(m)}:00","start_timestamp":"$startSec",""" +
+            """"stop_timestamp":"${startSec + 3600}"}"""
+    }
+
+    /** An onnipsite-shaped listing: local string (+1h), true-UTC epoch. */
+    private fun honestRow(utcH: Int, utcM: Int): String {
+        fun pad(v: Int) = v.toString().padStart(2, '0')
+        val startSec = probeDay + utcH * 3600L + utcM * 60L
+        return """{"start":"2026-08-15 ${pad(utcH + 1)}:${pad(utcM)}:00","start_timestamp":"$startSec",""" +
+            """"stop_timestamp":"${startSec + 3600}"}"""
+    }
+
+    /** The verdict the shortEpg lane feeds [XtreamEpochSkew] — pinned against both capture shapes. */
+    @Test
+    fun shortEpgVerdictSeparatesTheTwoCapturedPanels() {
+        assertEquals(
+            XtreamEpochSkew.Verdict.LIAR,
+            XtreamClient.epgSkewVerdict(rows(liarRow(22, 20), liarRow(23, 20))),
+        )
+        assertEquals(
+            XtreamEpochSkew.Verdict.HONEST,
+            XtreamClient.epgSkewVerdict(rows(honestRow(20, 40), honestRow(21, 40))),
+        )
+        assertEquals(
+            XtreamEpochSkew.Verdict.UNKNOWN,
+            XtreamClient.epgSkewVerdict(rows(liarRow(22, 20))),
+            "one row proves nothing",
+        )
+    }
+
+    /** Junk rows abstain in this lane exactly as they do in the table lane. */
+    @Test
+    fun shortEpgVerdictToleratesJunkRows() {
+        assertEquals(
+            XtreamEpochSkew.Verdict.LIAR,
+            XtreamClient.epgSkewVerdict(
+                rows(
+                    """{"title":"x"}""",
+                    """{"start":"garbage","start_timestamp":"0"}""",
+                    liarRow(22, 20),
+                    liarRow(23, 20),
+                )
+            ),
+        )
+    }
+
+    /** The applied shift — and its guard: absent epochs parse to 0 and must never be "corrected". */
+    @Test
+    fun shiftedByMovesRealEpochsAndLeavesAbsentOnesAlone() {
+        val real = XtreamProgram("t", "", probeDay * 1000L, probeDay * 1000L + 3_600_000L, nowPlaying = false)
+        val shifted = real.shiftedBy(-7_200_000L)
+        assertEquals(probeDay * 1000L - 7_200_000L, shifted.startMs)
+        assertEquals(probeDay * 1000L - 3_600_000L, shifted.endMs)
+
+        val absent = XtreamProgram("t", "", 0L, 0L, nowPlaying = false)
+        assertEquals(absent, absent.shiftedBy(-7_200_000L), "zero epochs stay zero")
+        assertEquals(real, real.shiftedBy(0L), "a zero shift is byte-identical")
+    }
 }

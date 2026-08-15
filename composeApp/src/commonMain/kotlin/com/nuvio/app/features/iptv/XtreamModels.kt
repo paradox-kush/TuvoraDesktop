@@ -218,11 +218,26 @@ data class XtreamAccount(
     val catchUpTimeCorrectionMinutes: Int = 0,
     /** What shape this panel last answered — learned, not configured. See [CatchUpWinnerStore]. */
     val catchUpWinner: CatchUpWinner? = null,
+    /**
+     * Manual GUIDE EPG offset in minutes (same −720..+840 range), added to every EPG epoch at the
+     * parse boundary. 0 = auto: [XtreamEpochSkew] detects wall-clock-epoch liar panels per
+     * response and subtracts the measured clock-pair offset; a non-zero value overrides that vote
+     * entirely. Deliberately separate from [catchUpTimeCorrectionMinutes] — that one shifts the
+     * `start` STRING sent to the panel for a replay (a different lie with a different fix); this
+     * one shifts what the guide believes about when programmes air.
+     */
+    val guideEpgCorrectionMinutes: Int = 0,
 )
 
 /** The manual correction, clamped to the range the settings UI offers, as milliseconds. */
 fun XtreamAccount.catchUpTimeCorrectionMs(): Long =
     catchUpTimeCorrectionMinutes.coerceIn(CATCH_UP_CORRECTION_MIN_MINUTES, CATCH_UP_CORRECTION_MAX_MINUTES) * 60_000L
+
+/** The manual guide offset in milliseconds; null = auto-detect (the default). */
+fun XtreamAccount.guideEpgCorrectionMs(): Long? = guideEpgCorrectionMinutes
+    .takeIf { it != 0 }
+    ?.coerceIn(CATCH_UP_CORRECTION_MIN_MINUTES, CATCH_UP_CORRECTION_MAX_MINUTES)
+    ?.let { it * 60_000L }
 
 /** −12 h. Matches iptvsimple's `catchup-correction` range, which is the de-facto spec. */
 const val CATCH_UP_CORRECTION_MIN_MINUTES: Int = -12 * 60

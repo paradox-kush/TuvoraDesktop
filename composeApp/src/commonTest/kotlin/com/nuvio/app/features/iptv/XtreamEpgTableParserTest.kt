@@ -29,9 +29,18 @@ class XtreamEpgTableParserTest {
         body: String,
         catchUpDays: Int = 7,
         chunkSize: Int = Int.MAX_VALUE,
+        nowMs: Long = now,
+        manualOffsetMs: Long? = null,
+        clockPairOffsetMs: Long? = null,
     ): Collected {
         val out = Collected()
-        val parser = XtreamEpgTableParser(json, nowMs = now, catchUpDays = catchUpDays) {
+        val parser = XtreamEpgTableParser(
+            json,
+            nowMs = nowMs,
+            catchUpDays = catchUpDays,
+            manualOffsetMs = manualOffsetMs,
+            clockPairOffsetMs = clockPairOffsetMs,
+        ) {
             out.programmes.add(it)
         }
         var i = 0
@@ -275,5 +284,131 @@ class XtreamEpgTableParserTest {
         )
         assertEquals(1, out.programmes.size)
         assertEquals("real", out.programmes.single().title)
+    }
+
+    // --- epoch-skew correction at the parse boundary (the wa12 lie) ---------------------------
+    //
+    // wa12 (measured live 2026-08-15): the panel builds its epochs from its own wall clock, so
+    // every epoch equals its own start STRING read as UTC and is shifted by the panel's zone
+    // (+2h). This lane must repair those rows the same way the short-EPG lane does, or the guide
+    // timeline and the replay strip would disagree about when the same programme aired.
+
+    /** 2026-08-15 00:00:00 UTC, the probe day; the guide's "now" is 21:40 UTC that evening. */
+    private val probeDay = 1_786_752_000L
+    private val wa12Now = (probeDay + 21 * 3600 + 40 * 60) * 1000L
+    private val panelOffsetMs = 7_200_000L   // the measured clock pair: +2h
+
+    private fun pad(v: Int) = v.toString().padStart(2, '0')
+
+    /** A wa12-shaped row: the start string and the epoch describe the SAME wall-clock digits. */
+    private fun liarRow(d: Int, h: Int, m: Int, durMin: Int = 60): String {
+        val startSec = probeDay + (d - 15) * 86_400L + h * 3600L + m * 60L
+        return """{"title":"${b64("Programme")}","start":"2026-08-${pad(d)} ${pad(h)}:${pad(m)}:00",""" +
+            """"start_timestamp":"$startSec","stop_timestamp":"${startSec + durMin * 60L}","has_archive":1}"""
+    }
+
+    /** An onnipsite-shaped row: string is panel-local (+1h) but the epoch is true UTC. */
+    private fun honestRow(startSec: Long, durMin: Int = 60): String {
+        val localSec = startSec + 3600L
+        val h = ((localSec % 86_400L) / 3600L).toInt()
+        val m = ((localSec % 3600L) / 60L).toInt()
+        return """{"title":"${b64("Programme")}","start":"2026-08-15 ${pad(h)}:${pad(m)}:00",""" +
+            """"start_timestamp":"$startSec","stop_timestamp":"${startSec + durMin * 60L}"}"""
+    }
+
+    @Test
+    fun `wa12-shaped rows are auto-corrected so one brackets now`() {
+        val out = parse(
+            body(liarRow(15, 22, 20), liarRow(15, 23, 20), liarRow(16, 0, 20)),
+            nowMs = wa12Now,
+            clockPairOffsetMs = panelOffsetMs,
+        )
+        assertEquals(3, out.programmes.size)
+        assertEquals(
+            (probeDay + 20 * 3600 + 20 * 60) * 1000L,
+            out.programmes.first().startMs,
+            "first row corrected to 20:20 UTC",
+        )
+        assertTrue(
+            out.programmes.any { wa12Now in it.startMs until it.endMs },
+            "a corrected row brackets now (uncorrected, none did — the field symptom)",
+        )
+    }
+
+    /** The onnipsite proof: the same clock pair must NOT be subtracted from an honest panel. */
+    @Test
+    fun `honest rows pass through byte-identical even with a measured clock pair`() {
+        val startSec = probeDay + 20 * 3600 + 40 * 60   // true 20:40 UTC
+        val out = parse(
+            body(honestRow(startSec), honestRow(startSec + 3600)),
+            nowMs = wa12Now,
+            clockPairOffsetMs = 3_600_000L,
+        )
+        assertEquals(2, out.programmes.size)
+        assertEquals(startSec * 1000L, out.programmes.first().startMs, "epochs untouched")
+    }
+
+    /** The manual per-playlist offset wins over the vote — it exists for the residue auto misses. */
+    @Test
+    fun `a manual offset overrides the auto correction`() {
+        val out = parse(
+            body(liarRow(15, 22, 20), liarRow(15, 23, 20)),
+            nowMs = wa12Now,
+            manualOffsetMs = 1_800_000L,
+            clockPairOffsetMs = panelOffsetMs,
+        )
+        assertEquals(
+            (probeDay + 22 * 3600 + 20 * 60) * 1000L + 1_800_000L,
+            out.programmes.first().startMs,
+            "shifted by the manual +30m, not the auto -2h",
+        )
+    }
+
+    /** Junk rows can't vote, but the parseable majority still repairs the response. */
+    @Test
+    fun `junk rows do not break the vote in this lane`() {
+        val out = parse(
+            body(
+                """{"title":"x","start_timestamp":"notanumber","stop_timestamp":"alsonot"}""",
+                liarRow(15, 22, 20),
+                """{"title":"x","start":"garbage","start_timestamp":"0","stop_timestamp":"0"}""",
+                liarRow(15, 23, 20),
+            ),
+            nowMs = wa12Now,
+            clockPairOffsetMs = panelOffsetMs,
+        )
+        assertEquals(2, out.programmes.size, "the two real rows survive, corrected")
+        assertEquals((probeDay + 20 * 3600 + 20 * 60) * 1000L, out.programmes.first().startMs)
+    }
+
+    /**
+     * The keep-window must judge the CORRECTED epochs: a liar's raw epoch can sit past the forward
+     * window while the real airing is inside it. Uncorrected, this row would be refused at parse
+     * and the guide's forward edge would go blank.
+     */
+    @Test
+    fun `the parse window is applied to corrected epochs`() {
+        // Raw epoch at now+37h (outside the 36h forward window); corrected -2h = +35h, inside.
+        val out = parse(
+            body(liarRow(15, 22, 20), liarRow(15, 23, 20), liarRow(17, 10, 40)),
+            nowMs = wa12Now,
+            clockPairOffsetMs = panelOffsetMs,
+        )
+        assertEquals(3, out.programmes.size, "the far row is kept because its corrected start is inside")
+    }
+
+    /** The vote's pending buffer must survive the transport's arbitrary chunking like every row does. */
+    @Test
+    fun `the correction survives chunk boundaries anywhere`() {
+        val text = body(liarRow(15, 22, 20), liarRow(15, 23, 20), liarRow(16, 0, 20))
+        listOf(1, 3, 7, 64).forEach { size ->
+            val out = parse(text, nowMs = wa12Now, clockPairOffsetMs = panelOffsetMs, chunkSize = size)
+            assertEquals(3, out.programmes.size, "chunk size $size lost rows")
+            assertEquals(
+                (probeDay + 20 * 3600 + 20 * 60) * 1000L,
+                out.programmes.first().startMs,
+                "chunk size $size broke the correction",
+            )
+        }
     }
 }
