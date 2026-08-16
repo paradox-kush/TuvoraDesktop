@@ -105,6 +105,17 @@ object XtreamHubRepository {
      */
     private val inFlightCategories = mutableSetOf<CategoryKey>()
 
+    /**
+     * Live category-load jobs, keyed by the account that owns them.
+     *
+     * Measured on an S24 (HubTrace, 2026-08-16): at the moment of a playlist switch the OLD
+     * provider had `inFlight=36..40` category loads holding the shared 3-permit gate, so the new
+     * provider's first rows waited 5.4-6.2 s just for a permit before any network happened. The
+     * jobs are cancellable and nobody is looking at their results, so a switch cancels them —
+     * StreamVault's named-job discipline (guideFallbackJob?.cancel()) applied to this gate.
+     */
+    private val categoryJobs = mutableMapOf<String, MutableList<kotlinx.coroutines.Job>>()
+
     private data class CategoryKey(
         val accountId: String,
         val section: XtreamHubSection,
@@ -142,6 +153,11 @@ object XtreamHubRepository {
         // same throttled host; measured on-device: Xtream posters waiting minutes behind an
         // abandoned Stalker scroll backlog).
         com.nuvio.app.features.iptv.stalker.StalkerPlaybackTraffic.onProviderSwitched()
+        com.nuvio.app.core.diag.HubTrace.log("hub", "selectAccount") { "to=$accountId" }
+        // The old provider's queued poster fetches and in-flight category loads are work for a
+        // screen the user just left — and they hold the very gates the new provider now needs.
+        com.nuvio.app.features.iptv.match.PosterEnricher.onProviderSwitched(accountId)
+        cancelCategoryJobsExcept(accountId)
         val section = clampSection(accountFor(accountId), _uiState.value.section)
         _uiState.update { it.copy(selectedAccountId = accountId, section = section) }
         rememberSelection()
@@ -276,14 +292,22 @@ object XtreamHubRepository {
         }
         if (!claimed) return
         updateCategory(accountId, section, categoryId) { it.copy(loading = true) }
-        scope.launch {
+        com.nuvio.app.core.diag.HubTrace.log("category", "claimed") { "cat=$categoryId prefetch=$prefetch inFlight=${inFlightCategories.size}" }
+        val job = scope.launch {
             var completed = false
+            val tClaim = com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs()
             try {
                 categoryLoadGate.withPermit {
+                    com.nuvio.app.core.diag.HubTrace.log("category", "gotPermit") {
+                        "cat=$categoryId waited=${com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs() - tClaim}ms"
+                    }
                     val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == accountId }
                     val client = account?.let { IptvClient.forAccount(it) }
                     val (items, hasMore) = if (account == null || client == null) emptyList<MetaPreview>() to false
                     else fetchWindow(account, section, categoryId, offset = 0, prefetch = prefetch)
+                    com.nuvio.app.core.diag.HubTrace.log("category", "fetched") {
+                        "cat=$categoryId n=${items.size} total=${com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs() - tClaim}ms"
+                    }
                     updateCategory(accountId, section, categoryId) { it.copy(items = items, loaded = true, loading = false, hasMore = hasMore) }
                     noteLoadedAndEvict(key)
                     completed = true
@@ -294,6 +318,24 @@ object XtreamHubRepository {
                 if (!completed) updateCategory(accountId, section, categoryId) { it.copy(loading = false) }
             }
         }
+        synchronized(categoryLock) { categoryJobs.getOrPut(accountId) { mutableListOf() }.add(job) }
+        job.invokeOnCompletion { synchronized(categoryLock) { categoryJobs[accountId]?.remove(job) } }
+    }
+
+    /**
+     * Cancels category loads belonging to providers other than [keepAccountId].
+     *
+     * They hold the shared category gate and nobody is waiting on their results; leaving them to
+     * finish is what made a switched-to playlist wait ~5.5 s for its first permit.
+     */
+    private fun cancelCategoryJobsExcept(keepAccountId: String) {
+        val doomed = synchronized(categoryLock) {
+            val others = categoryJobs.filterKeys { it != keepAccountId }
+            others.keys.forEach { categoryJobs.remove(it) }
+            others.values.flatten()
+        }
+        doomed.forEach { it.cancel() }
+        com.nuvio.app.core.diag.HubTrace.log("category", "cancelledOld") { "keep=$keepAccountId n=${doomed.size}" }
     }
 
     /**
@@ -486,7 +528,9 @@ object XtreamHubRepository {
         if (parsed.kind != XtreamKind.LIVE) return
         val streamId = parsed.id.toIntOrNull() ?: return
         val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == parsed.accountId } ?: return
+        com.nuvio.app.core.diag.HubTrace.log("tileEpg", "enqueue") { contentId }
         TileEpgQueue.enqueue(contentId, onEvicted = { epgFetched.remove(contentId) }) {
+            val t0 = com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs()
             // get_short_epg returns current + upcoming, so the nowPlaying (or first) entry is "now".
             // When the panel has nothing (the common case on real panels — Starshare fills 6% of
             // epg_channel_id), fall back to the mirrored canonical EPG via the channel mapping.
@@ -497,6 +541,9 @@ object XtreamHubRepository {
                             .nowNextProgrammes(account.id, streamId, com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs())
                     }.getOrDefault(emptyList())
                 }
+            com.nuvio.app.core.diag.HubTrace.log("tileEpg", "fetched") {
+                "id=$contentId took=${com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs() - t0}ms n=${listings.size}"
+            }
             if (listings.isEmpty()) return@enqueue
             val nowIndex = listings.indexOfFirst { it.nowPlaying }.takeIf { it >= 0 } ?: 0
             val now = listings.getOrNull(nowIndex)?.title?.ifBlank { null }
