@@ -28,6 +28,25 @@ internal object MemoryTierPolicy {
     fun desktopTier(): MemoryTier = MemoryTier.HIGH
 
     /** Image memory cache budget per tier (Coil): LOW 32 / MID 64 / HIGH 96 MiB. */
+    /**
+     * How many catalog rows one index-write transaction may hold — LOW 100 / MID 300 / HIGH 500.
+     *
+     * The hub reads its movie/series rows from the SAME index database the build writes, so the
+     * batch size is really "how long the UI can be blocked". Measured on a 2 GB Onn 4K TV box
+     * (2026-08-16): at 5,000 rows — an UPDATE-or-INSERT plus one INSERT per normalized key, so
+     * ~25,000 statements per transaction — the hub's category reads queued behind the writer long
+     * enough that categories looked empty and the whole app felt broken until the build finished.
+     *
+     * Smaller batches cut the lock hold AND the heap peak: the old 5,000 was picked against
+     * "materialize the whole catalog", never against a few hundred. Numbers are StreamVault's
+     * (CatalogSyncRuntimeProfile), whose tier cuts [androidTier] already matches.
+     */
+    fun indexBatchSize(tier: MemoryTier): Int = when (tier) {
+        MemoryTier.LOW -> 100
+        MemoryTier.MID -> 300
+        MemoryTier.HIGH -> 500
+    }
+
     fun imageMemoryCacheBytes(tier: MemoryTier): Long = when (tier) {
         MemoryTier.LOW -> 32L * MIB
         MemoryTier.MID -> 64L * MIB

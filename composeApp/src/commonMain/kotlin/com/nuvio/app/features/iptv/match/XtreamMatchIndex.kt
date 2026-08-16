@@ -3,9 +3,12 @@ package com.nuvio.app.features.iptv.match
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteStatement
 import androidx.sqlite.execSQL
+import com.nuvio.app.core.memory.AppMemory
+import com.nuvio.app.core.memory.MemoryTierPolicy
 import com.nuvio.app.features.trakt.TraktPlatformClock
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.yield
 
 private inline fun <R> SQLiteStatement.use(block: (SQLiteStatement) -> R): R =
     try { block(this) } finally { close() }
@@ -558,8 +561,23 @@ internal object XtreamMatchIndex {
         }
     }
 
+    /**
+     * Writes the index in tier-sized transactions, yielding between them.
+     *
+     * The hub reads its rows from this same database, so every statement here is time the UI
+     * cannot read. Measured on a 2 GB TV box (v1.4.30): at 5,000 rows a batch — an
+     * UPDATE-or-INSERT plus one INSERT per normalized key, so ~25,000 statements — the build held
+     * a worker at 97% CPU for minutes while the hub's category reads queued behind it.
+     *
+     * Both halves are StreamVault's shape: the batch is [MemoryTierPolicy.indexBatchSize] (and
+     * [AppMemory.effectiveTier] shrinks it again under pressure), and the loop suspends between
+     * batches so a reader waiting on [mutex] gets in. Desktop has the headroom to not care, but
+     * this is the shared twin of the mobile file and the rule is the same.
+     */
     private suspend fun insertItems(provider: String, kind: MatchKind, items: List<IndexedItem>) {
-        for (chunk in items.chunked(5_000)) {
+        val batch = MemoryTierPolicy.indexBatchSize(AppMemory.effectiveTier())
+        for (chunk in items.chunked(batch)) {
+            yield()
             mutex.withLock {
                 val c = connection()
                 c.execSQL("BEGIN IMMEDIATE")
