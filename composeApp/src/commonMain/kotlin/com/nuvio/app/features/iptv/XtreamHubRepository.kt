@@ -128,7 +128,7 @@ object XtreamHubRepository {
         val selected = resolveStickyAccount(current.selectedAccountId, remembered?.accountId, all)
         val wanted = remembered?.let { resolveStickySection(it.section, current.section) } ?: current.section
         val section = clampSection(accounts.firstOrNull { it.id == selected }, wanted)
-        _uiState.update { it.copy(accounts = accounts, selectedAccountId = selected, section = section) }
+        _uiState.update { it.copy(accounts = accounts, accountsLoaded = true, selectedAccountId = selected, section = section) }
         if (selected != null) {
             showSection(selected, section)
             maybePrefetch(selected)
@@ -471,14 +471,22 @@ object XtreamHubRepository {
     private fun accountFor(accountId: String?): XtreamAccount? =
         XtreamRepository.uiState.value.accounts.firstOrNull { it.id == accountId }
 
-    /** Lazily fetch now/next EPG for a live channel (called when its tile scrolls into view). */
+    /**
+     * Lazily fetch now/next EPG for a live channel (called when its tile scrolls into view).
+     *
+     * Through [TileEpgQueue], never a bare launch: each tile used to hold its place in line
+     * forever, so a hard scroll left the tiles on screen waiting ~30 s behind hundreds that were
+     * long gone (S24 field report; STBEmu on the same portal navigates instantly because it only
+     * ever asks for what a MAG shows). Newest-first + a hard cap keeps the on-screen tiles at the
+     * front; an evicted tile releases its once-only mark so a revisit still fetches it.
+     */
     fun ensureEpg(contentId: String) {
         if (!epgFetched.add(contentId)) return
         val parsed = XtreamItemRegistry.parseId(contentId) ?: return
         if (parsed.kind != XtreamKind.LIVE) return
         val streamId = parsed.id.toIntOrNull() ?: return
         val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == parsed.accountId } ?: return
-        scope.launch {
+        TileEpgQueue.enqueue(contentId, onEvicted = { epgFetched.remove(contentId) }) {
             // get_short_epg returns current + upcoming, so the nowPlaying (or first) entry is "now".
             // When the panel has nothing (the common case on real panels — Starshare fills 6% of
             // epg_channel_id), fall back to the mirrored canonical EPG via the channel mapping.
@@ -489,7 +497,7 @@ object XtreamHubRepository {
                             .nowNextProgrammes(account.id, streamId, com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs())
                     }.getOrDefault(emptyList())
                 }
-            if (listings.isEmpty()) return@launch
+            if (listings.isEmpty()) return@enqueue
             val nowIndex = listings.indexOfFirst { it.nowPlaying }.takeIf { it >= 0 } ?: 0
             val now = listings.getOrNull(nowIndex)?.title?.ifBlank { null }
             val next = listings.getOrNull(nowIndex + 1)?.title?.ifBlank { null }

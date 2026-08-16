@@ -6,6 +6,13 @@ import com.nuvio.app.features.home.PosterShape
 /** Top-level IPTV hub state. Live is handled by its own guide (P5); this covers VOD + Series browse. */
 data class XtreamHubUiState(
     val accounts: List<XtreamAccount> = emptyList(),
+    /**
+     * False until ensureLoaded has actually read the stored accounts. The first composition runs
+     * BEFORE the screen's LaunchedEffect, so an empty [accounts] alone cannot mean "no playlists" —
+     * gating the add-a-playlist empty state on this stops it flashing over a populated hub
+     * (field-reported: visible for a second when the process was busy).
+     */
+    val accountsLoaded: Boolean = false,
     val selectedAccountId: String? = null,
     val section: XtreamHubSection = XtreamHubSection.LIVE,
     val categories: List<XtreamHubCategory> = emptyList(),

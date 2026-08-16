@@ -117,8 +117,13 @@ fun XtreamHubScreen(
         XtreamLiveRecents.ensureLoaded()
     }
 
+    // Only a LOADED empty list means "no playlists": the first composition happens before the
+    // LaunchedEffect above runs ensureLoaded, and painting the add-a-playlist state over a
+    // populated hub for that beat read as data loss (field-reported flash).
     if (state.accounts.isEmpty()) {
-        XtreamHubNoPlaylistState(onAddProvider = onAddProvider, modifier = modifier)
+        if (state.accountsLoaded) {
+            XtreamHubNoPlaylistState(onAddProvider = onAddProvider, modifier = modifier)
+        }
         return
     }
 
