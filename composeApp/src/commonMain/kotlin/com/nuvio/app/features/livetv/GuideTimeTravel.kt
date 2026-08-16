@@ -76,3 +76,45 @@ object GuideTimeTravel {
 
     private fun floorToSlot(ms: Long) = ms.floorDiv(SLOT_MS) * SLOT_MS
 }
+
+/**
+ * What a guide row should show for one (channel, window), given what has arrived so far.
+ *
+ * Two loaders write the same row and they finish out of order: the panel's now-and-next is a fast
+ * first paint, the channel's stored history arrives later and is strictly better. Field-reported
+ * 2026-08-16 ("rewind EPG only loads once you tap a programme"): the now-and-next fetch landed
+ * AFTER the history and overwrote it, so the row sat on now-and-next with an empty past until some
+ * later interaction happened to reload it — the history was on disk the whole time.
+ *
+ * So the rule is an ordering one, not a timing one: **once history has been shown for a window,
+ * now-and-next may never replace it.** Pure, because the bug was invisible in a screenshot and only
+ * a stated invariant makes it stay fixed.
+ */
+object GuideWindowSource {
+
+    enum class Source {
+        /** Stored history for this window — always wins. */
+        HISTORY,
+
+        /** The panel's now-and-next: the live window's first paint, and all a non-Xtream row has. */
+        NOW_NEXT,
+
+        /** Draw the row's "No EPG" placeholder rather than something from the wrong window. */
+        NONE,
+    }
+
+    /**
+     * [historyAlreadyShown] is per (channel, window): a late now-and-next result for a window whose
+     * history has already landed is stale by definition, whatever order the two coroutines finish in.
+     */
+    fun forWindow(
+        hasStoredHistory: Boolean,
+        historyAlreadyShown: Boolean,
+        travelling: Boolean,
+    ): Source = when {
+        hasStoredHistory -> Source.HISTORY
+        historyAlreadyShown -> Source.NONE
+        travelling -> Source.NONE      // a past window has no now-and-next to fall back on
+        else -> Source.NOW_NEXT
+    }
+}

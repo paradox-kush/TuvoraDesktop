@@ -160,6 +160,14 @@ fun LiveTvScreen(
     val programmes = remember { mutableStateMapOf<String, List<XtreamProgram>>() }
     val requestedProgrammes = remember { mutableSetOf<String>() }
 
+    /**
+     * The (channel, window) pairs whose stored history has been drawn.
+     *
+     * The two loaders finish in whatever order the network allows, so this is what stops a late
+     * now-and-next result replacing the history already on screen — see [GuideWindowSource].
+     */
+    val historyShownWindows = remember { mutableSetOf<String>() }
+
     var nowMs by remember { mutableStateOf(TraktPlatformClock.nowEpochMs()) }
     // Where the guide's five-hour window sits. Starts live; travels back through the archive.
     var guideAnchorMs by remember { mutableStateOf(GuideTimeTravel.anchorForNow(nowMs)) }
@@ -370,16 +378,26 @@ fun LiveTvScreen(
     val loadWindow: suspend (String) -> Unit = { contentId ->
         val fromMs = guideAnchorMs
         val toMs = GuideTimeTravel.windowEndMs(guideAnchorMs)
+        val windowKey = "$contentId@$guideAnchorMs"
         val history = LiveTvData.historyProgrammes(contentId, fromMs, toMs)
-        if (history.isNotEmpty()) {
-            programmes[contentId] = history
-        } else if (!GuideTimeTravel.isTravelling(guideAnchorMs, nowMs)) {
-            // No stored history and we're on the live window: the panel's now-and-next is still
-            // the best answer, and it is what every non-Xtream playlist has.
-            val list = LiveTvData.programmes(contentId)
-            if (list.isNotEmpty()) programmes[contentId] = list
-        } else {
-            programmes.remove(contentId)
+        when (
+            GuideWindowSource.forWindow(
+                hasStoredHistory = history.isNotEmpty(),
+                historyAlreadyShown = windowKey in historyShownWindows,
+                travelling = GuideTimeTravel.isTravelling(guideAnchorMs, nowMs),
+            )
+        ) {
+            GuideWindowSource.Source.HISTORY -> {
+                historyShownWindows.add(windowKey)
+                programmes[contentId] = history
+            }
+            // The panel's now-and-next: the live window's first paint, and what every non-Xtream
+            // playlist has. Refused once history has landed for this window — see GuideWindowSource.
+            GuideWindowSource.Source.NOW_NEXT -> {
+                val list = LiveTvData.programmes(contentId)
+                if (list.isNotEmpty() && windowKey !in historyShownWindows) programmes[contentId] = list
+            }
+            GuideWindowSource.Source.NONE -> programmes.remove(contentId)
         }
     }
     val onNeedProgrammes: (String) -> Unit = { contentId ->
