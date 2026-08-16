@@ -505,7 +505,12 @@ internal class StalkerSession(
         // never counted — discovery expects most candidates to fail. Successes still clear.
         discovery: Boolean = false
     ): JsonElement {
-        awaitPlaybackTraffic(params["action"].orEmpty())
+        val action = params["action"].orEmpty()
+        // Captured at ENQUEUE: if the user switches providers while this call waits for a gate
+        // permit, it is answering a screen nobody is on — drop it instead of spending the
+        // throttled host's budget on it (see StalkerPlaybackTraffic.browseEpoch).
+        val enqueueEpoch = StalkerPlaybackTraffic.browseEpoch
+        awaitPlaybackTraffic(action)
         val query = (params + ("JsHttpRequest" to "1-xml")).entries.joinToString("&") { (k, v) ->
             "${k.encodeURLParameter()}=${v.encodeURLParameter()}"
         }
@@ -534,7 +539,22 @@ internal class StalkerSession(
         // The panel guard sits OUTSIDE the gate (WP6): a fast-fail must not queue behind requests
         // that are busy timing out, and its refusal (PanelHostFastFailException — never an auth
         // type, and worded to read as a connection-level failure) propagates without re-auth.
-        val body = panelGuard.guardedPanelRequest(url, discovery) { gate.withPermit { httpGet(url, headers) } }
+        val body = panelGuard.guardedPanelRequest(url, discovery) {
+            gate.withPermit {
+                // Checked with the permit in hand — the whole wait is the window a switch can
+                // land in. Thrown INSIDE the guard so the breaker ignores it (an abandoned call
+                // is not a panel failure); callers treat it like any transport failure.
+                if (StalkerPlaybackTraffic.isAbandoned(
+                        requestEpoch = enqueueEpoch,
+                        currentEpoch = StalkerPlaybackTraffic.browseEpoch,
+                        isCritical = action in PLAYBACK_CRITICAL_ACTIONS,
+                    )
+                ) {
+                    throw StalkerBrowseAbandonedException()
+                }
+                httpGet(url, headers)
+            }
+        }
         // A portal that rejects the STB identity replies HTTP 200 with the plain text "Authorization
         // failed." (not JSON) — a stale token recovers via re-auth, but a persistent rejection would
         // otherwise surface as a vague "no data". Throw an actionable error instead; it only becomes

@@ -137,6 +137,11 @@ object XtreamHubRepository {
 
     fun selectAccount(accountId: String) {
         if (_uiState.value.selectedAccountId == accountId) return
+        // Whatever browse work the OLD provider still has queued belongs to a screen the user just
+        // left — drop it rather than let it drain ahead of the new provider (which may share the
+        // same throttled host; measured on-device: Xtream posters waiting minutes behind an
+        // abandoned Stalker scroll backlog).
+        com.nuvio.app.features.iptv.stalker.StalkerPlaybackTraffic.onProviderSwitched()
         val section = clampSection(accountFor(accountId), _uiState.value.section)
         _uiState.update { it.copy(selectedAccountId = accountId, section = section) }
         rememberSelection()
