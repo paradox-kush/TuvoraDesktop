@@ -16,13 +16,14 @@ import co.touchlab.kermit.Logger
  */
 object HubTrace {
 
-    @Volatile
+    // Plain, not @Volatile: kotlin.jvm.Volatile does not exist in commonMain for Kotlin/Native,
+    // and this needs no atomicity — same reasoning as StalkerPlaybackTraffic's flag. The only race
+    // is a log line read microseconds after the flag flips, whose worst outcome is a missing line.
     var enabled: Boolean = false
 
     private val log = Logger.withTag("TUVORA_TRACE")
 
     /** Set by the Android debug entry point so stamps are readable deltas rather than epoch ms. */
-    @Volatile
     private var originMs: Long = 0L
 
     fun start(nowMs: Long) {
