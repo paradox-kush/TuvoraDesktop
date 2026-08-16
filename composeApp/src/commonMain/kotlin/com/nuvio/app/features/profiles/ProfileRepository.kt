@@ -128,6 +128,17 @@ object ProfileRepository {
             }
             return
         }
+        // A signed-in account whose session has lapsed must not fire the RPC: postgrest would
+        // send it as `anon` and Postgres answers 42501 (one of the launch-trio errors measured
+        // on the backend). The catch below already ends in "mark loaded, keep state" for that
+        // shape — this skips the doomed round trip and lands on the same outcome. The next
+        // successful refresh (or sign-in) pulls for real.
+        if (!com.nuvio.app.core.sync.SyncSession.canSync()) {
+            if (!_state.value.isLoaded) {
+                _state.value = _state.value.copy(isLoaded = true)
+            }
+            return
+        }
         try {
             val result = SupabaseProvider.client.postgrest.rpc("sync_pull_profiles")
             val profiles = result.decodeList<NuvioProfile>()
