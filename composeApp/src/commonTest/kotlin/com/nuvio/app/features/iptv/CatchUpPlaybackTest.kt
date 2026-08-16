@@ -30,6 +30,23 @@ class CatchUpPlaybackTest {
     }
 
     /**
+     * The invariant the gate above exists to protect, checked where the two pieces of state meet.
+     *
+     * Found on a real panel: tapping another channel mid-replay moved the guide selection, the
+     * channel logo and the now-bar to BBC Two while BBC One's recording kept playing, because the
+     * click handler had outlived the composition it read the catch-up flag from and so skipped the
+     * tear-down. Whoever moves the channel, a session that no longer belongs to it must not
+     * survive — that is checkable without asking any caller whether it thinks it is catching up.
+     */
+    @Test
+    fun `a replay does not survive the channel moving out from under it`() {
+        val bbcOne = "xtream:acct:live:814709"
+        val bbcTwo = "xtream:acct:live:11957"
+        assertTrue(CatchUpPlayback.sessionSurvivesChannel(bbcOne, bbcOne))
+        assertFalse(CatchUpPlayback.sessionSurvivesChannel(bbcOne, bbcTwo))
+    }
+
+    /**
      * Live-edge rejoin on foreground is right for a live channel and wrong for a recording: it
      * would skip the viewer to the end of what they were part-way through.
      */

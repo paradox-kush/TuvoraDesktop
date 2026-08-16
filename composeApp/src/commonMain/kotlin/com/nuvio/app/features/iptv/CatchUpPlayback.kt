@@ -32,6 +32,23 @@ object CatchUpPlayback {
     fun allowsChannelChange(isCatchUpPlayback: Boolean): Boolean = !isCatchUpPlayback
 
     /**
+     * Whether a replay session still belongs to the channel on screen.
+     *
+     * A replay is bound to ONE channel: its URL carries that channel's stream id and the window it
+     * was minted for. So if the screen's channel has moved on, the session is stale and the player
+     * must not keep serving it — the viewer would be watching one channel's recording under
+     * another channel's name, with that channel's guide row highlighted.
+     *
+     * This is the INVARIANT behind [allowsChannelChange], enforced where the two pieces of state
+     * meet rather than trusted to each caller. It exists because a caller CAN get the flag wrong:
+     * a Compose click handler that outlived its composition asks "am I catching up?" and is
+     * answered by the composition it was born in, so the tear-down never runs and exactly this
+     * mismatched state reaches the screen.
+     */
+    fun sessionSurvivesChannel(sessionContentId: String, currentContentId: String): Boolean =
+        sessionContentId == currentContentId
+
+    /**
      * Whether returning to the foreground should rejoin the live edge (a full reload) rather than
      * simply unpausing. Right for live — a backgrounded live stream goes stale and its socket
      * eventually drops. Wrong for a recording, where it would throw away the viewer's position.

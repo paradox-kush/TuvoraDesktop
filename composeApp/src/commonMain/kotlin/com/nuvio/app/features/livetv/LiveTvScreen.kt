@@ -182,6 +182,18 @@ fun LiveTvScreen(
     var catchUpNotice by remember { mutableStateOf<CatchUpNotice?>(null) }
     val isCatchUp = catchUp != null
 
+    /**
+     * Is a replay on screen RIGHT NOW — for callbacks that outlive the composition that made them.
+     *
+     * [isCatchUp] is this pass's snapshot. A handler captured before the replay started (the
+     * guide's channel click, the player's snapshot listener) still holds `false`, so asking it
+     * mid-replay answers "this is live" and the live-only branch runs: the channel identity moves
+     * while the archive session stays, and the viewer watches one channel's recording under
+     * another channel's name. Reading the STATE instead is always current, because `remember`
+     * hands back the same holder every composition.
+     */
+    fun replayOnScreen(): Boolean = catchUp != null
+
     // A launch that carries a replay must not tune the channel live first: on a
     // max_connections=1 account that live tune would spend the viewer's single connection on a
     // stream the replay immediately replaces. The live resolve stands down until the walk has
@@ -269,6 +281,15 @@ fun LiveTvScreen(
         source = null
         playbackError = null
         retryTick = 0
+    }
+
+    // Defence in depth for CatchUpPlayback.sessionSurvivesChannel: whatever moved the channel — a
+    // guide click, the sheet's "Watch live", a caller added later — a session that no longer
+    // belongs to the channel on screen is dropped HERE. Both replay entry points set the channel
+    // before the session, so a legitimate replay never trips this.
+    LaunchedEffect(currentContentId, catchUp) {
+        val session = catchUp ?: return@LaunchedEffect
+        if (!CatchUpPlayback.sessionSurvivesChannel(session.contentId, currentContentId)) exitCatchUp()
     }
 
     /**
@@ -368,7 +389,13 @@ fun LiveTvScreen(
     }
     // The FOCUSED channel — and only it — gets its full history pulled. A page of rows each
     // fetching its own table is exactly how a guide turns 2 MB into 40 MB on a 1 GB box.
-    LaunchedEffect(currentContentId) {
+    //
+    // Keyed on the ANCHOR too, so travelling re-attempts a history fetch that failed. A fetch is
+    // swallowed on failure and never stamped, so the channel would otherwise show an empty past
+    // for the life of the screen — one transient panel error (or an open circuit breaker at the
+    // moment of entry) and the feature looks unimplemented. A fetch that DID land is stamped, so
+    // this costs a DB read per travel step and no network at all (CatchUpEpgPolicy.shouldFetch).
+    LaunchedEffect(currentContentId, guideAnchorMs) {
         onNeedProgrammes(currentContentId)
         LiveTvData.ensureHistory(currentContentId)
         requestedProgrammes.remove("$currentContentId@$guideAnchorMs")
@@ -379,7 +406,7 @@ fun LiveTvScreen(
         // A replay is never zapped away by the live path: the tap is deliberate, so it lands, but
         // the archive session is torn down first rather than leaving a replay URL wearing another
         // channel's identity. See CatchUpPlayback.allowsChannelChange.
-        if (!CatchUpPlayback.allowsChannelChange(isCatchUp)) exitCatchUp()
+        if (!CatchUpPlayback.allowsChannelChange(replayOnScreen())) exitCatchUp()
         if (channel.contentId == currentContentId) return
         currentContentId = channel.contentId
         currentTitle = channel.name
@@ -535,7 +562,7 @@ fun LiveTvScreen(
                         // channel has no end. A recording ending is the recording finishing, so
                         // armed against a replay it would report a freeze on every successful
                         // catch-up and spend a provider connection re-minting a working URL.
-                        if (CatchUpPlayback.armsFreezeWatchdog(isCatchUp)) {
+                        if (CatchUpPlayback.armsFreezeWatchdog(replayOnScreen())) {
                             freezeReporter.onLiveSnapshot(
                                 snapshot = it,
                                 engine = { controller?.getStreamInfo()?.playerEngine },
