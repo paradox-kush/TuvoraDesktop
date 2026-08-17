@@ -42,7 +42,66 @@ internal object TitleNormalizer {
     private val ARABIC_MEDIA_PREFIX = Regex("^(فيلم|مسلسل|وثائقي)\\s+")
     private val SPACES = Regex("\\s+")
 
-    fun fold(s: String): String = stripCombiningMarks(s).lowercase()
+    private fun isAscii(s: String): Boolean {
+        for (c in s) if (c.code >= 0x80) return false
+        return true
+    }
+
+    /**
+     * NFD decomposition of a pure-ASCII string is the identity, and `\p{Mn}` cannot match an ASCII
+     * code point — so for the common case this skips a Unicode normalisation AND a regex pass.
+     * [fold] runs 4-8 times per catalog item, i.e. millions of times on a 468k-item build.
+     */
+    fun fold(s: String): String =
+        if (isAscii(s)) s.lowercase() else stripCombiningMarks(s).lowercase()
+
+    // ---- extracted rules ------------------------------------------------------------------
+    // Pulled out of keysOf so each can be optimised and proven equivalent independently.
+    // TitleNormalizerEquivalenceTest holds the ORIGINAL regexes as the reference and asserts these
+    // agree with them over a corpus of real panel names — do not change one without running it.
+
+    /** Every word the original `(\s(alt|alt|...))+$` alternation could strip. */
+    private val LANG_WORDS = hashSetOf(
+        "hindi", "tamil", "telugu", "malayalam", "kannada", "bengali", "marathi", "gujarati",
+        "punjabi", "urdu", "english", "french", "german", "spanish", "italian", "arabic",
+        "turkish", "korean", "japanese", "chinese", "russian", "portuguese", "polish", "dutch",
+        "greek", "persian", "farsi", "dub", "dubbed", "sub", "subbed",
+    )
+
+    /**
+     * "heart beat tamil" -> "heart beat"; repeated suffixes strip together, as the original `+`
+     * quantifier did.
+     *
+     * Replaces a `(\s(27 alternatives))+$` regex — a quantified alternation, the shape most prone
+     * to backtracking — that ran on EVERY key of every item. Walking trailing tokens against a hash
+     * set is the same rule without the engine. The leading `\s` requirement is preserved: a string
+     * that is nothing but a language word has no preceding space and so survives, which is why
+     * "hindi" stays "hindi" but "movie hindi" becomes "movie".
+     */
+    internal fun stripTrailingLanguageWords(k: String): String {
+        var end = k.length
+        while (true) {
+            val space = k.lastIndexOf(' ', end - 1)
+            if (space < 0) break
+            if (k.substring(space + 1, end) !in LANG_WORDS) break
+            end = space
+        }
+        return k.substring(0, end).trim()
+    }
+
+    /**
+     * "laughter chefs s2 s3" -> season tokens replaced by spaces.
+     * The pattern requires `\d{1,2}`, so a key with no digit cannot match — skip the engine.
+     */
+    internal fun stripSeasonTokens(k: String): String =
+        if (k.none { it in '0'..'9' }) k else SEASON_TOKENS.replace(k, " ")
+
+    /**
+     * "فيلم حريم كريم" -> drops the leading media-type word.
+     * Every alternative is Arabic script, so a pure-ASCII key cannot match — skip the engine.
+     */
+    internal fun stripArabicMediaPrefix(k: String): String =
+        if (isAscii(k)) k else ARABIC_MEDIA_PREFIX.replaceFirst(k, "")
 
     /** ٢/۲ -> 2 : both Arabic-Indic ranges end in nibble 0-9, so code%16 is the digit. */
     private fun asciiDigits(s: String): String {
@@ -128,7 +187,7 @@ internal object TitleNormalizer {
         }
         // arabic panels prepend the media type: "فيلم حريم كريم" = "film Kareem's Women"
         for (k in keys.toList()) {
-            val v = ARABIC_MEDIA_PREFIX.replaceFirst(k, "")
+            val v = stripArabicMediaPrefix(k)
             if (v != k && hasLetter(v)) keys.add(v)
         }
         // mixed-script concatenations: "the legend of hei 2 افسانه هی 2" -> latin + native halves,
@@ -157,7 +216,7 @@ internal object TitleNormalizer {
         }
         // season tokens: "laughter chefs s2 s3", "mtv splitsvilla x6", trailing "act"
         for (k in keys.toList()) {
-            val v = SPACES.replace(TRAILING_SEASON_WORD.replace(SEASON_TOKENS.replace(k, " "), ""), " ").trim()
+            val v = SPACES.replace(TRAILING_SEASON_WORD.replace(stripSeasonTokens(k), ""), " ").trim()
             if (v != k && hasLetter(v)) keys.add(v)
         }
         // non-Latin names often drop sequel numbers ("...والثعبان ٢..." vs "...والثعبان...")
@@ -168,7 +227,7 @@ internal object TitleNormalizer {
         }
         // trailing language words outside parens: "heart beat tamil"
         for (k in keys.toList()) {
-            val v = TRAILING_LANG_WORDS.replace(k, "").trim()
+            val v = stripTrailingLanguageWords(k)
             if (v != k && hasLetter(v)) keys.add(v)
         }
         for (k in keys.toList()) skeletonKey(k)?.let { keys.add(it) }

@@ -17,6 +17,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.features.settings.SettingsGroup
 import kotlinx.coroutines.launch
 import com.nuvio.app.features.settings.SettingsGroupDivider
@@ -38,6 +39,27 @@ internal fun LazyListScope.xtreamSettingsContent(
     item {
         var actionsFor by remember { mutableStateOf<XtreamAccount?>(null) }
         val rematchScope = rememberCoroutineScope()
+        // A first catalog build runs for minutes on a large panel (~17 on a measured 468k items),
+        // and this screen showed NOTHING while it happened — the `indexing` flow existed but had no
+        // consumer. NuvioTV has shown a status here all along.
+        val indexingAccounts by com.nuvio.app.features.iptv.match.XtreamTmdbResolver.indexing
+            .collectAsStateWithLifecycle()
+        val indexProgress by com.nuvio.app.features.iptv.match.XtreamMatchIndex.buildProgress
+            .collectAsStateWithLifecycle()
+
+        // The guide mirror indexes every region it can find, but a household uses a fraction of
+        // it (2,035 of 15,397 channels on a measured panel). Unselected regions are never stored,
+        // so this trims the on-device index, not just the display.
+        var showRegionPicker by remember { mutableStateOf(false) }
+        var regionSummary by remember { mutableStateOf<String?>(null) }
+        LaunchedEffect(showRegionPicker) {
+            if (!showRegionPicker) {
+                regionSummary = com.nuvio.app.features.epg.epgRegionSummary(
+                    selected = com.nuvio.app.features.epg.EpgMirrorRepository.selectedRegions(),
+                    available = com.nuvio.app.features.epg.EpgMirrorRepository.availableRegions(),
+                )
+            }
+        }
 
         SettingsSection(title = "IPTV (Xtream Codes)", isTablet = isTablet) {
             SettingsGroup(isTablet = isTablet) {
@@ -47,16 +69,30 @@ internal fun LazyListScope.xtreamSettingsContent(
                     isTablet = isTablet,
                     onClick = onAddPlaylist,
                 )
+                SettingsGroupDivider(isTablet = isTablet)
+                SettingsNavigationRow(
+                    title = "Guide regions",
+                    description = regionSummary ?: "Loading…",
+                    isTablet = isTablet,
+                    onClick = { showRegionPicker = true },
+                )
                 state.accounts.forEach { account ->
                     SettingsGroupDivider(isTablet = isTablet)
                     SettingsNavigationRow(
                         title = account.name,
-                        description = account.baseUrl + if (account.enabled) "" else "  •  disabled",
+                        description = com.nuvio.app.features.iptv.match.indexingStatusLine(
+                            isIndexing = account.id in indexingAccounts,
+                            progress = indexProgress[account.id],
+                        ) ?: (account.baseUrl + if (account.enabled) "" else "  •  disabled"),
                         isTablet = isTablet,
                         onClick = { actionsFor = account },
                     )
                 }
             }
+        }
+
+        if (showRegionPicker) {
+            com.nuvio.app.features.epg.EpgRegionPickerHost(onDismiss = { showRegionPicker = false })
         }
 
         actionsFor?.let { account ->
