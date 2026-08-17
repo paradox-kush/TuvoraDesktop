@@ -6,6 +6,10 @@ import androidx.sqlite.execSQL
 import com.nuvio.app.core.memory.AppMemory
 import com.nuvio.app.core.memory.MemoryTierPolicy
 import com.nuvio.app.features.trakt.TraktPlatformClock
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.yield
@@ -126,7 +130,39 @@ internal object XtreamMatchIndex {
     private val mutex = Mutex()
     private var conn: SQLiteConnection? = null
 
+    private val _buildProgress = MutableStateFlow<Map<String, IndexBuildProgress>>(emptyMap())
+
+    /**
+     * Live per-provider index-build progress, for the "Preparing catalog…" status.
+     *
+     * Reported as a running COUNT, not a percentage: an account's build spans movies, series and
+     * live, and the streaming sync learns its row count only as the response parses — so any total
+     * would either be invented or would visibly reset three times.
+     */
+    internal val buildProgress: StateFlow<Map<String, IndexBuildProgress>> = _buildProgress.asStateFlow()
+
+    private fun advanceBuildProgress(provider: String, delta: Int) {
+        _buildProgress.update { current ->
+            val next = IndexBuildProgress((current[provider]?.itemsWritten ?: 0) + delta)
+            current + (provider to (current[provider]?.mergeWith(next) ?: next))
+        }
+    }
+
+    /** Called when an account's build finishes (or fails) so the status clears. */
+    internal fun clearBuildProgress(provider: String) {
+        _buildProgress.update { it - provider }
+    }
+
     private fun connection(): SQLiteConnection = conn ?: MatchDbDriver.openConnection().also {
+        // Stated, not inherited. `synchronous` defaults to FULL, so every COMMIT fsyncs — and the
+        // tier-sized batches that made indexing interruptible also multiplied the COMMIT count.
+        // NORMAL is safe here by design rather than by gamble: every table below is a rebuildable
+        // cache (migration is drop+recreate; mappings re-pull from Supabase), so a torn write costs
+        // the rebuild that is already the recovery path.
+        runCatching {
+            it.prepare("PRAGMA journal_mode = WAL").use { st -> st.step() }
+            it.execSQL("PRAGMA synchronous = NORMAL")
+        }
         // schema v2 adds items.poster (search cards). index tables are rebuildable caches,
         // mappings re-pull from Supabase — so migration is drop+recreate.
         val version = it.prepare("PRAGMA user_version").use { st -> if (st.step()) st.getLong(0) else 0L }
@@ -578,6 +614,12 @@ internal object XtreamMatchIndex {
         val batch = MemoryTierPolicy.indexBatchSize(AppMemory.effectiveTier())
         for (chunk in items.chunked(batch)) {
             yield()
+            // Normalised OUTSIDE the lock and the transaction. TitleNormalizer.keysOf is the
+            // CPU-heavy half of indexing (4-8 Unicode NFD folds and dozens of regex passes per
+            // item); running it inside `mutex.withLock` made every reader — i.e. the UI — queue
+            // behind it. Sorted by (k, sid) because `keys` is WITHOUT ROWID, so its primary key IS
+            // the storage B-tree and catalog-order inserts land at random leaves. See sortedKeyRows.
+            val keyRows = sortedKeyRows(chunk)
             mutex.withLock {
                 val c = connection()
                 c.execSQL("BEGIN IMMEDIATE")
@@ -623,12 +665,10 @@ internal object XtreamMatchIndex {
                         }
                     }
                     c.prepare("INSERT OR REPLACE INTO keys(provider, kind, k, sid) VALUES(?,?,?,?)").use { st ->
-                        for (it in chunk) {
-                            for (key in TitleNormalizer.keysOf(it.name)) {
-                                st.reset()
-                                st.bindText(1, provider); st.bindText(2, kind.slug); st.bindText(3, key); st.bindLong(4, it.sid.toLong())
-                                st.step()
-                            }
+                        for (row in keyRows) {
+                            st.reset()
+                            st.bindText(1, provider); st.bindText(2, kind.slug); st.bindText(3, row.key); st.bindLong(4, row.sid.toLong())
+                            st.step()
                         }
                     }
                     c.execSQL("COMMIT")
@@ -636,6 +676,9 @@ internal object XtreamMatchIndex {
                     c.execSQL("ROLLBACK"); throw t
                 }
             }
+            // After the batch is durable, so the number on screen never runs ahead of what
+            // survives a kill mid-build.
+            advanceBuildProgress(provider, chunk.size)
         }
     }
 

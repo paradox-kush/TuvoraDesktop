@@ -938,7 +938,11 @@ private fun MainAppContent(
             val screenName = when (currentRoute) {
                 null -> null
                 TabsRoute -> "Tabs.${selectedTab.name}"
-                else -> currentRoute::class.simpleName
+                // Desktop does not minify today (`buildTypes.release.proguard.isEnabled = false`),
+                // so simpleName is readable here — but it puts desktop on a DIFFERENT screen
+                // vocabulary from mobile and TV, so one query cannot compare them. Explicit names
+                // fix that, and survive if proguard is ever switched on. See analyticsNameOf.
+                else -> analyticsNameOf(currentRoute)
             }
             screenName?.let(Breadcrumbs::screenChanged)
         }
