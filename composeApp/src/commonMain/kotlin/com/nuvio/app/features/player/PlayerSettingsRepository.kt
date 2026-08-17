@@ -52,7 +52,16 @@ data class PlayerSettingsUiState(
     val streamReuseLastLinkEnabled: Boolean = false,
     val streamReuseLastLinkCacheHours: Int = 24,
     val androidPlaybackEngine: AndroidPlaybackEngine = AndroidPlaybackEngine.Auto,
-    val androidLibmpvVideoOutput: AndroidLibmpvVideoOutput = AndroidLibmpvVideoOutput.GpuNext,
+    /**
+     * Kept in step with NuvioMobile, where this matters: the libplacebo we ship there (v7.360.0)
+     * leaks one GL sync object — and so one `sync_file` fd — per frame on its OpenGL backend,
+     * fixed upstream in v7.360.1. See the mobile twin for the full evidence.
+     *
+     * INERT on desktop's shipped platforms: macOS/Windows render through NativePlayerBridge, not
+     * Android libmpv, and `sync_file` is a Linux/Android kernel construct that does not exist
+     * there. Ported anyway so the forked twin does not drift out of sync with mobile.
+     */
+    val androidLibmpvVideoOutput: AndroidLibmpvVideoOutput = AndroidLibmpvVideoOutput.Gpu,
     val androidLibmpvHardwareDecodingEnabled: Boolean = true,
     val androidLibmpvYuv420pEnabled: Boolean = false,
     val decoderPriority: Int = 1,
@@ -120,7 +129,7 @@ object PlayerSettingsRepository {
     private var streamReuseLastLinkEnabled = false
     private var streamReuseLastLinkCacheHours = 24
     private var androidPlaybackEngine = AndroidPlaybackEngine.Auto
-    private var androidLibmpvVideoOutput = AndroidLibmpvVideoOutput.GpuNext
+    private var androidLibmpvVideoOutput = AndroidLibmpvVideoOutput.Gpu
     private var androidLibmpvHardwareDecodingEnabled = true
     private var androidLibmpvYuv420pEnabled = false
     private var decoderPriority = 1
@@ -193,7 +202,7 @@ object PlayerSettingsRepository {
         streamReuseLastLinkEnabled = false
         streamReuseLastLinkCacheHours = 24
         androidPlaybackEngine = AndroidPlaybackEngine.Auto
-        androidLibmpvVideoOutput = AndroidLibmpvVideoOutput.GpuNext
+        androidLibmpvVideoOutput = AndroidLibmpvVideoOutput.Gpu
         androidLibmpvHardwareDecodingEnabled = true
         androidLibmpvYuv420pEnabled = false
         decoderPriority = 1
@@ -303,7 +312,7 @@ object PlayerSettingsRepository {
             ?: AndroidPlaybackEngine.Auto
         androidLibmpvVideoOutput = PlayerSettingsStorage.loadAndroidLibmpvVideoOutput()
             ?.let { runCatching { AndroidLibmpvVideoOutput.valueOf(it) }.getOrNull() }
-            ?: AndroidLibmpvVideoOutput.GpuNext
+            ?: AndroidLibmpvVideoOutput.Gpu
         androidLibmpvHardwareDecodingEnabled = PlayerSettingsStorage.loadAndroidLibmpvHardwareDecodingEnabled() ?: true
         androidLibmpvYuv420pEnabled = PlayerSettingsStorage.loadAndroidLibmpvYuv420pEnabled() ?: false
         decoderPriority = PlayerSettingsStorage.loadDecoderPriority() ?: 1
