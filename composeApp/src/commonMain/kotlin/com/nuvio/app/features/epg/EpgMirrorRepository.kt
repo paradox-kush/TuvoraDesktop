@@ -10,6 +10,10 @@ import com.nuvio.app.features.iptv.content.EpgProgrammeRow
 import com.nuvio.app.features.iptv.epg.XmltvStreamingParser
 import com.nuvio.app.features.iptv.epg.normalizeChannelId
 import com.nuvio.app.features.trakt.TraktPlatformClock
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -29,6 +33,8 @@ internal object EpgMirrorRepository {
     private val log = Logger.withTag("EpgMirror")
     private val json = Json { ignoreUnknownKeys = true }
     private val syncMutex = Mutex()
+    /** Survives any screen: region changes rebuild even though the picker closes immediately. */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     // --- public queries ---------------------------------------------------------
 
@@ -57,8 +63,52 @@ internal object EpgMirrorRepository {
     suspend fun programmesInWindow(tokens: List<String>, fromMs: Long, toMs: Long): List<EpgProgrammeRow> =
         EpgMirrorDb.searchProgrammes(tokens, fromMs, toMs)
 
-    /** Drop a removed playlist's mappings (called from the account-removal purge path). */
-    suspend fun purgeProvider(providerKey: String) = EpgMirrorDb.purgeProvider(providerKey)
+    /** Drop a removed playlist's mappings and schedule state (account-removal purge path). */
+    suspend fun purgeProvider(providerKey: String) {
+        EpgMirrorDb.purgeProvider(providerKey)
+        EpgMirrorDb.deleteMeta(mappedGenKey(providerKey))
+        EpgMirrorDb.deleteMeta(attemptAtKey(providerKey))
+    }
+
+    // --- region selection (the picker) ---------------------------------------------
+
+    /**
+     * Regions the viewer chose, or empty for "no preference" (everything — the opt-in default).
+     * Stored in the mirror's own meta table: it is EPG cache state, it belongs with the data it
+     * filters, and it needs no new per-platform storage.
+     */
+    suspend fun selectedRegions(): Set<String> =
+        EpgMirrorDb.meta(META_REGIONS).orEmpty()
+            .split(REGION_SEPARATOR)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .toSet()
+
+    /** Every region the mirror publishes, for the picker (works offline after one sync). */
+    suspend fun availableRegions(): List<EpgRegion> = EpgRegionCatalog.catalogFrom(EpgMirrorDb.sources())
+
+    /**
+     * Applies a new selection and rebuilds against it.
+     *
+     * The index is stored pre-filtered, so a changed selection invalidates it: clear the sync
+     * stamps so the next [ensureFresh] re-downloads, and clear every account's mapped-generation
+     * so mappings are re-derived against the new index (they were computed against the old one,
+     * which is exactly the case the generation key exists to catch).
+     */
+    suspend fun setSelectedRegions(regions: Set<String>) {
+        val normalized = regions.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+        if (normalized == selectedRegions()) return
+        EpgMirrorDb.setMeta(META_REGIONS, normalized.joinToString(REGION_SEPARATOR))
+        EpgMirrorDb.setMeta(META_SYNCED_AT, "0")
+        EpgMirrorDb.setMeta(META_GENERATION, "")
+        for (key in EpgMirrorDb.metaKeysWithPrefix(MAPPED_GEN_PREFIX)) EpgMirrorDb.deleteMeta(key)
+        log.i { "epg regions set to ${normalized.ifEmpty { setOf("<all>") }}; index will rebuild" }
+        // Rebuild on the repository's own scope, NOT the caller's. The picker dismisses itself
+        // as soon as it applies, so a `rememberCoroutineScope` launch is cancelled mid-fetch
+        // (ForgottenCoroutineScopeException — observed on the emulator). The stamps above already
+        // guarantee the next natural sync rebuilds; this just makes it immediate.
+        scope.launch { ensureFresh(force = true) }
+    }
 
     // --- sync ---------------------------------------------------------------------
 
@@ -73,24 +123,49 @@ internal object EpgMirrorRepository {
             val now = TraktPlatformClock.nowEpochMs()
             val lastSync = EpgMirrorDb.meta(META_SYNCED_AT)?.toLongOrNull() ?: 0L
             val fresh = !force && now - lastSync < SYNC_TTL_MS
-            if (fresh && !EpgMirrorDb.indexIsEmpty()) {
-                mapMissingAccounts()
+            // `sourcesAreEmpty` forces the full path once after upgrading to region support:
+            // the published source list is only written when the index is (re)built, so without
+            // this an install whose generation never changes would show an empty region picker
+            // forever.
+            if (fresh && !EpgMirrorDb.indexIsEmpty() && !EpgMirrorDb.sourcesAreEmpty()) {
+                // Whatever the stored index was built from is what any mapping must agree with.
+                mapAccountsIfNeeded(now, force = false, generation = EpgMirrorDb.meta(META_GENERATION).orEmpty())
                 return
             }
 
             val base = storageBase() ?: return
             val manifest = fetchJson<MirrorManifest>("$base/manifest.json") ?: return
             val generation = manifest.generatedAt.orEmpty()
-            if (!force && generation.isNotEmpty() && generation == EpgMirrorDb.meta(META_GENERATION) && !EpgMirrorDb.indexIsEmpty()) {
+            if (!force && generation.isNotEmpty() && generation == EpgMirrorDb.meta(META_GENERATION) &&
+                !EpgMirrorDb.indexIsEmpty() && !EpgMirrorDb.sourcesAreEmpty()
+            ) {
                 EpgMirrorDb.setMeta(META_SYNCED_AT, now.toString())
-                mapMissingAccounts()
+                mapAccountsIfNeeded(now, force = false, generation = generation)
                 return
             }
 
             val index = fetchJson<ChannelsIndexDoc>("$base/${manifest.channelsIndexPath ?: "channels-index.json.gz"}")
                 ?: return
+            // Remember what the mirror offers before filtering, so the picker can list every
+            // region (including ones the viewer has switched off) without a re-fetch.
+            val published = index.sources.map {
+                EpgSourceInfo(
+                    slug = it.slug,
+                    label = it.label ?: it.slug,
+                    countries = it.countries,
+                    channelCount = it.channels.size,
+                )
+            }
+            EpgMirrorDb.replaceSources(published)
+
+            // Only selected regions are STORED. Filtering here rather than at query time is the
+            // point of the picker: the index is what costs disk on every device and a match walk
+            // per channel, and a household typically uses ~13% of it.
+            val selection = selectedRegions()
+            val keepSlugs = EpgRegionCatalog.slugsFor(selection, published)
             val rows = ArrayList<EpgIndexRow>(64_000)
             for (src in index.sources) {
+                if (src.slug !in keepSlugs) continue
                 for (ch in src.channels) {
                     val id = normalizeChannelId(ch.id)
                     if (id.isEmpty()) continue
@@ -101,7 +176,11 @@ internal object EpgMirrorRepository {
             if (rows.isEmpty()) return
             EpgMirrorDb.replaceIndex(rows)
 
-            mapAccounts(allAccounts = true)
+            // The index just changed, so this is the one moment a re-match can produce a new
+            // answer — but the policy still admits at most ONE account per sync, so a bump that
+            // affects every account spreads over visits instead of stacking a 49k-channel
+            // foreground episode (research/tv-epg-mirror-spin.md).
+            mapAccountsIfNeeded(now, force, generation)
 
             val mappedIds = EpgMirrorDb.mappedEpgIds()
             if (mappedIds.isNotEmpty()) {
@@ -115,7 +194,10 @@ internal object EpgMirrorRepository {
                     .take(MAX_FEEDS)
                     .map { it.key }
                 if (chosen.isNotEmpty()) {
-                    EpgMirrorDb.clearProgrammes()
+                    // Shadow-table refresh: readers keep the old programme window until the
+                    // commit swap — the old up-front clear left the guide EMPTY for the
+                    // whole streamed feed download on slow boxes.
+                    EpgMirrorDb.beginProgrammesRefresh()
                     val windowStart = now - WINDOW_BACK_MS
                     val windowEnd = now + WINDOW_AHEAD_MS
                     val covered = mutableSetOf<String>()
@@ -147,6 +229,7 @@ internal object EpgMirrorRepository {
                         stored += rows.size
                         covered += seen
                     }
+                    EpgMirrorDb.commitProgrammesRefresh()
                     log.i { "mirror sync: $stored programmes for ${covered.size} channels from $chosen" }
                 }
             }
@@ -160,17 +243,37 @@ internal object EpgMirrorRepository {
         }
     }
 
-    /** Map playlists that have no mapping rows yet (added since the last full sync). */
-    private suspend fun mapMissingAccounts() {
-        val mapped = EpgMirrorDb.mappedProviderKeys()
-        XtreamRepository.ensureLoaded()
-        val missing = XtreamRepository.uiState.value.accounts.filter { it.enabled && it.id !in mapped }
-        if (missing.isEmpty()) return
-        mapAccounts(allAccounts = false, only = missing.map { it.id }.toSet())
-    }
+    /** Meta keys for one account's mapping schedule (cleared by [purgeProvider]). */
+    private fun mappedGenKey(accountId: String) = "$MAPPED_GEN_PREFIX$accountId"
+    private fun attemptAtKey(accountId: String) = "acct_attempt_ms:$accountId"
 
-    /** Build the transient matcher index from the stored channels-index; persist mappings. */
-    private suspend fun mapAccounts(allAccounts: Boolean, only: Set<String> = emptySet()) {
+    /**
+     * Re-match the accounts [EpgRemapPolicy] selects — never-mapped ones (cooldown-gated),
+     * at most one aged one, or all under `force`. The expensive parts — the tens-of-MB
+     * transient [EpgChannelIndex] and the per-channel match walk — only happen when at least
+     * one account is due, which in steady state is one account a week, not every account on
+     * every generation bump (that was the Onn TV "background spin",
+     * research/tv-epg-mirror-spin.md; mobile shares the design, so it shares the fix).
+     *
+     * "Mapped" is meta-stamped on a COMPLETED match run, even one with zero hits — keying it
+     * on row presence made all-24/7 accounts re-run the episode on every surface visit.
+     */
+    private suspend fun mapAccountsIfNeeded(nowMs: Long, force: Boolean, generation: String) {
+        XtreamRepository.ensureLoaded()
+        val accounts = XtreamRepository.uiState.value.accounts.filter { it.enabled }
+        if (accounts.isEmpty()) return
+        var agedBudgetLeft = true
+        val due = accounts.filter { acc ->
+            val mappedGen = EpgMirrorDb.meta(mappedGenKey(acc.id)).orEmpty()
+            val attemptedAt = EpgMirrorDb.meta(attemptAtKey(acc.id))?.toLongOrNull() ?: 0L
+            val decision = EpgRemapPolicy.decide(nowMs, force, mappedGen, generation, attemptedAt, agedBudgetLeft)
+            if (decision == EpgRemapPolicy.Decision.REMATCH && mappedGen.isNotEmpty() && !force) {
+                agedBudgetLeft = false
+            }
+            decision == EpgRemapPolicy.Decision.REMATCH
+        }
+        if (due.isEmpty()) return
+
         val pairs = ArrayList<Pair<String, List<String>>>(64_000)
         var lastId = ""
         var names = ArrayList<String>()
@@ -186,11 +289,11 @@ internal object EpgMirrorRepository {
         if (pairs.isEmpty()) return
         val index = EpgChannelIndex.build(pairs)
 
-        XtreamRepository.ensureLoaded()
-        val accounts = XtreamRepository.uiState.value.accounts
-            .filter { it.enabled && (allAccounts || it.id in only) }
-        for (acc in accounts) {
+        for (acc in due) {
+            EpgMirrorDb.setMeta(attemptAtKey(acc.id), nowMs.toString())
             val channels = runCatching { XtreamSearchIndex.liveChannelsFor(acc) }.getOrDefault(emptyList())
+            // Empty local index (account not ingested yet): attempt stamped, mappedAt not —
+            // the cooldown owns the retry.
             if (channels.isEmpty()) continue
             val mappings = channels.mapNotNull { ch ->
                 index.match(ch.name, ch.epgChannelId)?.let { hit ->
@@ -198,6 +301,8 @@ internal object EpgMirrorRepository {
                 }
             }
             EpgMirrorDb.replaceMapping(acc.id, mappings)
+            // Stamped even at zero hits: the run COMPLETED against this index.
+            EpgMirrorDb.setMeta(mappedGenKey(acc.id), generation.ifEmpty { NO_GENERATION })
             log.i { "mapped ${mappings.size}/${channels.size} channels for ${acc.name}" }
         }
     }
@@ -246,6 +351,9 @@ internal object EpgMirrorRepository {
     @Serializable
     private data class IndexSourceDoc(
         val slug: String,
+        val label: String? = null,
+        /** Comma-separated country names; drives the region picker. */
+        val countries: String? = null,
         val channels: List<IndexChannelDoc> = emptyList(),
     )
 
@@ -256,7 +364,13 @@ internal object EpgMirrorRepository {
     )
 
     private const val META_SYNCED_AT = "synced_at"
+    private const val META_REGIONS = "selected_regions"
+    /** Region names cannot contain it, unlike the comma the backend uses inside `countries`. */
+    private const val REGION_SEPARATOR = "\u0001"
+    private const val MAPPED_GEN_PREFIX = "acct_mapped_gen:"
     private const val META_GENERATION = "generation"
+    /** Stamped when the mirror publishes no generation, so "matched once" is still recorded. */
+    private const val NO_GENERATION = "-"
     private const val SYNC_TTL_MS = 12 * 60 * 60 * 1000L
     /** Only download a feed when it covers a meaningful slice of the user's channels. */
     private const val MIN_SLUG_COVER = 25
