@@ -573,10 +573,13 @@ object XtreamHubRepository {
                 streamId = streamId,
                 nowMs = t0,
                 manual = null,   // the manual-mapping seam — see [EpgSourceLadder.ManualResolver]
+                // null = the ask FAILED. Collapsing that into emptyList() told the ladder
+                // "this panel has no EPG for this channel", which is a coverage claim a timeout
+                // cannot support — see EpgSourceLadder.Source.UNAVAILABLE.
                 provider = {
                     runCatching {
-                        IptvClient.forAccount(account).shortEpg(account, streamId).getOrDefault(emptyList())
-                    }.getOrDefault(emptyList())
+                        IptvClient.forAccount(account).shortEpg(account, streamId).getOrNull()
+                    }.getOrNull()
                 },
                 mirror = {
                     runCatching {

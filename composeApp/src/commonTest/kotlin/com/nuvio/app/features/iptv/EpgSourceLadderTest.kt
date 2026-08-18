@@ -300,4 +300,89 @@ class EpgSourceLadderTest {
         assertFalse(EpgSourceLadder.providerPassesGate(quarterOff, now))
         assertFalse(EpgSourceLadder.providerPassesGate(emptyList(), now))
     }
+
+    // ---- A failed panel ask is not a coverage fact (2026-08-18 field regression) ----------------
+    //
+    // An Onn 4K browsing the guide DURING a 76s mirror sync reported provider=0, none=68/80. An
+    // S24 on the same account an hour later resolved 37% from that same panel. The panel was
+    // fine — the box was saturated, every shortEpg call failed, and each failure was booked as
+    // "this channel has no guide". Both the client and the call sites collapsed Result.failure
+    // into emptyList(), so the ladder could not tell a timeout from an honest empty answer.
+
+    @Test
+    fun `a failed panel ask with no mirror is unavailable - not none`() = runBlocking {
+        val r = EpgSourceLadder.resolve(
+            nowMs = now,
+            provider = { null },          // the ask FAILED
+            mirror = { emptyList() },
+        )
+        assertEquals(EpgSourceLadder.Source.UNAVAILABLE, r.source, "a timeout is not a coverage fact")
+        assertTrue(r.programmes.isEmpty())
+    }
+
+    @Test
+    fun `a panel that answers with nothing is still none`() = runBlocking {
+        val r = EpgSourceLadder.resolve(
+            nowMs = now,
+            provider = { emptyList() },   // the panel SPOKE, and had nothing
+            mirror = { emptyList() },
+        )
+        assertEquals(EpgSourceLadder.Source.NONE, r.source, "an honest empty answer is coverage")
+    }
+
+    @Test
+    fun `a failed panel ask still falls to the mirror`() = runBlocking {
+        val r = EpgSourceLadder.resolve(
+            nowMs = now,
+            provider = { null },
+            mirror = { saneRows() },
+        )
+        assertEquals(EpgSourceLadder.Source.MIRROR, r.source, "failure must not suppress the mirror")
+    }
+
+    @Test
+    fun `a dried-up mirror plus a failed panel ask is unavailable`() = runBlocking {
+        val r = EpgSourceLadder.resolve(
+            nowMs = now,
+            remembered = EpgSourceLadder.Source.MIRROR,
+            provider = { null },
+            mirror = { emptyList() },
+        )
+        assertEquals(EpgSourceLadder.Source.UNAVAILABLE, r.source, "the remembered branch counts too")
+    }
+
+    @Test
+    fun `the tally keeps failures out of the none count`() {
+        val memory = EpgSourceLadder.Memory()
+        memory.remember("acct", 1, EpgSourceLadder.Source.NONE)
+        memory.remember("acct", 2, EpgSourceLadder.Source.UNAVAILABLE)
+        memory.remember("acct", 3, EpgSourceLadder.Source.UNAVAILABLE)
+        memory.remember("acct", 4, EpgSourceLadder.Source.PROVIDER)
+        val tally = memory.tally("acct")
+        assertEquals(1, tally.none, "only the honest empty answer is none")
+        assertEquals(2, tally.unavailable, "the two failures are counted apart")
+        assertEquals(4, tally.total, "failures still count toward the sample size")
+    }
+
+    @Test
+    fun `a failure is retried rather than pinned for the session`() = runBlocking {
+        val memory = EpgSourceLadder.Memory()
+        var asks = 0
+        repeat(2) {
+            EpgSourceLadder.resolveAndRemember(
+                memory = memory,
+                accountId = "acct",
+                streamId = 7,
+                nowMs = now,
+                provider = { asks++; if (asks == 1) null else saneRows() },
+                mirror = { emptyList() },
+            )
+        }
+        assertEquals(2, asks, "a transient failure must not cool the channel for the whole session")
+        assertEquals(
+            EpgSourceLadder.Source.PROVIDER,
+            memory.rememberedFor("acct", 7),
+            "the retry's honest answer replaces the failure",
+        )
+    }
 }

@@ -174,7 +174,11 @@ object XtreamClient : IptvClient {
 
     override suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int): Result<List<XtreamProgram>> = call {
         val url = playerApi(acc, "get_short_epg") + "&stream_id=$streamId&limit=$limit"
-        val root = runCatching { json.parseToJsonElement(panelGetText(url, acc.dnsProvider)).jsonObject }.getOrNull() ?: return@call emptyList()
+        // panelGetText stays OUTSIDE the runCatching so a transport error propagates to call{}
+        // and becomes Result.failure — the shape vodInfo/seriesInfo already use. Inlining it here
+        // turned every timeout into Result.success(emptyList()), i.e. "the panel has no EPG".
+        val text = panelGetText(url, acc.dnsProvider)
+        val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return@call emptyList()
         val rows = (root["epg_listings"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
         // Epoch-skew gate (XtreamEpochSkew): the manual per-playlist offset wins outright, and the
         // clock pair is fetched ONLY once a response has actually voted LIAR — honest panels (the
