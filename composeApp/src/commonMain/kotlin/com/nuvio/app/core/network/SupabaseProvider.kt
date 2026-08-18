@@ -1,5 +1,6 @@
 package com.nuvio.app.core.network
 
+import com.nuvio.app.core.auth.shouldRetryAuthRefreshResponse
 import com.nuvio.app.core.build.AppVersionConfig
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.annotations.SupabaseInternal
@@ -52,29 +53,44 @@ object SupabaseProvider {
             supabaseKey = config.anonKey,
         ) {
             httpConfig {
-                // Upstream's primary->fallback endpoint retry; inert unless a fallback URL is
-                // configured (the fork's self-hosted backend usually has none).
-                if (SupabaseEndpointConfig.hasFallback) {
-                    install(HttpRequestRetry) {
-                        retryOnExceptionIf(maxRetries = 1) { request, cause ->
-                            SupabaseEndpointConfig.shouldRetryWithFallback(
-                                requestUrl = request.url.buildString(),
-                                cause = cause,
-                            )
-                        }
-                        retryIf(maxRetries = 1) { request, response ->
-                            SupabaseEndpointConfig.shouldRetryWithFallback(
-                                requestUrl = request.url.toString(),
-                                statusCode = response.status.value,
-                            )
-                        }
-                        modifyRequest { request ->
-                            SupabaseEndpointConfig.fallbackUrlFor(request.url.buildString())?.let { fallbackUrl ->
-                                request.url.takeFrom(fallbackUrl)
-                            }
-                        }
-                        constantDelay(millis = 100)
+                install(HttpRequestRetry) {
+                    // Two unrelated reasons to retry share one plugin instance, because installing
+                    // HttpRequestRetry twice would just overwrite the first configuration:
+                    //
+                    // 1. Upstream's primary->fallback endpoint hop; inert unless a fallback URL is
+                    //    configured (the fork's self-hosted backend usually has none).
+                    // 2. A transient refusal of the token-refresh call. supabase-kt retries only
+                    //    its NETWORK_ERROR_CODES (5xx) and unreachable-host failures; every other
+                    //    failing status falls through to clearSession(), which deletes the stored
+                    //    session and signs the user out permanently. Absorbing 408/429/edge-403
+                    //    here means the library never sees them.
+                    retryOnExceptionIf(maxRetries = 2) { request, cause ->
+                        SupabaseEndpointConfig.shouldRetryWithFallback(
+                            requestUrl = request.url.buildString(),
+                            cause = cause,
+                        )
                     }
+                    retryIf(maxRetries = 2) { request, response ->
+                        SupabaseEndpointConfig.shouldRetryWithFallback(
+                            requestUrl = request.url.toString(),
+                            statusCode = response.status.value,
+                        ) || shouldRetryAuthRefreshResponse(
+                            statusCode = response.status.value,
+                            path = request.url.encodedPath,
+                            grantType = request.url.parameters["grant_type"],
+                            server = response.headers[HttpHeaders.Server],
+                            cloudflareRay = response.headers["cf-ray"],
+                        )
+                    }
+                    modifyRequest { request ->
+                        SupabaseEndpointConfig.fallbackUrlFor(request.url.buildString())?.let { fallbackUrl ->
+                            request.url.takeFrom(fallbackUrl)
+                        }
+                    }
+                    // Deliberately short and few: a refresh retry has to land inside GoTrue's
+                    // refresh-token reuse interval, and re-presenting the token after that window
+                    // trips reuse detection and revokes the whole family.
+                    constantDelay(millis = 100)
                 }
                 defaultRequest {
                     headers.append(HttpHeaders.UserAgent, userAgent)

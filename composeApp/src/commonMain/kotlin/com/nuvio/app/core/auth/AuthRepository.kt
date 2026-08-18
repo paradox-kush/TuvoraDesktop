@@ -102,15 +102,11 @@ object AuthRepository {
                             val user = runCatching {
                                 SupabaseProvider.client.auth.sessionManager.loadSession()
                             }.getOrNull()?.user
-                            _state.value = if (user != null) {
-                                AuthState.Authenticated(
-                                    userId = user.id,
-                                    email = user.email,
-                                    isAnonymous = false,
-                                )
-                            } else {
-                                AuthState.Unauthenticated
-                            }
+                            _state.value = authStateAfterRefreshFailure(
+                                current = _state.value,
+                                persistedUserId = user?.id,
+                                persistedEmail = user?.email,
+                            )
                         }
                     }
                 }
@@ -363,6 +359,27 @@ object AuthRepository {
                 "foreign key" in text &&
                     ("auth.users" in text || "user_id" in text)
                 )
+
+    /**
+     * A RefreshFailure is the SDK announcing it will retry — it has not cleared storage at that
+     * point, and NotAuthenticated is the only status that genuinely means "signed out". Forcing
+     * Unauthenticated here signed people out over a single unreadable session read, so an unknown
+     * persisted user now leaves the existing state untouched.
+     */
+    internal fun authStateAfterRefreshFailure(
+        current: AuthState,
+        persistedUserId: String?,
+        persistedEmail: String?
+    ): AuthState =
+        if (!persistedUserId.isNullOrBlank()) {
+            AuthState.Authenticated(
+                userId = persistedUserId,
+                email = persistedEmail,
+                isAnonymous = false,
+            )
+        } else {
+            current
+        }
 
     internal fun isInvalidRefreshError(statusCode: Int?, text: String): Boolean =
         statusCode == 400 || statusCode == 401 || statusCode == 403 ||
