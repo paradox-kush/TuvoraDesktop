@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import com.nuvio.app.features.iptv.IptvPlaybackGate
+import com.nuvio.app.features.player.ImmersivePlaybackGate
 import com.nuvio.app.features.iptv.IptvRefreshScheduler
 import com.nuvio.app.features.iptv.XtreamHubScreen
 import com.nuvio.app.features.radar.RadarChannelMatcher
@@ -3337,7 +3338,13 @@ private fun MainAppContent(
                     // defers instead of firing mid-playback (P3-B skip-while-playing).
                     DisposableEffect(Unit) {
                         IptvPlaybackGate.setPlaybackActive(true)
-                        onDispose { IptvPlaybackGate.setPlaybackActive(false) }
+                        // Also tell app-level chrome (the update banner) to stand down: it is a
+                        // layout sibling of the whole app, so leaving it up shrinks the video.
+                        ImmersivePlaybackGate.setImmersive(true)
+                        onDispose {
+                            IptvPlaybackGate.setPlaybackActive(false)
+                            ImmersivePlaybackGate.setImmersive(false)
+                        }
                     }
                     PlayerScreen(
                         profileId = launch.profileId,
@@ -3446,7 +3453,13 @@ private fun MainAppContent(
                     }
                     DisposableEffect(Unit) {
                         IptvPlaybackGate.setPlaybackActive(true)
-                        onDispose { IptvPlaybackGate.setPlaybackActive(false) }
+                        // Also tell app-level chrome (the update banner) to stand down: it is a
+                        // layout sibling of the whole app, so leaving it up shrinks the video.
+                        ImmersivePlaybackGate.setImmersive(true)
+                        onDispose {
+                            IptvPlaybackGate.setPlaybackActive(false)
+                            ImmersivePlaybackGate.setImmersive(false)
+                        }
                     }
                     LiveTvScreen(
                         initialContentId = launch.videoId,

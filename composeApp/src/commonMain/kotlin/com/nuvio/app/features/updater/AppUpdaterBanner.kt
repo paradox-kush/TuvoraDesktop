@@ -55,6 +55,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.build.AppFeaturePolicy
+import com.nuvio.app.features.player.ImmersivePlaybackGate
+import com.nuvio.app.features.player.rememberIsInPictureInPicture
 import com.nuvio.app.core.ui.AppTheme
 import com.nuvio.app.core.ui.appTheme
 import com.nuvio.app.core.ui.nuvio
@@ -98,7 +100,17 @@ fun AppUpdaterHost(
     }
 
     val update = state.update
-    val showBanner = state.showDialog && update != null
+    // The banner is a Column sibling of the whole app content (below), so it SHRINKS the UI rather
+    // than floating over it. Over a full-bleed player that letterboxes the picture; on mobile the
+    // same structure squeezed the PiP window down to a sliver. Ask the policy, don't inline it.
+    val immersivePlaybackActive by ImmersivePlaybackGate.isActive.collectAsStateWithLifecycle()
+    val inPictureInPicture = rememberIsInPictureInPicture()
+    val showBanner = UpdateBannerVisibilityPolicy.mayOccupyLayout(
+        hasUpdate = update != null,
+        dialogRequested = state.showDialog,
+        immersivePlaybackActive = immersivePlaybackActive,
+        inPictureInPicture = inPictureInPicture,
+    )
 
     Column(modifier = modifier) {
         AnimatedVisibility(
