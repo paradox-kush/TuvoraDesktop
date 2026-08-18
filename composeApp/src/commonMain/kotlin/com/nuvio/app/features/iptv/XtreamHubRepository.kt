@@ -531,16 +531,33 @@ object XtreamHubRepository {
         com.nuvio.app.core.diag.HubTrace.log("tileEpg", "enqueue") { contentId }
         TileEpgQueue.enqueue(contentId, onEvicted = { epgFetched.remove(contentId) }) {
             val t0 = com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs()
-            // get_short_epg returns current + upcoming, so the nowPlaying (or first) entry is "now".
-            // When the panel has nothing (the common case on real panels — Starshare fills 6% of
-            // epg_channel_id), fall back to the mirrored canonical EPG via the channel mapping.
-            val listings = IptvClient.forAccount(account).shortEpg(account, streamId).getOrDefault(emptyList())
-                .ifEmpty {
+            // ONE resolution path for the whole app: the tiles resolve exactly as the guide does.
+            //
+            // This used to be `shortEpg().ifEmpty { mirror }` — the provider-first fallback the
+            // ladder was built to replace, still running on the highest-traffic surface. Its one
+            // measured failure mode is that present-but-garbage beats absent: wa12's skewed rows
+            // (every epoch a zone-offset out, nothing bracketing now) are non-empty, so `ifEmpty`
+            // never reached the mirror and the tiles showed the wrong programme instead of the
+            // right one. The ladder's sanity gate sends exactly that shape to the mirror, and its
+            // session memory stops a mirror-fed channel re-asking the panel on every scroll past.
+            val listings = com.nuvio.app.features.iptv.EpgSourceLadder.resolveAndRemember(
+                memory = com.nuvio.app.features.iptv.EpgSourceLadder.sessionMemory,
+                accountId = account.id,
+                streamId = streamId,
+                nowMs = t0,
+                manual = null,   // the manual-mapping seam — see [EpgSourceLadder.ManualResolver]
+                provider = {
+                    runCatching {
+                        IptvClient.forAccount(account).shortEpg(account, streamId).getOrDefault(emptyList())
+                    }.getOrDefault(emptyList())
+                },
+                mirror = {
                     runCatching {
                         com.nuvio.app.features.epg.EpgMirrorRepository
-                            .nowNextProgrammes(account.id, streamId, com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs())
+                            .nowNextProgrammes(account.id, streamId, t0)
                     }.getOrDefault(emptyList())
-                }
+                },
+            ).programmes
             com.nuvio.app.core.diag.HubTrace.log("tileEpg", "fetched") {
                 "id=$contentId took=${com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs() - t0}ms n=${listings.size}"
             }
