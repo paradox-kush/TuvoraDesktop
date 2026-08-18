@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -31,6 +32,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -59,6 +64,15 @@ private val MINUTE_WIDTH = 3.5.dp
 private val SLOT_MINUTES = GuideTimeTravel.SLOT_MINUTES
 
 /**
+ * How long the guide must be still before it asks the panel for the rows on screen.
+ *
+ * Matches NuvioTV's D-pad focus debounce (EPG_FOCUS_DEBOUNCE_MS): long enough that a fling's
+ * intermediate positions never become requests, short enough that it feels immediate once the
+ * finger lifts.
+ */
+private const val SCROLL_SETTLE_MS = 250L
+
+/**
  * TiviMate-style EPG timeline: a pinned channel column on the left, programme blocks laid out across
  * a shared horizontally-scrolling time axis, and a red now-line. Tapping any channel row switches
  * playback in place. Programme windows load lazily as rows scroll into view.
@@ -81,7 +95,8 @@ fun LiveGuideGrid(
     windowStartMs: Long,
     catchUpDays: Int,
     programmesOf: (String) -> List<XtreamProgram>?,
-    onNeedProgrammes: (String) -> Unit,
+    /** A settled window of channels to fetch now/next for, in the order they should resolve. */
+    onNeedProgrammes: (List<String>) -> Unit,
     onSelectChannel: (LiveGuideChannel) -> Unit,
     onProgrammeAction: (LiveGuideChannel, XtreamProgram, XtreamCatchUp.ProgrammeAction) -> Unit,
     onTravel: (Long) -> Unit,
@@ -92,7 +107,31 @@ fun LiveGuideGrid(
     val totalMinutes = (windowEndMs - windowStartMs) / 60_000L
     val totalWidth = MINUTE_WIDTH * totalMinutes.toInt()
     val timeScroll = rememberScrollState()
+    val listState = rememberLazyListState()
     val travelling = GuideTimeTravel.isTravelling(windowStartMs, nowMs)
+
+    // Ask the panel only for the rows the viewer actually STOPPED on.
+    //
+    // `collectLatest` + `delay` is the settle: every new scroll position cancels the pending ask,
+    // so a fling that crosses a thousand rows issues ONE window when it comes to rest instead of
+    // one `get_short_epg` per row it flew past. That per-row ask is the 2026-08-17 field report —
+    // measured at 412 requests / 390 concurrent connections from eight flings, against panels that
+    // commonly sell max_connections=1. Keyed on [windowStartMs] too, so travelling re-asks the
+    // visible rows for the window it landed on.
+    LaunchedEffect(listState, channels, windowStartMs) {
+        snapshotFlow {
+            val visible = listState.layoutInfo.visibleItemsInfo
+            if (visible.isEmpty()) 0 to -1 else visible.first().index to visible.last().index
+        }
+            .distinctUntilChanged()
+            .collectLatest { (firstVisible, lastVisible) ->
+                delay(SCROLL_SETTLE_MS)
+                val window = GuideEpgPrefetchPolicy
+                    .windowFor(firstVisible = firstVisible, lastVisible = lastVisible, size = channels.size)
+                    .mapNotNull { channels.getOrNull(it)?.contentId }
+                if (window.isNotEmpty()) onNeedProgrammes(window)
+            }
+    }
     val canTravelBack = windowStartMs > GuideTimeTravel.earliestAnchorMs(nowMs, catchUpDays)
 
     // Travelling re-lays the whole lane, so the viewer's horizontal position within the OLD window
@@ -180,9 +219,8 @@ fun LiveGuideGrid(
             }
         }
 
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
             items(channels, key = { it.contentId }) { channel ->
-                LaunchedEffect(channel.contentId) { onNeedProgrammes(channel.contentId) }
                 GuideRow(
                     channel = channel,
                     isCurrent = channel.contentId == currentContentId,

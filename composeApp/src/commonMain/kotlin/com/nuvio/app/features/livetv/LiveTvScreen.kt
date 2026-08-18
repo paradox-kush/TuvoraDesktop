@@ -62,6 +62,7 @@ import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
 import com.nuvio.app.features.iptv.CatchUpDialectWalk
 import com.nuvio.app.features.iptv.CatchUpPlayback
+import com.nuvio.app.features.iptv.TileEpgQueue
 import com.nuvio.app.features.iptv.XtreamCatchUp
 import com.nuvio.app.features.iptv.XtreamProgram
 import com.nuvio.app.core.analytics.Breadcrumbs
@@ -400,9 +401,36 @@ fun LiveTvScreen(
             GuideWindowSource.Source.NONE -> programmes.remove(contentId)
         }
     }
-    val onNeedProgrammes: (String) -> Unit = { contentId ->
-        if (requestedProgrammes.add("$contentId@$guideAnchorMs")) {
-            scope.launch { loadWindow(contentId) }
+    /**
+     * Fetch now/next for a SETTLED window of channels ([GuideEpgPrefetchPolicy]).
+     *
+     * Two guards, because neither alone was enough:
+     *  - `requestedProgrammes` stamps once per (channel, window), so a settle overlapping the
+     *    previous one costs nothing.
+     *  - [TileEpgQueue] is the same bounded, newest-first backlog the hub tiles run on, so even a
+     *    settle storm can never put more than two requests on the panel at once. An evicted entry
+     *    releases its stamp, so a revisit fetches it after all.
+     *
+     * [contentIds] arrives in resolve order and the queue is newest-first, so it is enqueued
+     * REVERSED — the row that should resolve soonest has to end up at the FRONT of the backlog.
+     */
+    val onNeedProgrammes: (List<String>) -> Unit = { contentIds ->
+        val anchorMs = guideAnchorMs
+        for (contentId in contentIds.asReversed()) {
+            val windowKey = "$contentId@$anchorMs"
+            if (requestedProgrammes.add(windowKey)) {
+                TileEpgQueue.enqueue(
+                    key = "guide:$windowKey",
+                    onEvicted = { requestedProgrammes.remove(windowKey) },
+                ) {
+                    // The queue owns ADMISSION only; the work itself runs on the composition
+                    // scope so the guide's bookkeeping (`historyShownWindows`, `programmes`)
+                    // stays confined to one dispatcher. Joining keeps the queue's two-worker
+                    // ceiling meaningful, and a launch on a cancelled scope joins instantly, so
+                    // leaving the screen never wedges it.
+                    scope.launch { loadWindow(contentId) }.join()
+                }
+            }
         }
     }
     // The FOCUSED channel — and only it — gets its full history pulled. A page of rows each
@@ -414,7 +442,7 @@ fun LiveTvScreen(
     // moment of entry) and the feature looks unimplemented. A fetch that DID land is stamped, so
     // this costs a DB read per travel step and no network at all (CatchUpEpgPolicy.shouldFetch).
     LaunchedEffect(currentContentId, guideAnchorMs) {
-        onNeedProgrammes(currentContentId)
+        onNeedProgrammes(listOf(currentContentId))
         LiveTvData.ensureHistory(currentContentId)
         requestedProgrammes.remove("$currentContentId@$guideAnchorMs")
         loadWindow(currentContentId)
