@@ -231,6 +231,14 @@ internal object EpgMirrorRepository {
                     }
                     EpgMirrorDb.commitProgrammesRefresh()
                     log.i { "mirror sync: $stored programmes for ${covered.size} channels from $chosen" }
+                    EpgTelemetry.ingestFinished(
+                        source = EpgTelemetry.Source.MIRROR,
+                        outcome = if (stored > 0) EpgTelemetry.Outcome.OK else EpgTelemetry.Outcome.EMPTY,
+                        programmes = stored,
+                        channels = mappedIds.size,
+                        channelsCovered = covered.size,
+                        durationMs = TraktPlatformClock.nowEpochMs() - now,
+                    )
                 }
             }
 
@@ -238,6 +246,11 @@ internal object EpgMirrorRepository {
             EpgMirrorDb.setMeta(META_SYNCED_AT, now.toString())
         } catch (t: Throwable) {
             log.w(t) { "mirror sync failed" }
+            EpgTelemetry.ingestFinished(
+                source = EpgTelemetry.Source.MIRROR,
+                outcome = EpgTelemetry.Outcome.ERROR,
+                errorClass = t::class.simpleName,
+            )
         } finally {
             syncMutex.unlock()
         }
@@ -290,6 +303,7 @@ internal object EpgMirrorRepository {
         val index = EpgChannelIndex.build(pairs)
 
         for (acc in due) {
+            val matchStartedMs = TraktPlatformClock.nowEpochMs()
             EpgMirrorDb.setMeta(attemptAtKey(acc.id), nowMs.toString())
             val channels = runCatching { XtreamSearchIndex.liveChannelsFor(acc) }.getOrDefault(emptyList())
             // Empty local index (account not ingested yet): attempt stamped, mappedAt not —
@@ -304,6 +318,14 @@ internal object EpgMirrorRepository {
             // Stamped even at zero hits: the run COMPLETED against this index.
             EpgMirrorDb.setMeta(mappedGenKey(acc.id), generation.ifEmpty { NO_GENERATION })
             log.i { "mapped ${mappings.size}/${channels.size} channels for ${acc.name}" }
+            // The match rate is what "my EPG stopped working" almost always turns out to be —
+            // it collapses when a provider renumbers its catalog, and we have never been able
+            // to see it. No account name or host here: counts only.
+            EpgTelemetry.mappingFinished(
+                matched = mappings.size,
+                channels = channels.size,
+                durationMs = TraktPlatformClock.nowEpochMs() - matchStartedMs,
+            )
         }
     }
 

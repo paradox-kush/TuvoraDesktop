@@ -5,6 +5,7 @@ import com.nuvio.app.features.addons.httpStreamLines
 import com.nuvio.app.features.iptv.XtreamAccount
 import com.nuvio.app.features.iptv.XtreamProgram
 import com.nuvio.app.features.iptv.content.EpgProgrammeRow
+import com.nuvio.app.features.epg.EpgTelemetry
 import com.nuvio.app.features.iptv.content.IptvContentDb
 import com.nuvio.app.features.trakt.TraktPlatformClock
 import kotlinx.coroutines.runBlocking
@@ -61,12 +62,20 @@ object XmltvClient {
      * open element are ever held; the 50-100 MB body is never fully in RAM.
      */
     internal suspend fun refresh(acc: XtreamAccount, source: EpgSource): Result<Int> = runCatching {
+        val startedAtMs = TraktPlatformClock.nowEpochMs()
         // The allow-set: normalized tvg-ids of THIS playlist's channels. If the playlist has none,
         // there is nothing an EPG could attach to, so skip the (expensive) download entirely.
         val allow = IptvContentDb.distinctTvgIds(acc.id).map { normalizeChannelId(it) }.toHashSet()
         if (allow.isEmpty()) {
             IptvContentDb.beginEpg(acc.id)
             IptvContentDb.finishEpg(acc.id, 0)
+            // SKIPPED, not ERROR: "this playlist has no tvg-ids" is a different support answer
+            // from "the guide failed to download", and on screen they look identical.
+            EpgTelemetry.ingestFinished(
+                source = EpgTelemetry.Source.PLAYLIST_XMLTV,
+                outcome = EpgTelemetry.Outcome.SKIPPED,
+                durationMs = TraktPlatformClock.nowEpochMs() - startedAtMs,
+            )
             return@runCatching 0
         }
 
@@ -91,8 +100,24 @@ object XmltvClient {
         collector.finish()
         IptvContentDb.finishEpg(acc.id, collector.count)
         log.i { "XMLTV ingest done acc=${acc.id} src=${source.kind} programmes=${collector.count} channels=${allow.size}" }
+        EpgTelemetry.ingestFinished(
+            source = EpgTelemetry.Source.PLAYLIST_XMLTV,
+            outcome = if (collector.count > 0) EpgTelemetry.Outcome.OK else EpgTelemetry.Outcome.EMPTY,
+            programmes = collector.count,
+            channels = allow.size,
+            channelsCovered = collector.channelsCovered,
+            durationMs = TraktPlatformClock.nowEpochMs() - startedAtMs,
+        )
         collector.count
-    }.onFailure { log.w(it) { "XMLTV ingest failed for ${acc.id}" } }
+    }.onFailure {
+        log.w(it) { "XMLTV ingest failed for ${acc.id}" }
+        EpgTelemetry.ingestFinished(
+            source = EpgTelemetry.Source.PLAYLIST_XMLTV,
+            outcome = EpgTelemetry.Outcome.ERROR,
+            // Class only — a panel's message routinely quotes the request URL, credentials included.
+            errorClass = it::class.simpleName,
+        )
+    }
 
     /**
      * now/next for one channel: the currently-airing programme + the following one, read from the
@@ -125,9 +150,14 @@ object XmltvClient {
 
     private class EpgCollector(private val playlistId: String) {
         private val buf = ArrayList<EpgProgrammeRow>(CHUNK)
+        private val covered = HashSet<String>()
         var count = 0; private set
 
+        /** Distinct channels that actually got rows — coverage, which every EPG report is about. */
+        val channelsCovered: Int get() = covered.size
+
         fun add(p: XmltvProgramme) {
+            covered.add(normalizeChannelId(p.channelId))
             // Store the NORMALIZED channel id so the now/next lookup (which normalizes the M3U tvg-id)
             // matches regardless of the two sources' casing/spacing.
             buf.add(EpgProgrammeRow(normalizeChannelId(p.channelId), p.startMs, p.endMs, p.title, p.desc))
