@@ -108,6 +108,12 @@ object XmltvClient {
             channelsCovered = collector.channelsCovered,
             durationMs = TraktPlatformClock.nowEpochMs() - startedAtMs,
         )
+        // A guide just landed, so every "this channel had nothing" verdict taken before it is
+        // stale. Observed on the emulator (2026-08-18): two tiles asked 1s apart on a cold
+        // playlist — the later one joined the in-flight ingest and got its programmes, the earlier
+        // one checked an empty table, answered n=0, and the cooldown then pinned it on "No
+        // information" for a further minute with the data already on disk beside it.
+        com.nuvio.app.features.iptv.XtreamHubRepository.onGuideDataChanged()
         collector.count
     }.onFailure {
         log.w(it) { "XMLTV ingest failed for ${acc.id}" }

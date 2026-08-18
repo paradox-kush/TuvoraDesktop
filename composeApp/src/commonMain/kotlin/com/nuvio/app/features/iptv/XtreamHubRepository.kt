@@ -522,6 +522,25 @@ object XtreamHubRepository {
      * ever asks for what a MAG shows). Newest-first + a hard cap keeps the on-screen tiles at the
      * front; an evicted tile releases its once-only mark so a revisit still fetches it.
      */
+    /**
+     * New guide data has landed (an XMLTV ingest or a mirror sync finished).
+     *
+     * Both the once-only mark and the queue's cooldown are verdicts about a world that no longer
+     * exists, and the once-only mark is the binding one: a tile that asked before the guide
+     * arrived answered empty, and `epgFetched` then refused to ask again for the rest of the
+     * session — the data sitting on disk beside it. Measured on the emulator (2026-08-18): on a
+     * cold playlist two tiles asked 1s apart, the later one joined the in-flight ingest and got
+     * its programmes, the earlier one was stuck on "No information" through a tab switch.
+     *
+     * Clearing both means the next time a tile is asked for it actually resolves. It does not by
+     * itself repaint a tile already on screen — that needs the row to be asked again — so a
+     * visible self-heal is still owed.
+     */
+    fun onGuideDataChanged() {
+        epgFetched.clear()
+        TileEpgQueue.invalidate()
+    }
+
     fun ensureEpg(contentId: String) {
         if (!epgFetched.add(contentId)) return
         val parsed = XtreamItemRegistry.parseId(contentId) ?: return

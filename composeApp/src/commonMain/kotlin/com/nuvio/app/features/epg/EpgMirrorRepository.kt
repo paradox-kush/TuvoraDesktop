@@ -239,6 +239,10 @@ internal object EpgMirrorRepository {
                         channelsCovered = covered.size,
                         durationMs = TraktPlatformClock.nowEpochMs() - now,
                     )
+                    // Same reason as the XMLTV lane: programmes just landed, so any "nothing for
+                    // this channel" verdict taken before them is stale and must not hold a tile
+                    // empty for the rest of its cooldown.
+                    com.nuvio.app.features.iptv.XtreamHubRepository.onGuideDataChanged()
                 }
             }
 
