@@ -48,21 +48,33 @@ internal class TileEpgBacklog(private val cap: Int) {
  */
 internal object TileEpgQueue {
 
-    private class Entry(val fetch: suspend () -> Unit, val onEvicted: () -> Unit)
+    private class Entry(
+        val fetch: suspend () -> Boolean,
+        val onEvicted: () -> Unit,
+        val generation: Int,
+    )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val lock = SynchronizedObject()
     private val backlog = TileEpgBacklog(BACKLOG_CAP)
     private val entries = HashMap<String, Entry>()
+    private val admission = TileEpgAdmission()
     private var workers = 0
 
     /**
      * Queues [fetch] for [key], newest first. If the backlog overflows, the evicted (oldest)
      * entry's [onEvicted] runs so its caller can forget it was ever requested.
+     *
+     * [fetch] returns whether the channel actually answered. `false` starts a cooldown, so a
+     * channel the panel has no guide for is not re-asked on every scroll past — see
+     * [TileEpgAdmission]. A request refused by an active cooldown is treated exactly like an
+     * eviction: the caller releases its once-only guard, so a revisit after the cooldown fetches
+     * it after all.
      */
-    fun enqueue(key: String, onEvicted: () -> Unit, fetch: suspend () -> Unit) {
+    fun enqueue(key: String, onEvicted: () -> Unit, fetch: suspend () -> Boolean) {
         val evicted = synchronized(lock) {
-            entries[key] = Entry(fetch, onEvicted)
+            if (!admission.admits(key, nowMs())) return@synchronized Entry(fetch, onEvicted, 0)
+            entries[key] = Entry(fetch, onEvicted, admission.currentGeneration)
             val out = backlog.addFront(key)?.let { entries.remove(it) }
             repeat(WORKERS - workers) {
                 workers++
@@ -73,20 +85,49 @@ internal object TileEpgQueue {
         evicted?.onEvicted?.invoke()
     }
 
+    /**
+     * The world this backlog was built for is gone — a playlist switch, an account edit, a rebuilt
+     * channel mapping. Retires everything queued rather than letting it drain into a screen that
+     * moved on, and releases each caller's guard so the new world can ask for what it needs.
+     */
+    fun invalidate() {
+        val orphaned = synchronized(lock) {
+            admission.invalidate()
+            val all = entries.values.toList()
+            entries.clear()
+            while (backlog.next() != null) { /* drain the ordering, entries are already gone */ }
+            all
+        }
+        orphaned.forEach { it.onEvicted() }
+    }
+
+    private fun nowMs(): Long = com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs()
+
     private suspend fun drain() {
         while (true) {
-            val entry = synchronized(lock) {
+            val next = synchronized(lock) {
                 val key = backlog.next()
                 val e = key?.let { entries.remove(it) }
                 if (e == null) {
                     workers--
                     return
                 }
-                e
+                key to e
+            }
+            val (key, entry) = next
+            // Queued for a world that no longer exists (playlist switched while this waited):
+            // release the caller's guard and move on rather than spending a request on it.
+            if (!synchronized(lock) { admission.accepts(entry.generation) }) {
+                entry.onEvicted()
+                continue
             }
             // Failures are the fetch's own business (ensureEpg already swallows them); a throw
-            // here must not kill the worker on Kotlin/Native (unhandled launch = SIGABRT).
-            runCatching { entry.fetch() }
+            // here must not kill the worker on Kotlin/Native (unhandled launch = SIGABRT). A throw
+            // is treated as "did not answer", so a panel erroring on every request cools down too.
+            val answered = runCatching { entry.fetch() }.getOrDefault(false)
+            synchronized(lock) {
+                if (answered) admission.recordAnswered(key) else admission.recordEmpty(key, nowMs())
+            }
         }
     }
 

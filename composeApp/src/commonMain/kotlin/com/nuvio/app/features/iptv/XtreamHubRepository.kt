@@ -561,13 +561,16 @@ object XtreamHubRepository {
             com.nuvio.app.core.diag.HubTrace.log("tileEpg", "fetched") {
                 "id=$contentId took=${com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs() - t0}ms n=${listings.size}"
             }
-            if (listings.isEmpty()) return@enqueue
+            // The return value is the queue's cooldown signal: a channel no rung could answer for
+            // must not be re-asked on every scroll past (TileEpgAdmission).
+            if (listings.isEmpty()) return@enqueue false
             val nowIndex = listings.indexOfFirst { it.nowPlaying }.takeIf { it >= 0 } ?: 0
             val now = listings.getOrNull(nowIndex)?.title?.ifBlank { null }
             val next = listings.getOrNull(nowIndex + 1)?.title?.ifBlank { null }
             if (now != null || next != null) {
                 _epg.update { it + (contentId to ChannelEpg(now = now, next = next)) }
             }
+            true
         }
     }
 

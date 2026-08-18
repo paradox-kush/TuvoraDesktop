@@ -429,6 +429,9 @@ fun LiveTvScreen(
                     // ceiling meaningful, and a launch on a cancelled scope joins instantly, so
                     // leaving the screen never wedges it.
                     scope.launch { loadWindow(contentId) }.join()
+                    // Did any rung answer for this row? Drives the queue's per-channel cooldown,
+                    // so a channel the panel has no guide for stops being re-asked every settle.
+                    programmes[contentId]?.isNotEmpty() == true
                 }
             }
         }
