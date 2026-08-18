@@ -72,9 +72,16 @@ object XmltvClient {
 
         IptvContentDb.beginEpg(acc.id)
         val collector = EpgCollector(acc.id)
+        // Bounded on the way IN ([XmltvIngestWindow]), not cleaned up afterwards: a feed carrying a
+        // week of schedule for thousands of channels must never reach the disk in the first place
+        // on a 1 GB box. The parse is streaming, so a refused row costs nothing beyond the parse
+        // it already did.
+        val nowMs = TraktPlatformClock.nowEpochMs()
         val parser = XmltvStreamingParser(
             keepChannelIds = allow,
-            onProgramme = { p -> collector.add(p) },
+            onProgramme = { p ->
+                if (XmltvIngestWindow.keeps(p.startMs, p.endMs, nowMs)) collector.add(p)
+            },
         )
         streamGuideLines(source, acc.userAgent(), acc.dnsProvider) { line ->
             parser.feed(line)
