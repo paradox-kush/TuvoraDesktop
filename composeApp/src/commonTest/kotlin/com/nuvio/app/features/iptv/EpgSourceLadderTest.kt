@@ -216,42 +216,66 @@ class EpgSourceLadderTest {
     //
     // epg_mapping counts what the MIRROR could match and says nothing about the panel's own EPG,
     // so "13% matched" was being read as "only 13% of my channels have a guide" when the two are
-    // independent and overlapping. epg_resolve reports what each channel actually resolved to —
-    // but only once the sample means something, and only once per account, or a long browse turns
-    // into a stream of events.
+    // independent and overlapping. epg_resolve reports what each channel actually resolved to.
+    //
+    // The floor was 50 on a guess and the event never fired once in the field; these pin it to a
+    // measured session instead.
 
     private fun tally(manual: Int = 0, provider: Int = 0, mirror: Int = 0, none: Int = 0) =
         EpgSourceLadder.Tally(manual, provider, mirror, none)
 
     @Test
-    fun `a tiny sample is not reported`() {
-        // Three channels resolving MIRROR is not "100% mirror coverage".
-        assertFalse(EpgSourceLadder.shouldReport(tally(mirror = 3), alreadyReported = false))
+    fun `a real browsing session reports`() {
+        // The session that caught the bad threshold: an S24 resolved 19 channels and stopped.
+        // At the old floor of 50 this reported nothing at all.
+        val realSession = tally(provider = 6, mirror = 3, none = 10)
+        assertEquals(19, realSession.total)
+        assertTrue(
+            EpgSourceLadder.shouldReport(realSession, lastReportedTotal = 0),
+            "a normal browse must produce a report, or the event is decorative",
+        )
     }
 
     @Test
-    fun `the sample threshold is counted across every source - not just the hits`() {
+    fun `a degenerate sample is still refused`() {
+        // Three channels resolving MIRROR is not "100% mirror coverage".
+        assertFalse(EpgSourceLadder.shouldReport(tally(mirror = 3), lastReportedTotal = 0))
+    }
+
+    @Test
+    fun `the floor counts every source - not just the hits`() {
         val allNone = tally(none = EpgSourceLadder.MIN_REPORT_SAMPLE)
         assertTrue(
-            EpgSourceLadder.shouldReport(allNone, alreadyReported = false),
+            EpgSourceLadder.shouldReport(allNone, lastReportedTotal = 0),
             "a playlist where nothing resolves is exactly the case worth reporting",
         )
     }
 
     @Test
-    fun `an account is reported once per session - not once per channel`() {
-        val big = tally(provider = 40, mirror = 20, none = 40)
-        assertTrue(EpgSourceLadder.shouldReport(big, alreadyReported = false))
-        assertFalse(EpgSourceLadder.shouldReport(big, alreadyReported = true))
+    fun `a report waits for the sample to double`() {
+        // Otherwise every extra channel in a long browse would be its own event.
+        assertFalse(EpgSourceLadder.shouldReport(tally(none = 19), lastReportedTotal = 10))
+        assertTrue(EpgSourceLadder.shouldReport(tally(none = 20), lastReportedTotal = 10))
     }
 
     @Test
-    fun `the memory tracks reporting per account`() {
+    fun `a long browse reports a handful of times - not hundreds`() {
+        var last = 0
+        var reports = 0
+        for (total in 1..1_000) {
+            val t = tally(none = total)
+            if (EpgSourceLadder.shouldReport(t, last)) { reports++; last = t.total }
+        }
+        assertTrue(reports in 2..12, "a thousand channels should yield a few samples, was $reports")
+    }
+
+    @Test
+    fun `the memory tracks the sample size per account`() {
         val memory = EpgSourceLadder.Memory()
-        assertFalse(memory.hasReported("acc"))
-        memory.markReported("acc")
-        assertTrue(memory.hasReported("acc"))
-        assertFalse(memory.hasReported("other"), "reporting one account must not silence another")
+        assertEquals(0, memory.lastReportedTotal("acc"))
+        memory.markReported("acc", 19)
+        assertEquals(19, memory.lastReportedTotal("acc"))
+        assertEquals(0, memory.lastReportedTotal("other"), "one account must not silence another")
     }
 
     @Test
@@ -259,9 +283,9 @@ class EpgSourceLadderTest {
         // A rebuilt mapping changes the answer, so the previously-reported split is stale.
         val memory = EpgSourceLadder.Memory()
         memory.remember("acc", 1, EpgSourceLadder.Source.MIRROR)
-        memory.markReported("acc")
+        memory.markReported("acc", 40)
         memory.forgetAccount("acc")
-        assertFalse(memory.hasReported("acc"))
+        assertEquals(0, memory.lastReportedTotal("acc"))
     }
 
     // --- the sanity gate ------------------------------------------------------------------------

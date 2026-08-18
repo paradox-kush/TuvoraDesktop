@@ -131,8 +131,8 @@ object EpgSourceLadder {
         // counts what the MIRROR could match; this counts what each channel RESOLVED to, so the
         // panel's own coverage finally becomes visible.
         val tally = memory.tally(accountId)
-        if (shouldReport(tally, memory.hasReported(accountId))) {
-            memory.markReported(accountId)
+        if (shouldReport(tally, memory.lastReportedTotal(accountId))) {
+            memory.markReported(accountId, tally.total)
             com.nuvio.app.features.epg.EpgTelemetry.resolveTallied(
                 manual = tally.manual,
                 provider = tally.provider,
@@ -149,21 +149,38 @@ object EpgSourceLadder {
     /**
      * Resolutions an account needs before its tally is worth reporting.
      *
-     * A settled guide window is ~17 channels and a hub screen ~10, so this is a few screens'
-     * worth — enough that the ratio means something, small enough that a viewer who opens Live TV
-     * once still reports. Below it the split is noise (three channels resolving MIRROR is not
-     * "100% mirror coverage").
+     * Sized from a real session, not from a guess: the first version used 50 on the reasoning that
+     * a settled guide window is ~17 channels so "a few screens" was fair. A real browse on an S24
+     * (2026-08-18) resolved **19 channels and stopped**, so the event never fired at all. A
+     * threshold that rarely trips reports nothing, which is worse than a slightly noisy ratio.
+     *
+     * Ten is roughly one screenful — enough to exclude the degenerate samples this guards against
+     * (three channels resolving MIRROR is not "100% mirror coverage") and low enough that opening
+     * Live TV once actually reports. Event volume is not this constant's job; [REPORT_GROWTH] is.
      */
-    const val MIN_REPORT_SAMPLE = 50
+    const val MIN_REPORT_SAMPLE = 10
 
     /**
-     * Whether an account's tally should be reported now: a meaningful sample, and only once per
-     * account per session so a long browse cannot turn into a stream of events.
+     * How much the sample must grow before an account reports again.
      *
-     * Pure so the threshold is pinned by tests rather than buried in the resolver.
+     * Reporting once per session under-serves a long browse — the one event would describe the
+     * first screenful and ignore the next two hundred channels. Doubling gives a handful of
+     * progressively better samples per session (10, 20, 40, 80…) rather than one weak one or a
+     * stream of near-identical ones.
      */
-    fun shouldReport(tally: Tally, alreadyReported: Boolean): Boolean =
-        !alreadyReported && tally.total >= MIN_REPORT_SAMPLE
+    const val REPORT_GROWTH = 2
+
+    /**
+     * Whether an account's tally should be reported now.
+     *
+     * [lastReportedTotal] is 0 when the account has never reported. Pure so both the floor and the
+     * growth rule are pinned by tests rather than buried in the resolver.
+     */
+    fun shouldReport(tally: Tally, lastReportedTotal: Int): Boolean {
+        if (tally.total < MIN_REPORT_SAMPLE) return false
+        if (lastReportedTotal <= 0) return true
+        return tally.total >= lastReportedTotal * REPORT_GROWTH
+    }
 
     /** Per-account counts of which rung is feeding the guide — the settings coverage line. */
     data class Tally(val manual: Int, val provider: Int, val mirror: Int, val none: Int) {
@@ -192,20 +209,20 @@ object EpgSourceLadder {
             sources[key] = source
         }
 
-        /** Accounts whose coverage split has already been reported this session. */
-        private val reported = mutableSetOf<String>()
+        /** Sample size at each account's last report; absent = never reported. */
+        private val reportedAt = mutableMapOf<String, Int>()
 
-        fun hasReported(accountId: String): Boolean = accountId in reported
+        fun lastReportedTotal(accountId: String): Int = reportedAt[accountId] ?: 0
 
-        fun markReported(accountId: String) {
-            reported.add(accountId)
+        fun markReported(accountId: String, total: Int) {
+            reportedAt[accountId] = total
         }
 
         /** The account's offset changed, or its mapping was rebuilt: measured sources are stale. */
         fun forgetAccount(accountId: String) {
             sources.keys.removeAll { it.startsWith("$accountId|") }
             // The split that was reported described the old mapping; let the new one be reported.
-            reported.remove(accountId)
+            reportedAt.remove(accountId)
         }
 
         fun tally(accountId: String): Tally {
