@@ -146,7 +146,7 @@ private suspend fun executeTextRequest(
     desktopHttpClient.newCall(request).execute().use { response ->
         val payload = readResponseBody(response.body)
         if (!response.isSuccessful) {
-            error(runBlocking { getString(Res.string.network_request_failed_http, response.code) })
+            throw HttpStatusException(response.code, runBlocking { getString(Res.string.network_request_failed_http, response.code) })
         }
         if (payload.isBlank()) {
             throw EmptyResponseBodyException(runBlocking { getString(Res.string.network_empty_response_body) })

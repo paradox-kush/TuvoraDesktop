@@ -18,8 +18,9 @@ data class XtreamHubUiState(
     val categories: List<XtreamHubCategory> = emptyList(),
     val loadingCategories: Boolean = false,
     // Non-null when the category-list fetch failed and there was no cache to fall back on — the UI
-    // shows this instead of spinning forever (dead portal / Cloudflare block / timeout).
-    val loadError: Boolean = false,
+    // shows this instead of spinning forever (dead portal / Cloudflare block / timeout). Carries
+    // WHICH of those it was, so the card can stop telling every viewer the portal is down.
+    val loadError: IptvLoadFailurePolicy.Failure? = null,
 )
 
 enum class XtreamHubSection { LIVE, MOVIES, SERIES }

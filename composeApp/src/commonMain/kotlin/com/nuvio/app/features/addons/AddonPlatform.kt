@@ -52,6 +52,19 @@ class ResponseTooLargeException(message: String) : IllegalStateException(message
 class EmptyResponseBodyException(message: String) : IllegalStateException(message)
 
 /**
+ * The server answered with a non-2xx status.
+ *
+ * Carries the [status] so callers can tell the failure classes apart WITHOUT parsing a localized
+ * message. That distinction matters most for IPTV panels behind a WAF: a 403/429 means the
+ * provider's edge refused us and the portal itself is perfectly healthy, which is the opposite of
+ * the "portal is down" story a bare failure tells. See IptvLoadFailurePolicy.
+ *
+ * Stays an [IllegalStateException] with the SAME message the platform helpers always threw, so
+ * every existing `runCatching`/catch site behaves exactly as before.
+ */
+class HttpStatusException(val status: Int, message: String) : IllegalStateException(message)
+
+/**
  * GETs [url] as text. [dnsProvider] (P3) selects a per-playlist DNS-over-HTTPS resolver on Android
  * (values: system|cloudflare|google|mullvad|quad9|dnssb; null/"system" = the platform resolver).
  * iOS ignores it — there is no per-app DNS hook on URLSession/Ktor Darwin, so it's a no-op there.

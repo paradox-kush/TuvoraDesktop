@@ -196,15 +196,15 @@ object XtreamHubRepository {
     private fun showSection(accountId: String, section: XtreamHubSection) {
         if (accountFor(accountId)?.typeEnabled(section.contentKey) == false) {
             // Disabled content type: never fetched, nothing shown.
-            _uiState.update { it.copy(categories = emptyList(), loadingCategories = false, loadError = false) }
+            _uiState.update { it.copy(categories = emptyList(), loadingCategories = false, loadError = null) }
             return
         }
         val cached = cachedCategories(accountId, section)
         if (cached != null) {
-            _uiState.update { it.copy(categories = cached, loadingCategories = false, loadError = false) }
+            _uiState.update { it.copy(categories = cached, loadingCategories = false, loadError = null) }
             return
         }
-        _uiState.update { it.copy(categories = emptyList(), loadingCategories = true, loadError = false) }
+        _uiState.update { it.copy(categories = emptyList(), loadingCategories = true, loadError = null) }
         scope.launch { fetchCategoryList(accountId, section) }
     }
 
@@ -226,22 +226,30 @@ object XtreamHubRepository {
                     next
                 }
                 if (isCurrent(accountId, section)) {
-                    _uiState.update { it.copy(categories = merged, loadingCategories = false, loadError = false) }
+                    _uiState.update { it.copy(categories = merged, loadingCategories = false, loadError = null) }
                 }
                 return
             }
             XtreamTmdbResolver.warmUp(listOf(account))
         }
         val client = IptvClient.forAccount(account)   // xtream -> XtreamClient, m3u_url -> M3UClient
-        val fresh = when (section) {
+        val outcome = when (section) {
             XtreamHubSection.LIVE -> client.liveCategories(account)
             XtreamHubSection.MOVIES -> client.vodCategories(account)
             XtreamHubSection.SERIES -> client.seriesCategories(account)
-        }.getOrNull() ?: run {
+        }
+        val fresh = outcome.getOrNull() ?: run {
             // Failed fetch: keep any warm cache, but if there's none the section would otherwise spin
             // forever — surface an error so the user knows the portal is unreachable, not just slow.
+            // The throwable is CLASSIFIED rather than discarded: a WAF block and a portal that
+            // refused this device are both reachable portals, and saying otherwise sends the viewer
+            // to debug their provider's uptime instead of the thing that is actually wrong.
             if (isCurrent(accountId, section) && cachedCategories(accountId, section) == null) {
-                _uiState.update { it.copy(loadingCategories = false, loadError = true) }
+                val failure = IptvLoadFailurePolicy.classify(
+                    outcome.exceptionOrNull(),
+                    host = IptvPanelGuard.panelOriginUrlOf(account),
+                )
+                _uiState.update { it.copy(loadingCategories = false, loadError = failure) }
             }
             return
         }
@@ -256,7 +264,7 @@ object XtreamHubRepository {
             next
         }
         if (isCurrent(accountId, section)) {
-            _uiState.update { it.copy(categories = merged, loadingCategories = false, loadError = false) }
+            _uiState.update { it.copy(categories = merged, loadingCategories = false, loadError = null) }
         }
     }
 

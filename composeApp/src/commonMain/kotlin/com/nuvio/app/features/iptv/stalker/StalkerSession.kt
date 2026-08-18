@@ -46,6 +46,16 @@ internal open class StalkerPortalRefusedException(message: String) : IllegalStat
 internal class StalkerDeviceConflictException(message: String) : StalkerPortalRefusedException(message)
 
 /**
+ * The portal is reachable and our identity is fine — it just will not serve THIS session now. A
+ * Stalker line is single-device: another box holding the MAC evicts us, and a re-auth that failed
+ * to win it back puts us in the cooldown that stops the two devices stampeding each other.
+ *
+ * Typed because it is the one browse failure with a user-facing explanation that is neither "the
+ * portal is down" nor "your MAC is wrong" — see IptvLoadFailurePolicy.
+ */
+internal class StalkerSessionUnavailableException(message: String) : IllegalStateException(message)
+
+/**
  * A stateful Stalker-portal (MAG/Ministra) session for ONE playlist. Owns endpoint probing (the user
  * enters just a base portal URL; we try [StalkerProtocol.ENDPOINT_CANDIDATES] in order and remember
  * the first that handshakes), the auth token from `handshake` + the device identity from `get_profile`,
@@ -141,7 +151,7 @@ internal class StalkerSession(
         // portal to ban the IP. Fail fast for a short window instead; the next user action retries.
         val now = com.nuvio.app.features.streams.epochMs()
         if (lastFailedReauthAtMs != 0L && now - lastFailedReauthAtMs < REAUTH_COOLDOWN_MS) {
-            error("Stalker session for ${account.name} is held by another device — cooling down")
+            throw StalkerSessionUnavailableException("Stalker session for ${account.name} is held by another device — cooling down")
         }
         reauthenticate(staleToken)
         val retried = try {
@@ -151,7 +161,7 @@ internal class StalkerSession(
         }
         if (retried == null) {
             lastFailedReauthAtMs = now
-            error("Stalker portal returned no data for ${params["action"]} — the session is in use elsewhere")
+            throw StalkerSessionUnavailableException("Stalker portal returned no data for ${params["action"]} — the session is in use elsewhere")
         }
         lastFailedReauthAtMs = 0L
         return retried
@@ -195,14 +205,14 @@ internal class StalkerSession(
         if (!authFailure) throw first.exceptionOrNull() ?: error("Stalker stream failed")
         val now = com.nuvio.app.features.streams.epochMs()
         if (lastFailedReauthAtMs != 0L && now - lastFailedReauthAtMs < REAUTH_COOLDOWN_MS) {
-            error("Stalker session for ${account.name} is held by another device — cooling down")
+            throw StalkerSessionUnavailableException("Stalker session for ${account.name} is held by another device — cooling down")
         }
         reauthenticate(staleToken)
         onRestart()
         val retried = runCatching { rawRequestStream(params, onChunk) }
         if (retried.isFailure || !retried.getOrThrow()) {
             lastFailedReauthAtMs = now
-            error("Stalker portal returned no data for ${params["action"]} — the session is in use elsewhere")
+            throw StalkerSessionUnavailableException("Stalker portal returned no data for ${params["action"]} — the session is in use elsewhere")
         }
         lastFailedReauthAtMs = 0L
     }

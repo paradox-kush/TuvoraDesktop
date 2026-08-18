@@ -72,8 +72,11 @@ import nuvio.composeapp.generated.resources.compose_iptv_hub_empty_message
 import nuvio.composeapp.generated.resources.compose_iptv_hub_empty_title
 import nuvio.composeapp.generated.resources.compose_iptv_hub_epg_next
 import nuvio.composeapp.generated.resources.compose_iptv_hub_epg_no_information
+import nuvio.composeapp.generated.resources.compose_iptv_hub_blocked_message
+import nuvio.composeapp.generated.resources.compose_iptv_hub_blocked_title
 import nuvio.composeapp.generated.resources.compose_iptv_hub_error_message
 import nuvio.composeapp.generated.resources.compose_iptv_hub_error_title
+import nuvio.composeapp.generated.resources.compose_iptv_hub_refused_title
 import nuvio.composeapp.generated.resources.compose_iptv_hub_favorites
 import nuvio.composeapp.generated.resources.compose_iptv_hub_no_provider_message
 import nuvio.composeapp.generated.resources.compose_iptv_hub_no_provider_title
@@ -219,19 +222,40 @@ fun XtreamHubScreen(
                 onAddProvider = onAddProvider,
             )
 
+            val failure = state.loadError
             when {
                 state.loadingCategories -> XtreamHubSkeleton(
                     live = isLive,
                     sectionPadding = sectionPadding,
                 )
 
-                state.loadError -> XtreamHubMessageCard(
-                    title = stringResource(Res.string.compose_iptv_hub_error_title),
-                    message = stringResource(Res.string.compose_iptv_hub_error_message),
-                    actionLabel = stringResource(Res.string.action_retry),
-                    onAction = { XtreamHubRepository.retryCategories() },
-                    sectionPadding = sectionPadding,
-                )
+                failure != null -> {
+                    // A WAF block and a portal refusal are NOT "the portal is down" — say which.
+                    val title = when (failure.kind) {
+                        IptvLoadFailurePolicy.Kind.BLOCKED_BY_PROVIDER -> stringResource(Res.string.compose_iptv_hub_blocked_title)
+                        IptvLoadFailurePolicy.Kind.REFUSED -> stringResource(Res.string.compose_iptv_hub_refused_title)
+                        IptvLoadFailurePolicy.Kind.UNREACHABLE -> stringResource(Res.string.compose_iptv_hub_error_title)
+                    }
+                    val generic = stringResource(Res.string.compose_iptv_hub_error_message)
+                    val blocked = stringResource(Res.string.compose_iptv_hub_blocked_message, failure.status ?: 0)
+                    val message = when (failure.kind) {
+                        IptvLoadFailurePolicy.Kind.BLOCKED_BY_PROVIDER -> blocked
+                        // The portal's own reason, already worded with its remedy. A refusal that
+                        // arrived without text still beats spinning, so fall back to the generic.
+                        IptvLoadFailurePolicy.Kind.REFUSED -> failure.portalText ?: generic
+                        IptvLoadFailurePolicy.Kind.UNREACHABLE -> generic
+                    }
+                    XtreamHubMessageCard(
+                        title = title,
+                        // The breadcrumb rides the message rather than a new card slot: it is then
+                        // guaranteed to be in the same screenshot as the error, and the shared
+                        // HomeEmptyStateCard vocabulary stays untouched.
+                        message = "$message\n\n${failure.detail}",
+                        actionLabel = stringResource(Res.string.action_retry),
+                        onAction = { XtreamHubRepository.retryCategories() },
+                        sectionPadding = sectionPadding,
+                    )
+                }
 
                 displayedCategories.isEmpty() -> XtreamHubMessageCard(
                     title = stringResource(Res.string.compose_iptv_hub_empty_title),
