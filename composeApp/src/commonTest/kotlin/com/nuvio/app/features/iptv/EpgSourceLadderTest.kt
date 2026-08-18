@@ -385,4 +385,57 @@ class EpgSourceLadderTest {
             "the retry's honest answer replaces the failure",
         )
     }
+
+    // ---- P1: the account's own guide, stored once and read from SQLite ------------------------
+    //
+    // The design always said EPG is ingested into SQLite and read from there. That was true for the
+    // mirror and M3U lanes and never for Xtream: resolveSource answered null for every Xtream
+    // playlist, so ensureEpg no-opped and the guide asked the panel once per channel, forever.
+
+    @Test
+    fun `the store outranks the per-channel ask`() = runBlocking {
+        var panelAsks = 0
+        val r = EpgSourceLadder.resolve(
+            nowMs = now,
+            store = { saneRows() },
+            provider = { panelAsks++; saneRows() },
+            mirror = { emptyList() },
+        )
+        assertEquals(EpgSourceLadder.Source.STORE, r.source)
+        assertEquals(0, panelAsks, "a stored guide must cost zero panel requests")
+    }
+
+    @Test
+    fun `an empty store falls through to the panel`() = runBlocking {
+        val r = EpgSourceLadder.resolve(
+            nowMs = now,
+            store = { emptyList() },          // ingest has not run, or this channel is unmatched
+            provider = { saneRows() },
+            mirror = { emptyList() },
+        )
+        assertEquals(EpgSourceLadder.Source.PROVIDER, r.source, "no stored guide must not break the old path")
+    }
+
+    @Test
+    fun `a skewed store is gated exactly like the panel`() = runBlocking {
+        val r = EpgSourceLadder.resolve(
+            nowMs = now,
+            store = { wa12Rows() },         // same panel, same lie, cheaper transport
+            provider = { emptyList() },
+            mirror = { mirrorRows() },
+        )
+        assertEquals(EpgSourceLadder.Source.MIRROR, r.source, "the store is not trusted more than the panel")
+    }
+
+    @Test
+    fun `the tally counts store separately from provider`() {
+        val memory = EpgSourceLadder.Memory()
+        memory.remember("acct", 1, EpgSourceLadder.Source.STORE)
+        memory.remember("acct", 2, EpgSourceLadder.Source.STORE)
+        memory.remember("acct", 3, EpgSourceLadder.Source.PROVIDER)
+        val tally = memory.tally("acct")
+        assertEquals(2, tally.store, "zero-network resolutions are their own number")
+        assertEquals(1, tally.provider)
+        assertEquals(3, tally.total)
+    }
 }

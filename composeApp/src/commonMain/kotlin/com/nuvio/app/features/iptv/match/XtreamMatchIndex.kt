@@ -312,6 +312,40 @@ internal object XtreamMatchIndex {
      * lock short so concurrent probes interleave; meta row is written LAST so a crashed
      * rebuild reads as stale, not as complete.
      */
+    /**
+     * Every distinct `epg_channel_id` this provider's LIVE lineup carries — the allow-set for a
+     * whole-guide XMLTV ingest, so a guide covering thousands of channels only stores rows for ours.
+     *
+     * The Xtream counterpart of [IptvContentDb.distinctTvgIds]: M3U and Stalker lineups live in
+     * IptvContentDb, Xtream's lives here, and the ingest needs whichever one owns the account.
+     * Panels fill this field very unevenly (6% on Starshare, measured), so an empty result is a
+     * normal answer meaning "this panel cannot be matched by id" — not an error.
+     */
+    suspend fun liveEpgIds(provider: String): List<String> = mutex.withLock {
+        connection().prepare(
+            "SELECT DISTINCT epg_id FROM items WHERE provider = ? AND kind = ? " +
+                "AND epg_id IS NOT NULL AND epg_id <> ''"
+        ).use { st ->
+            st.bindText(1, provider); st.bindText(2, MatchKind.LIVE.slug)
+            val out = ArrayList<String>()
+            while (st.step()) if (!st.isNull(0)) out.add(st.getText(0))
+            out
+        }
+    }
+
+    /**
+     * One live channel's `epg_channel_id`, or null when the panel left it blank. The guide resolves
+     * by stream id but the stored guide is keyed by channel id, so this is the join between them.
+     */
+    suspend fun liveEpgIdFor(provider: String, sid: Int): String? = mutex.withLock {
+        connection().prepare(
+            "SELECT epg_id FROM items WHERE provider = ? AND kind = ? AND sid = ?"
+        ).use { st ->
+            st.bindText(1, provider); st.bindText(2, MatchKind.LIVE.slug); st.bindLong(3, sid.toLong())
+            if (st.step() && !st.isNull(0)) st.getText(0).takeIf { it.isNotBlank() } else null
+        }
+    }
+
     suspend fun rebuild(provider: String, kind: MatchKind, itemsIn: List<IndexedItem>) {
         val items = itemsIn.mapIndexed { i, raw -> if (raw.pos == i) raw else raw.copy(pos = i) }
         mutex.withLock {

@@ -77,7 +77,13 @@ object IptvRefreshScheduler {
             // Xtream/Stalker: invalidate the cached channel list so the next browse/search re-fetches,
             // and verify the panel is still reachable (cheap) so we only bump the timestamp on success.
             XtreamSearchIndex.invalidate(acc.id)
-            IptvClient.forAccount(acc).accountInfo(acc).isSuccess
+            val reachable = IptvClient.forAccount(acc).accountInfo(acc).isSuccess
+            // Refresh the account's own whole guide too. This branch used to be a bare reachability
+            // ping — the guide machinery existed and was never invoked for the panel types that
+            // dominate usage, so an Xtream playlist had no stored guide and every browse paid a
+            // per-channel request. No-ops for a panel that serves no xmltv.php.
+            if (reachable) runCatching { XmltvClient.ensureEpg(acc, force = true) }
+            reachable
         }
     }
 

@@ -555,6 +555,10 @@ object XtreamHubRepository {
         if (parsed.kind != XtreamKind.LIVE) return
         val streamId = parsed.id.toIntOrNull() ?: return
         val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == parsed.accountId } ?: return
+        // Warm this account's OWN whole guide (xmltv.php) so the store rung has something to serve
+        // and the per-channel asks stop. Fire-and-forget on the ingest's own scope, throttled by a
+        // 12h TTL inside — calling it per tile is cheap and idempotent.
+        com.nuvio.app.features.iptv.epg.XmltvClient.warm(account)
         com.nuvio.app.core.diag.HubTrace.log("tileEpg", "enqueue") { contentId }
         TileEpgQueue.enqueue(contentId, onEvicted = { epgFetched.remove(contentId) }) {
             val t0 = com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs()
@@ -573,6 +577,18 @@ object XtreamHubRepository {
                 streamId = streamId,
                 nowMs = t0,
                 manual = null,   // the manual-mapping seam — see [EpgSourceLadder.ManualResolver]
+                // The account's own guide, ingested once into SQLite. Zero network per channel —
+                // this is the rung that makes a guide fling cost nothing. Null-safe: an account
+                // with no stored guide (no xmltv.php, ingest not run yet) simply answers empty and
+                // the ladder falls through to the per-channel ask exactly as before.
+                store = {
+                    runCatching {
+                        val epgId = com.nuvio.app.features.iptv.match.XtreamMatchIndex
+                            .liveEpgIdFor(account.id, streamId)
+                        if (epgId.isNullOrBlank()) emptyList()
+                        else com.nuvio.app.features.iptv.epg.XmltvClient.nowNext(account, epgId)
+                    }.getOrDefault(emptyList())
+                },
                 // null = the ask FAILED. Collapsing that into emptyList() told the ladder
                 // "this panel has no EPG for this channel", which is a coverage claim a timeout
                 // cannot support — see EpgSourceLadder.Source.UNAVAILABLE.

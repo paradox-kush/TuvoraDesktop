@@ -2,12 +2,18 @@ package com.nuvio.app.features.iptv.epg
 
 import co.touchlab.kermit.Logger
 import com.nuvio.app.features.addons.httpStreamLines
+import com.nuvio.app.features.iptv.SOURCE_TYPE_XTREAM
 import com.nuvio.app.features.iptv.XtreamAccount
 import com.nuvio.app.features.iptv.XtreamProgram
 import com.nuvio.app.features.iptv.content.EpgProgrammeRow
 import com.nuvio.app.features.epg.EpgTelemetry
 import com.nuvio.app.features.iptv.content.IptvContentDb
+import com.nuvio.app.features.iptv.match.XtreamMatchIndex
 import com.nuvio.app.features.trakt.TraktPlatformClock
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -32,6 +38,18 @@ object XmltvClient {
     private const val CHUNK = 5_000
     /** EPG is refreshed on ingest and then roughly twice a day; older than this and a browse re-fetches. */
     private const val REFRESH_TTL_MS = 12L * 60 * 60 * 1000
+
+    /**
+     * The ingest's own scope. A whole-guide download outlives any screen that asks for it — the
+     * 2026-08-18 mirror bug was exactly this mistake (a screen's scope cancelled a 76-second sync,
+     * and the completion stamp is written last, so it repeated forever).
+     */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** Fire-and-forget [ensureEpg] on the ingest's own scope. Safe to call on every visit. */
+    fun warm(acc: XtreamAccount) {
+        scope.launch { runCatching { ensureEpg(acc) } }
+    }
 
     private val fetchLock = Mutex()
     private val fetching = mutableSetOf<String>()
@@ -65,7 +83,7 @@ object XmltvClient {
         val startedAtMs = TraktPlatformClock.nowEpochMs()
         // The allow-set: normalized tvg-ids of THIS playlist's channels. If the playlist has none,
         // there is nothing an EPG could attach to, so skip the (expensive) download entirely.
-        val allow = IptvContentDb.distinctTvgIds(acc.id).map { normalizeChannelId(it) }.toHashSet()
+        val allow = channelIdsFor(acc).map { normalizeChannelId(it) }.toHashSet()
         if (allow.isEmpty()) {
             IptvContentDb.beginEpg(acc.id)
             IptvContentDb.finishEpg(acc.id, 0)
@@ -138,12 +156,54 @@ object XmltvClient {
         return selectNowNext(rows, now)
     }
 
-    /** Resolve the EPG source for a playlist: explicit epgUrl wins, else the captured M3U url-tvg. */
+    /**
+     * This playlist's channel ids, from whichever store owns its lineup. Empty is a normal answer:
+     * a panel that leaves `epg_channel_id` blank cannot be matched by id at all (the name matcher
+     * is the answer there, not a bigger download).
+     */
+    private suspend fun channelIdsFor(acc: XtreamAccount): List<String> =
+        if (acc.sourceType == SOURCE_TYPE_XTREAM) XtreamMatchIndex.liveEpgIds(acc.id)
+        else IptvContentDb.distinctTvgIds(acc.id)
+
+    /**
+     * Resolve the EPG source for a playlist: an explicit epgUrl wins, then an Xtream account's own
+     * derived `xmltv.php`, then the captured M3U `url-tvg`.
+     *
+     * The derived rung is what makes the whole-guide lane real for Xtream. Before it, resolveSource
+     * answered null for every Xtream playlist — so ensureEpg no-opped, nothing was ever stored, and
+     * the guide had no choice but to ask the panel per channel forever. `xmltv.php` is the standard
+     * Xtream guide route (same creds and host as player_api.php); a panel that does not serve it
+     * fails the fetch once and the ladder falls through to the per-channel rung, i.e. old behaviour.
+     */
     internal suspend fun resolveSource(acc: XtreamAccount): EpgSource? {
         acc.epgUrl?.trim()?.takeIf { it.isNotEmpty() }?.let { return EpgSource(it, EpgSourceKind.EXPLICIT) }
+        derivedXmltvUrl(acc)?.let { return EpgSource(it, EpgSourceKind.XTREAM_DERIVED) }
         val tvg = IptvContentDb.ingestMeta(acc.id)?.epgUrl?.trim()?.takeIf { it.isNotEmpty() }
         return tvg?.let { EpgSource(it, EpgSourceKind.URL_TVG) }
     }
+
+    /**
+     * `{base}/xmltv.php?username=…&password=…` for an Xtream account, else null. Pure and internal
+     * so the URL shape is pinned by a test rather than by a live panel. Credentials are encoded —
+     * panels do issue passwords containing `&` and `+`.
+     */
+    internal fun derivedXmltvUrl(acc: XtreamAccount): String? {
+        if (acc.sourceType != SOURCE_TYPE_XTREAM) return null
+        val base = acc.baseUrl.trim().trimEnd('/').ifEmpty { return null }
+        if (acc.username.isBlank() || acc.password.isBlank()) return null
+        return "$base/xmltv.php?username=${acc.username.urlEncoded()}&password=${acc.password.urlEncoded()}"
+    }
+
+    private fun String.urlEncoded(): String = buildString(length) {
+        for (c in this@urlEncoded) {
+            if (c.isLetterOrDigit() || c in "-_.~") append(c)
+            else for (b in c.toString().encodeToByteArray()) {
+                append('%').append(HEX[(b.toInt() shr 4) and 0xF]).append(HEX[b.toInt() and 0xF])
+            }
+        }
+    }
+
+    private const val HEX = "0123456789ABCDEF"
 
     suspend fun clear(acc: XtreamAccount) = IptvContentDb.beginEpg(acc.id).also { IptvContentDb.finishEpg(acc.id, 0) }
 
@@ -189,7 +249,7 @@ object XmltvClient {
     private fun XtreamAccount.userAgent(): String = userAgent?.takeIf { it.isNotBlank() } ?: DEFAULT_USER_AGENT
 }
 
-enum class EpgSourceKind { EXPLICIT, URL_TVG }
+enum class EpgSourceKind { EXPLICIT, URL_TVG, XTREAM_DERIVED }
 
 /** A resolved EPG source: the URL plus where it came from (for logging/UX). */
 data class EpgSource(val url: String, val kind: EpgSourceKind)
