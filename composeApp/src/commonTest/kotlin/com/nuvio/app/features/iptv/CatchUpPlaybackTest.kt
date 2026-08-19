@@ -47,19 +47,6 @@ class CatchUpPlaybackTest {
     }
 
     /**
-     * Live-edge rejoin on foreground is right for a live channel and wrong for a recording: it
-     * would skip the viewer to the end of what they were part-way through.
-     */
-    @Test
-    fun `live edge rejoin is suppressed during a replay`() {
-        assertTrue(CatchUpPlayback.rejoinsLiveEdge(streamType = "live", isCatchUpPlayback = false))
-        assertFalse(CatchUpPlayback.rejoinsLiveEdge(streamType = "live", isCatchUpPlayback = true))
-        // A non-live stream never rejoined anything, flag or no flag.
-        assertFalse(CatchUpPlayback.rejoinsLiveEdge(streamType = null, isCatchUpPlayback = false))
-        assertFalse(CatchUpPlayback.rejoinsLiveEdge(streamType = "movie", isCatchUpPlayback = false))
-    }
-
-    /**
      * The freeze watchdog reports `live_playback_freeze` and reconnects by re-resolving. Armed
      * against a replay it would both pollute the freeze telemetry we are still reading and burn a
      * provider connection re-minting a URL that was never broken.

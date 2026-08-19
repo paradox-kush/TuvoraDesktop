@@ -74,7 +74,6 @@ import com.nuvio.app.R
 import com.nuvio.app.AppExitReporter
 import com.nuvio.app.core.contracts.MemoryPortAccess
 import com.nuvio.app.core.contracts.MemoryTier
-import com.nuvio.app.features.iptv.CatchUpPlayback
 import com.nuvio.app.features.streams.normalizeStreamType
 import `is`.xyz.mpv.BaseMPVView
 import `is`.xyz.mpv.MPV
@@ -205,7 +204,7 @@ actual fun PlatformPlayerSurface(
                 // surface return and zeroes the reported duration. Both are wrong for a
                 // recording: the first throws away the viewer's position, the second hides the
                 // timeline the replay actually has.
-                isLiveStream = CatchUpPlayback.rejoinsLiveEdge(streamType, isCatchUpPlayback),
+                isLiveStream = LivePlaybackRejoinPolicy.rejoinsLiveEdge(streamType, isCatchUpPlayback),
                 modifier = modifier,
                 playWhenReady = playWhenReady,
                 resizeMode = resizeMode,

@@ -4,6 +4,7 @@ import com.nuvio.app.core.contracts.SportsReplay
 
 import com.nuvio.app.features.iptv.CatchUpDialectWalk
 import com.nuvio.app.features.iptv.CatchUpPlayback
+import com.nuvio.app.features.player.LivePlaybackRejoinPolicy
 import com.nuvio.app.features.iptv.SOURCE_TYPE_STALKER
 import com.nuvio.app.features.iptv.XtreamAccount
 import com.nuvio.app.features.livetv.beginLaunchReplay
@@ -78,7 +79,7 @@ class SportsReplayCatchUpTest {
             "guide taps must not zap away a sports replay",
         )
         assertFalse(
-            CatchUpPlayback.rejoinsLiveEdge("live", isCatchUpPlayback),
+            LivePlaybackRejoinPolicy.rejoinsLiveEdge("live", isCatchUpPlayback),
             "foregrounding must not rejoin the live edge during a sports replay",
         )
         assertFalse(

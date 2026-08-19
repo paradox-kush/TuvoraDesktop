@@ -49,14 +49,6 @@ object CatchUpPlayback {
         sessionContentId == currentContentId
 
     /**
-     * Whether returning to the foreground should rejoin the live edge (a full reload) rather than
-     * simply unpausing. Right for live — a backgrounded live stream goes stale and its socket
-     * eventually drops. Wrong for a recording, where it would throw away the viewer's position.
-     */
-    fun rejoinsLiveEdge(streamType: String?, isCatchUpPlayback: Boolean): Boolean =
-        !isCatchUpPlayback && streamType?.trim()?.lowercase() == "live"
-
-    /**
      * Whether the freeze watchdog arms.
      *
      * It reports `live_playback_freeze` and recovers by re-resolving the URL. Against a replay

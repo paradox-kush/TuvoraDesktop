@@ -25,7 +25,6 @@ import androidx.compose.ui.interop.UIKitViewController
 import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import co.touchlab.kermit.Logger
-import com.nuvio.app.features.iptv.CatchUpPlayback
 import com.nuvio.app.features.streams.normalizeStreamType
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.useContents
@@ -291,7 +290,7 @@ actual fun PlatformPlayerSurface(
         bridge.applyIosVideoOutputSettings(latestPlayerSettings.value)
         // A replay must NOT reload-to-live-edge on foreground: it would skip the viewer to the
         // end of the recording they were part-way through.
-        bridge.setIsLiveStream(CatchUpPlayback.rejoinsLiveEdge(streamType, isCatchUpPlayback))
+        bridge.setIsLiveStream(LivePlaybackRejoinPolicy.rejoinsLiveEdge(streamType, isCatchUpPlayback))
         bridge.loadFileWithAudio(
             videoUrl = sourceUrl,
             audioUrl = sourceAudioUrl,
