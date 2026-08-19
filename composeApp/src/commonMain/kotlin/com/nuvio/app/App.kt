@@ -46,7 +46,6 @@ import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
-import com.nuvio.app.features.iptv.IptvPlaybackGate
 import com.nuvio.app.features.player.ImmersivePlaybackGate
 import com.nuvio.app.features.iptv.IptvRefreshScheduler
 import com.nuvio.app.features.iptv.XtreamHubScreen
@@ -3334,12 +3333,12 @@ private fun MainAppContent(
                     // Tell the IPTV auto-refresh worker a player is on screen so a heavy M3U re-ingest
                     // defers instead of firing mid-playback (P3-B skip-while-playing).
                     DisposableEffect(Unit) {
-                        IptvPlaybackGate.setPlaybackActive(true)
+                        com.nuvio.app.core.contracts.PlaybackGateAccess.current().setPlaybackActive(true)
                         // Also tell app-level chrome (the update banner) to stand down: it is a
                         // layout sibling of the whole app, so leaving it up shrinks the video.
                         ImmersivePlaybackGate.setImmersive(true)
                         onDispose {
-                            IptvPlaybackGate.setPlaybackActive(false)
+                            com.nuvio.app.core.contracts.PlaybackGateAccess.current().setPlaybackActive(false)
                             ImmersivePlaybackGate.setImmersive(false)
                         }
                     }
@@ -3449,12 +3448,12 @@ private fun MainAppContent(
                         return@entry
                     }
                     DisposableEffect(Unit) {
-                        IptvPlaybackGate.setPlaybackActive(true)
+                        com.nuvio.app.core.contracts.PlaybackGateAccess.current().setPlaybackActive(true)
                         // Also tell app-level chrome (the update banner) to stand down: it is a
                         // layout sibling of the whole app, so leaving it up shrinks the video.
                         ImmersivePlaybackGate.setImmersive(true)
                         onDispose {
-                            IptvPlaybackGate.setPlaybackActive(false)
+                            com.nuvio.app.core.contracts.PlaybackGateAccess.current().setPlaybackActive(false)
                             ImmersivePlaybackGate.setImmersive(false)
                         }
                     }
