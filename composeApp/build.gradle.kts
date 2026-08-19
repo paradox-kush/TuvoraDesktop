@@ -1290,6 +1290,7 @@ kotlin {
             dependencies {
                 implementation(libs.compose.uiTest)
                 implementation(compose.desktop.currentOs)
+                implementation(libs.konsist)  // arch test (Rule 6), JVM-only
             }
         }
     }

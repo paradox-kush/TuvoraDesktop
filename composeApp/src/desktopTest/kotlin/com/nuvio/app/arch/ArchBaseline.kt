@@ -1,0 +1,37 @@
+package com.nuvio.app.arch
+
+/**
+ * Frozen crossing surface as of Phase 0 (Desktop twin). Generated from the exact R2b+R2d rule for
+ * THIS repo (Desktop's commonMain diverges from Mobile's ~107 files, so its crossing set differs).
+ * Ratchet: only shrinks. Do not add entries to silence a rule.
+ */
+object ArchBaseline {
+    val crossings: Set<String> = setOf(
+        "androidHostTest/kotlin/com/nuvio/app/features/player/PlayerTargetBufferBytesTest.kt",
+        "androidMain/kotlin/com/nuvio/app/MainActivity.kt",
+        "androidMain/kotlin/com/nuvio/app/NuvioApplication.kt",
+        "androidMain/kotlin/com/nuvio/app/core/ui/PlatformImageLoader.android.kt",
+        "androidMain/kotlin/com/nuvio/app/features/player/PlayerEngine.android.kt",
+        "commonMain/kotlin/com/nuvio/app/App.kt",
+        "commonMain/kotlin/com/nuvio/app/core/storage/LocalAccountDataCleaner.kt",
+        "commonMain/kotlin/com/nuvio/app/core/sync/SyncManager.kt",
+        "commonMain/kotlin/com/nuvio/app/core/ui/ShelfComponents.kt",
+        "commonMain/kotlin/com/nuvio/app/features/details/MetaDetailsRepository.kt",
+        "commonMain/kotlin/com/nuvio/app/features/home/HomeScreen.kt",
+        "commonMain/kotlin/com/nuvio/app/features/home/components/HomeCatalogSection.kt",
+        "commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenRuntimeEffects.kt",
+        "commonMain/kotlin/com/nuvio/app/features/player/PlayerStreamsRepository.kt",
+        "commonMain/kotlin/com/nuvio/app/features/profiles/ProfileRepository.kt",
+        "commonMain/kotlin/com/nuvio/app/features/search/SearchRepository.kt",
+        "commonMain/kotlin/com/nuvio/app/features/settings/AdvancedSettingsPage.kt",
+        "commonMain/kotlin/com/nuvio/app/features/settings/SettingsScreen.kt",
+        "commonMain/kotlin/com/nuvio/app/features/streams/StreamLinkCacheRepository.kt",
+        "commonMain/kotlin/com/nuvio/app/features/streams/StreamsRepository.kt",
+        "commonMain/kotlin/com/nuvio/app/features/watchprogress/WatchProgressModels.kt",
+        "commonMain/kotlin/com/nuvio/app/features/watchprogress/WatchProgressRepository.kt",
+        "commonMain/kotlin/com/nuvio/app/features/watchprogress/WatchProgressRules.kt",
+        "desktopMain/kotlin/com/nuvio/app/core/ui/PlatformImageLoader.desktop.kt",
+        "iosMain/kotlin/com/nuvio/app/core/ui/PlatformImageLoader.ios.kt",
+        "iosMain/kotlin/com/nuvio/app/features/player/PlayerEngine.ios.kt",
+    )
+}

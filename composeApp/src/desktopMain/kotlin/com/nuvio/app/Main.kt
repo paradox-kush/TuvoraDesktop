@@ -34,6 +34,8 @@ private const val NuvioDesktopIconPath = "icons/tuvora-app-icon.png"
 private const val MacosDarkAquaAppearance = "NSAppearanceNameDarkAqua"
 
 fun main(args: Array<String>) {
+    // Feature-contribution bootstrap (once per process — see FeatureWiring.kt).
+    registerFeatureContributions()
     DesktopReliabilityReporter.start()
     configureDesktopChrome()
     installDesktopOpenUriHandler()
@@ -137,7 +139,9 @@ fun main(args: Array<String>) {
             }
 
             if (smokePlayerUrl == null) {
-                App()
+                installFeatures {
+                    App()
+                }
             } else {
                 PlatformPlayerSurface(
                     sourceUrl = smokePlayerUrl,
