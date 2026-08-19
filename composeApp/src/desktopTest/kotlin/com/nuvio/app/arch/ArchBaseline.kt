@@ -15,7 +15,6 @@ object ArchBaseline {
         "commonMain/kotlin/com/nuvio/app/App.kt",
         "commonMain/kotlin/com/nuvio/app/features/details/MetaDetailsRepository.kt",
         "commonMain/kotlin/com/nuvio/app/features/home/HomeScreen.kt",
-        "commonMain/kotlin/com/nuvio/app/features/home/components/HomeCatalogSection.kt",
         "commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenRuntimeEffects.kt",
         "commonMain/kotlin/com/nuvio/app/features/player/PlayerStreamsRepository.kt",
         "commonMain/kotlin/com/nuvio/app/features/settings/SettingsScreen.kt",

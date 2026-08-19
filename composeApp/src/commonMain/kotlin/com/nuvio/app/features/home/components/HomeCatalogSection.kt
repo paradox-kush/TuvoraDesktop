@@ -74,24 +74,16 @@ private fun HomeCatalogRowSectionContent(
     // so without this there is no way to answer "which row caused this watch?" — the question the
     // recommender is actually being trained to answer. Wrapped once per row; the slot lookup is an
     // index scan over one rowful, paid only on an actual click.
+    val recBinder = com.nuvio.app.core.contracts.HomeRecAccess.current()
     val onPosterClickLogged: ((MetaPreview) -> Unit)? =
-        remember(onPosterClick, entries, section.key) {
+        remember(onPosterClick, entries, section.key, recBinder) {
             onPosterClick?.let { delegate ->
                 { preview: MetaPreview ->
-                    com.nuvio.app.core.rec.recLogClick(
-                        surface = com.nuvio.app.core.rec.RecSurface.HOME,
+                    recBinder?.logRowClick(
                         rowId = section.key,
-                        rowIndex = null,
+                        item = com.nuvio.app.core.contracts.HomeRecItem(preview.id, preview.type),
                         itemPosition = entries.indexOfFirst { it.id == preview.id }
                             .takeIf { it >= 0 },
-                        item = com.nuvio.app.core.rec.RecImpressionItem(
-                            itemId = preview.id,
-                            contentType = com.nuvio.app.core.rec.recContentTypeOf(
-                                contentType = preview.type,
-                                season = null,
-                                episode = null,
-                            ),
-                        ),
                     )
                     delegate(preview)
                 }
@@ -108,28 +100,11 @@ private fun HomeCatalogRowSectionContent(
         viewAllPillSize = NuvioViewAllPillSize.Compact,
         key = { item -> item.stableKey() },
         // section.key is the catalogue's stable identity (addon + catalog), which is what makes
-        // "this row performs better than that one" answerable across sessions and releases.
-        // The shelf exposes only its scroll state (Invariant S); home owns the rec mapping and
-        // attaches the impression observer here, so core/ui never imports the rec subsystem.
-        impressionsAttach = { listState ->
-            com.nuvio.app.core.rec.RecRowImpressions(
-                listState = listState,
-                surface = com.nuvio.app.core.rec.RecSurface.HOME,
-                rowId = section.key,
-                rowIndex = null,
-                itemAt = { index ->
-                    entries.getOrNull(index)?.let { preview ->
-                        com.nuvio.app.core.rec.RecImpressionItem(
-                            itemId = preview.id,
-                            contentType = com.nuvio.app.core.rec.recContentTypeOf(
-                                contentType = preview.type,
-                                season = null,
-                                episode = null,
-                            ),
-                        )
-                    }
-                },
-            )
+        // "this row performs better than that one" answerable across sessions and releases. The
+        // shelf exposes only its scroll state (Invariant S); the rec binder owns the mapping, so
+        // core/ui never imports the rec subsystem and the null binder simply logs nothing.
+        impressionsAttach = recBinder?.rowImpressions(rowId = section.key) { index ->
+            entries.getOrNull(index)?.let { com.nuvio.app.core.contracts.HomeRecItem(it.id, it.type) }
         },
     ) { item ->
         HomePosterCard(
