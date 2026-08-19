@@ -29,6 +29,10 @@ import com.nuvio.app.core.contracts.HomeRecAccess
 import com.nuvio.app.core.rec.HomeRecBinderImpl
 import com.nuvio.app.core.contracts.IptvSettingsSectionAccess
 import com.nuvio.app.features.iptv.IptvSettingsSectionImpl
+import com.nuvio.app.core.contracts.LiveRecentsAccess
+import com.nuvio.app.features.iptv.XtreamLiveRecentsProvider
+import com.nuvio.app.core.contracts.HomeSportsSectionAccess
+import com.nuvio.app.features.radar.RadarHomeSportsSection
 
 /**
  * THE one firewall exception (rules doc Rule 1 / R2b): the only non-fork file allowed to name fork
@@ -73,6 +77,8 @@ fun registerFeatureContributions() {
     ProfileChangeParticipants.register(RadarProfileChange)
     HomeRecAccess.register(HomeRecBinderImpl)
     IptvSettingsSectionAccess.register(IptvSettingsSectionImpl)
+    LiveRecentsAccess.register(XtreamLiveRecentsProvider)
+    HomeSportsSectionAccess.register(RadarHomeSportsSection)
     FeatureRegistry.markInitialized()
 }
 

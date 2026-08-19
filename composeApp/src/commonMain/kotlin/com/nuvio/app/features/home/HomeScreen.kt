@@ -26,6 +26,7 @@ import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.core.network.NetworkCondition
 import com.nuvio.app.core.network.NetworkStatusRepository
 import com.nuvio.app.core.ui.LiveRecentActionTarget
+import com.nuvio.app.core.contracts.IptvContentClassifierAccess
 import com.nuvio.app.core.ui.LocalNuvioBottomNavigationOverlayPadding
 import com.nuvio.app.core.ui.NuvioLiveRecentActionSheet
 import com.nuvio.app.core.ui.NuvioScreen
@@ -49,9 +50,6 @@ import com.nuvio.app.features.catalog.CatalogTarget
 import com.nuvio.app.features.home.components.ContinueWatchingLayout
 import com.nuvio.app.features.home.components.HomeCatalogRowSection
 import com.nuvio.app.features.home.components.HomeContinueWatchingSection
-import com.nuvio.app.features.iptv.XtreamItemRegistry
-import com.nuvio.app.features.iptv.XtreamLiveRecents
-import com.nuvio.app.features.iptv.toMetaPreview
 import com.nuvio.app.features.home.components.HomeEmptyStateCard
 import com.nuvio.app.features.home.components.HomeHeroReservedSpace
 import com.nuvio.app.features.home.components.HomeHeroSection
@@ -93,8 +91,6 @@ import com.nuvio.app.features.watching.domain.WatchingContentRef
 import com.nuvio.app.features.watching.domain.isReleasedBy
 import com.nuvio.app.features.collection.CollectionRepository
 import com.nuvio.app.features.profiles.ProfileRepository
-import com.nuvio.app.features.radar.RadarHomeSection
-import com.nuvio.app.features.radar.RadarRepository
 import com.nuvio.app.features.home.components.HomeCollectionRowSection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -138,7 +134,7 @@ fun HomeScreen(
             HomeCatalogSettingsRepository.snapshot()
             WatchedRepository.ensureLoaded()
             WatchProgressRepository.ensureLoaded()
-            RadarRepository.ensureLoaded()
+            com.nuvio.app.core.contracts.HomeSportsSectionAccess.current()?.ensureLoaded()
         }
         val authState = AuthRepository.state.value
         if (authState !is AuthState.Authenticated || authState.isAnonymous) {
@@ -485,9 +481,9 @@ fun HomeScreen(
     }
     // Live channels don't record watch progress, so recently-watched channels feed the Live TV
     // row of the split Continue Watching UI.
-    val liveRecentsRaw by XtreamLiveRecents.recents.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { XtreamLiveRecents.ensureLoaded() }
-    val liveRecentPreviews = remember(liveRecentsRaw) { liveRecentsRaw.map { it.toMetaPreview() } }
+    val liveRecentsProvider = com.nuvio.app.core.contracts.LiveRecentsAccess.current()
+    val liveRecentPreviews by liveRecentsProvider.previews.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { liveRecentsProvider.ensureLoaded() }
     // Long-pressing a Live TV card opens the same kind of remove sheet the Movies/Series cards have.
     var liveRecentActionTarget by remember { mutableStateOf<LiveRecentActionTarget?>(null) }
     val (continueWatchingItems, upcomingItems) = remember(
@@ -921,13 +917,11 @@ fun HomeScreen(
 
             // Sports Centre home presence: featured-event rail (opt-in) + set-up-Radar promo.
             item(key = "radar-home-section") {
-                RadarHomeSection(
+                com.nuvio.app.core.contracts.HomeSportsSectionAccess.current()?.Render(
                     onOpenSportsTab = onOpenSportsTab,
                     onPlayChannel = onPlaySportsChannel,
                     onAddPlaylist = onAddIptvPlaylist,
-                    onOpenRecording = { id ->
-                        XtreamItemRegistry.get(id)?.toMetaPreview()?.let { onPosterClick?.invoke(it) }
-                    },
+                    onOpenRecordingPoster = { onPosterClick?.invoke(it) },
                     onPlayReplay = onPlaySportsReplay,
                 )
             }
@@ -1075,7 +1069,7 @@ fun HomeScreen(
     NuvioLiveRecentActionSheet(
         channel = liveRecentActionTarget,
         onDismiss = { liveRecentActionTarget = null },
-        onRemove = { liveRecentActionTarget?.let { XtreamLiveRecents.remove(it.contentId) } },
+        onRemove = { liveRecentActionTarget?.let { com.nuvio.app.core.contracts.LiveRecentsAccess.current().remove(it.contentId) } },
     )
 }
 
@@ -1909,7 +1903,7 @@ private fun HomeContinueWatchingSplit(
 ) {
     // Live channels belong only in the Live TV row above — keep any that leaked into watch-progress
     // (a live id classifies as tv -> series) out of the Movies/Series rows.
-    val nonLive = items.filterNot { XtreamItemRegistry.isLiveId(it.parentMetaId) }
+    val nonLive = items.filterNot { IptvContentClassifierAccess.classifier.isLiveId(it.parentMetaId) }
     val movies = nonLive.filterNot { it.parentMetaType.isSeriesTypeForContinueWatching() }
     val series = nonLive.filter { it.parentMetaType.isSeriesTypeForContinueWatching() }
     Column(modifier = modifier.padding(bottom = 12.dp)) {
