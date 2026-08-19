@@ -32,7 +32,9 @@ class ArchitectureTest {
     private val forkFiles = listOf("ImmersivePlaybackGate.kt")
     private fun isForkFile(path: String) =
         forkPaths.any { path.contains(it) } || forkFiles.any { path.endsWith("/$it") }
-    private fun isWiringFile(path: String) = path.endsWith("/com/nuvio/app/FeatureWiring.kt")
+    private fun isWiringFile(path: String) =
+        path.endsWith("/com/nuvio/app/FeatureWiring.kt") ||
+        path.endsWith("/com/nuvio/app/AndroidFeatureWiring.kt")
 
     // fork FEATURE refs (R2b) + fork-only core SUBSYSTEM refs (R2d — rec+memory get ports;
     // analytics+diag are DELIBERATELY EXEMPT: cross-cutting telemetry, accepted as thin diff).
