@@ -11,9 +11,6 @@ import com.nuvio.app.features.debrid.DebridSettingsRepository
 import com.nuvio.app.features.debrid.DebridStreamPresentation
 import com.nuvio.app.features.debrid.LocalDebridAvailabilityService
 import com.nuvio.app.features.details.MetaDetailsRepository
-import com.nuvio.app.features.iptv.XtreamItemRegistry
-import com.nuvio.app.features.iptv.XtreamRepository
-import com.nuvio.app.features.iptv.match.XtreamStreamSource
 import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.plugins.pluginContentId
@@ -75,6 +72,7 @@ object StreamsRepository {
     }
 
     private fun load(type: String, videoId: String, parentMetaId: String?, season: Int?, episode: Int?, manualSelection: Boolean, forceRefresh: Boolean) {
+        val streamProvider = com.nuvio.app.core.contracts.StreamSourceAccess.current()
         val pluginUiState = if (AppFeaturePolicy.pluginsEnabled) {
             PluginRepository.initialize()
             PluginRepository.uiState.value
@@ -160,16 +158,12 @@ object StreamsRepository {
         // Xtream IPTV: a namespaced id resolves to one direct stream — no addons/debrid.
         // (Series episodes are already handled by embedded streams above; this covers VOD
         // movies, which have no videos, and any registered live channel.)
-        if (XtreamItemRegistry.isXtreamId(videoId)) {
+        if (streamProvider.isHandledId(videoId)) {
             // Stalker play URLs are single-use/short-TTL create_link tokens: NEVER serve the
             // registry-cached one (it was consumed by the last play) — force a fresh mint every
             // stream-list build. Xtream/M3U URLs are stable, so the cache stays their fast path.
-            val isStalkerSource = XtreamItemRegistry.parseId(videoId)?.let { parsed ->
-                XtreamRepository.uiState.value.accounts
-                    .firstOrNull { it.id == parsed.accountId }
-                    ?.sourceType == com.nuvio.app.features.iptv.SOURCE_TYPE_STALKER
-            } ?: false
-            val xtreamStream = if (isStalkerSource) null else XtreamItemRegistry.streamItemFor(videoId)
+            val isStalkerSource = streamProvider.isStalkerSource(videoId)
+            val xtreamStream = if (isStalkerSource) null else streamProvider.directStreamItem(videoId)
             if (xtreamStream != null) {
                 val group = AddonStreamGroup(
                     addonName = xtreamStream.addonName,
@@ -198,7 +192,7 @@ object StreamsRepository {
                     val rebuilt = runCatchingUnlessCancelled {
                         MetaDetailsRepository.ensureXtreamStreamRegistered(videoId, forceFresh = isStalkerSource)
                     }.getOrDefault(false)
-                    val retried = if (rebuilt) XtreamItemRegistry.streamItemFor(videoId) else null
+                    val retried = if (rebuilt) streamProvider.directStreamItem(videoId) else null
                     if (retried != null) {
                         val group = AddonStreamGroup(
                             addonName = retried.addonName,
@@ -246,18 +240,10 @@ object StreamsRepository {
         // panels have, so M3U must stay out (it'd just fail into backoff) — but Stalker takes a
         // different route inside XtreamStreamSource: the portal's own search endpoint. M3U content
         // still plays via its own namespaced hybrid lane (registry ids).
-        val xtreamTargets = if (type == "movie" || type == "series") {
-            XtreamRepository.ensureLoaded()
-            XtreamRepository.uiState.value.accounts.filter {
-                it.enabled && (it.sourceType == com.nuvio.app.features.iptv.SOURCE_TYPE_XTREAM ||
-                    it.sourceType == com.nuvio.app.features.iptv.SOURCE_TYPE_STALKER)
-            }
-        } else {
-            emptyList()
-        }
-        log.d { "Xtream match targets: ${xtreamTargets.size} (accounts=${XtreamRepository.uiState.value.accounts.size}) type=$type" }
+        val xtreamSourceGroups = streamProvider.matchSourceGroups(type)
+        log.d { "Xtream match targets: ${xtreamSourceGroups.size} type=$type" }
 
-        if (installedAddons.isEmpty() && pluginProviderGroups.isEmpty() && xtreamTargets.isEmpty()) {
+        if (installedAddons.isEmpty() && pluginProviderGroups.isEmpty() && xtreamSourceGroups.isEmpty()) {
             _uiState.value = StreamsUiState(
                 requestToken = requestToken,
                 isAnyLoading = false,
@@ -286,7 +272,7 @@ object StreamsRepository {
 
         log.d { "Found ${streamAddons.size} addons for stream type=$type id=$videoId" }
 
-        if (streamAddons.isEmpty() && pluginProviderGroups.isEmpty() && xtreamTargets.isEmpty()) {
+        if (streamAddons.isEmpty() && pluginProviderGroups.isEmpty() && xtreamSourceGroups.isEmpty()) {
             _uiState.value = StreamsUiState(
                 requestToken = requestToken,
                 isAnyLoading = false,
@@ -311,10 +297,10 @@ object StreamsRepository {
                 streams = emptyList(),
                 isLoading = true,
             )
-        } + xtreamTargets.map { acc ->
+        } + xtreamSourceGroups.map { src ->
             AddonStreamGroup(
-                addonName = acc.name,
-                addonId = XtreamStreamSource.groupId(acc),
+                addonName = src.addonName,
+                addonId = src.sourceId,
                 streams = emptyList(),
                 isLoading = true,
             )
@@ -338,7 +324,7 @@ object StreamsRepository {
             val pluginFirstErrorByAddonId = mutableMapOf<String, String>()
             val totalTasks = streamAddons.size +
                 pluginProviderGroups.sumOf { it.scrapers.size } +
-                xtreamTargets.size
+                xtreamSourceGroups.size
 
             val installedAddonNames = installedAddonOrder.toSet()
             val installedAddonIds = streamAddons.map { it.addonId }.toSet()
@@ -572,25 +558,25 @@ object StreamsRepository {
                 }
             }
 
-            xtreamTargets.forEach { acc ->
+            xtreamSourceGroups.forEach { src ->
                 launch {
                     val group = runCatchingUnlessCancelled {
-                        XtreamStreamSource.streamsFor(acc, type, videoId, season, episode)
+                        streamProvider.resolveMatchStreams(src.sourceId, type, videoId, season, episode)
                     }.fold(
                         onSuccess = { streams ->
-                            log.d { "Xtream match: ${streams.size} streams from ${acc.name} for $videoId" }
+                            log.d { "Xtream match: ${streams.size} streams from ${src.addonName} for $videoId" }
                             AddonStreamGroup(
-                                addonName = acc.name,
-                                addonId = XtreamStreamSource.groupId(acc),
+                                addonName = src.addonName,
+                                addonId = src.sourceId,
                                 streams = streams,
                                 isLoading = false,
                             )
                         },
                         onFailure = { err ->
-                            log.w(err) { "Xtream match failed for ${acc.name}" }
+                            log.w(err) { "Xtream match failed for ${src.addonName}" }
                             AddonStreamGroup(
-                                addonName = acc.name,
-                                addonId = XtreamStreamSource.groupId(acc),
+                                addonName = src.addonName,
+                                addonId = src.sourceId,
                                 streams = emptyList(),
                                 isLoading = false,
                                 error = err.message,
