@@ -188,15 +188,12 @@ object ProfileRepository {
         if (com.nuvio.app.core.build.AppFeaturePolicy.pluginsEnabled) {
             PluginRepository.onProfileChanged(profileIndex)
         }
-        // IPTV: reload accounts + recents for the new profile, drop cross-profile caches.
-        com.nuvio.app.features.iptv.XtreamRepository.onProfileChanged(profileIndex)
-        com.nuvio.app.features.iptv.XtreamLiveRecents.onProfileChanged(profileIndex)
-        com.nuvio.app.features.iptv.XtreamItemRegistry.resetForProfile()
-        com.nuvio.app.features.iptv.XtreamHubRepository.resetForProfile()
-        com.nuvio.app.features.iptv.XtreamSearchIndex.resetForProfile()
-        com.nuvio.app.features.iptv.match.XtreamMatchSyncService.reset()
-        // Sports Centre: reload follows/prefs + fixtures cache for the new profile.
-        com.nuvio.app.features.radar.RadarRepository.onProfileChanged(profileIndex)
+        // Fork features (IPTV, Sports Centre) reload/drop their cross-profile state via the
+        // participant registry — the switch stays free of any fork import (firewall). Order is the
+        // registration order set in FeatureWiring.
+        com.nuvio.app.core.contracts.ProfileChangeParticipants.all().forEach {
+            it.onProfileChanged(profileIndex)
+        }
         ThemeSettingsRepository.onProfileChanged()
         PosterCardStyleRepository.onProfileChanged()
         CardDepthStyleRepository.onProfileChanged()
