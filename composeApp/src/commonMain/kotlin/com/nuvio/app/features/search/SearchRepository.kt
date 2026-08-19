@@ -21,7 +21,7 @@ import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.home.filterReleasedItems
 import com.nuvio.app.features.watchprogress.CurrentDateProvider
 import kotlinx.coroutines.CancellationException
-import com.nuvio.app.features.iptv.XtreamSearchIndex
+import com.nuvio.app.core.contracts.IptvSearchAccess
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
@@ -102,7 +102,7 @@ object SearchRepository {
         activeJob = scope.launch {
             val xtreamDeferred = async {
                 if (xtreamEnabled) {
-                    runCatching { XtreamSearchIndex.search(normalizedQuery) }.getOrDefault(emptyList())
+                    runCatching { IptvSearchAccess.provider.search(normalizedQuery) }.getOrDefault(emptyList())
                 } else {
                     emptyList()
                 }

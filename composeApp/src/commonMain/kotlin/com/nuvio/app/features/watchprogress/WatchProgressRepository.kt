@@ -1248,13 +1248,9 @@ object WatchProgressRepository {
         // Deliberately BEFORE the store-worthiness guards below: a user who bails after 30
         // seconds is the strongest dislike signal there is, and that is precisely the progress
         // watch-progress declines to keep.
-        com.nuvio.app.core.rec.RecPlaybackTracker.onProgress(
+        com.nuvio.app.core.contracts.RecTrackingAccess.reporter.onProgress(
             itemId = session.parentMetaId,
-            contentType = com.nuvio.app.core.rec.recContentTypeOf(
-                contentType = session.contentType,
-                season = session.seasonNumber,
-                episode = session.episodeNumber,
-            ),
+            contentType = session.contentType,
             season = session.seasonNumber,
             episode = session.episodeNumber,
             positionMs = positionMs,

@@ -15,6 +15,11 @@ import com.nuvio.app.core.contracts.LocalStateCleanerRegistry
 import com.nuvio.app.features.iptv.XtreamRecentsCleaner
 import com.nuvio.app.features.iptv.XtreamAccountsCleaner
 import com.nuvio.app.core.rec.RecLocalStateCleaner
+import com.nuvio.app.core.contracts.IptvSearchAccess
+import com.nuvio.app.features.iptv.XtreamSearchProvider
+import com.nuvio.app.core.contracts.RecTrackingAccess
+import com.nuvio.app.core.rec.RecPlaybackReporterImpl
+import com.nuvio.app.core.rec.RecSettingsImpl
 import com.nuvio.app.core.contracts.LocalIptvCatalog
 import com.nuvio.app.features.iptv.XtreamRepository
 
@@ -54,6 +59,9 @@ fun registerFeatureContributions() {
     LocalStateCleanerRegistry.register(XtreamRecentsCleaner)
     LocalStateCleanerRegistry.register(RecLocalStateCleaner)
     LocalStateCleanerRegistry.register(XtreamAccountsCleaner)
+    IptvSearchAccess.register(XtreamSearchProvider)
+    RecTrackingAccess.register(RecPlaybackReporterImpl)
+    RecTrackingAccess.registerSettings(RecSettingsImpl)
     FeatureRegistry.markInitialized()
 }
 

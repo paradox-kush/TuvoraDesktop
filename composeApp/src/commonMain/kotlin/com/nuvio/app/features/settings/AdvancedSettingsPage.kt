@@ -59,7 +59,7 @@ import nuvio.composeapp.generated.resources.sentry_sent_body
 import nuvio.composeapp.generated.resources.sentry_sent_title
 import nuvio.composeapp.generated.resources.sentry_turn_off
 import nuvio.composeapp.generated.resources.sentry_turn_on
-import com.nuvio.app.core.rec.RecEventSettings
+import com.nuvio.app.core.contracts.RecTrackingAccess
 import org.jetbrains.compose.resources.stringResource
 
 internal fun LazyListScope.advancedSettingsContent(
@@ -94,7 +94,7 @@ internal fun LazyListScope.advancedSettingsContent(
         }
         val sentryEnabled by sentryEnabledFlow.collectAsStateWithLifecycle()
         var showSentryDialog by rememberSaveable { mutableStateOf(false) }
-        val recEventsEnabled by RecEventSettings.enabled.collectAsStateWithLifecycle()
+        val recEventsEnabled by RecTrackingAccess.settings.enabled.collectAsStateWithLifecycle()
 
         SettingsSection(
             title = stringResource(Res.string.settings_advanced_section_diagnostics),
@@ -119,7 +119,7 @@ internal fun LazyListScope.advancedSettingsContent(
                     description = stringResource(Res.string.settings_advanced_rec_events_subtitle),
                     checked = recEventsEnabled,
                     isTablet = isTablet,
-                    onCheckedChange = RecEventSettings::setEnabled,
+                    onCheckedChange = RecTrackingAccess.settings::setEnabled,
                 )
             }
         }
