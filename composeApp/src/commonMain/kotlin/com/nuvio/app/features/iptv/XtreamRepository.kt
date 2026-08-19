@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import com.nuvio.app.core.contracts.IptvCatalog
 
 data class XtreamUiState(
     val accounts: List<XtreamAccount> = emptyList(),
@@ -30,17 +31,21 @@ data class XtreamUiState(
  * MutableStateFlow, mirroring AddonRepository / DebridSettingsRepository. KMP twin of
  * NuvioTV's XtreamAccountStore + XtreamSettingsViewModel.
  */
-object XtreamRepository {
+object XtreamRepository : IptvCatalog {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     private val _uiState = MutableStateFlow(XtreamUiState())
     val uiState: StateFlow<XtreamUiState> = _uiState.asStateFlow()
 
+    // --- IptvCatalog read port (S3a) ---
+    override fun hasEnabledAccounts(): Boolean = _uiState.value.accounts.any { it.enabled }
+    override val enabledAccountCount: Int get() = _uiState.value.accounts.count { it.enabled }
+
     private var loaded = false
     private var currentProfileId = 1
 
-    fun ensureLoaded() {
+    override fun ensureLoaded() {
         if (loaded) return
         loaded = true
         currentProfileId = ProfileRepository.activeProfileId

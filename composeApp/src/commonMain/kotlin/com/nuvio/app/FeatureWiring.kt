@@ -5,6 +5,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import co.touchlab.kermit.Logger
 import com.nuvio.app.features.common.lifecycle.FeatureRegistry
 import com.nuvio.app.features.common.lifecycle.LocalRevertFailureSink
+import com.nuvio.app.core.contracts.IptvCatalogAccess
+import com.nuvio.app.core.contracts.LocalIptvCatalog
+import com.nuvio.app.features.iptv.XtreamRepository
 
 /**
  * THE one firewall exception (rules doc Rule 1 / R2b): the only non-fork file allowed to name fork
@@ -34,7 +37,8 @@ private val revertLog = Logger.withTag("EffectScope")
  * NEVER call from a @Composable body (recomposition re-runs it — same crash class).
  */
 fun registerFeatureContributions() {
-    // Phase 0: no contributions/ports yet. The bootstrap + guard exist so later seams plug in safely.
+    // S3a: register the IptvCatalog read port for non-Compose consumers.
+    IptvCatalogAccess.register(XtreamRepository)
     FeatureRegistry.markInitialized()
 }
 
@@ -50,8 +54,8 @@ fun installFeatures(content: @Composable () -> Unit) {
     }
     CompositionLocalProvider(
         LocalRevertFailureSink provides ::onRevertFailure,
-        // Phase 0: no feature ports yet. `LocalIptvCatalog provides IptvFeature.provideCatalog()`,
-        // `LocalSportsData provides RadarFeature.provideSportsData()`, … land with their seams.
+        LocalIptvCatalog provides XtreamRepository,   // S3a — stable object, safe in a static local
+        // Later seams add their ports here: LocalSportsData, LocalClock, …
     ) { content() }
 }
 

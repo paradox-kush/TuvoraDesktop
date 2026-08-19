@@ -1,5 +1,6 @@
 package com.nuvio.app.features.search
 
+import com.nuvio.app.core.contracts.IptvCatalogAccess
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.i18n.localizedMediaTypeLabel
 import com.nuvio.app.features.addons.AddonCatalog
@@ -20,7 +21,6 @@ import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.home.filterReleasedItems
 import com.nuvio.app.features.watchprogress.CurrentDateProvider
 import kotlinx.coroutines.CancellationException
-import com.nuvio.app.features.iptv.XtreamRepository
 import com.nuvio.app.features.iptv.XtreamSearchIndex
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
@@ -57,8 +57,8 @@ object SearchRepository {
             return
         }
 
-        XtreamRepository.ensureLoaded()
-        val xtreamEnabled = XtreamRepository.uiState.value.accounts.any { it.enabled }
+        IptvCatalogAccess.catalog.ensureLoaded()
+        val xtreamEnabled = IptvCatalogAccess.catalog.hasEnabledAccounts()
 
         val activeAddons = addons.enabledAddons().filter { it.manifest != null }
         val requests = if (activeAddons.isEmpty()) {

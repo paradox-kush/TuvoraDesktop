@@ -125,6 +125,9 @@ data class RadarUiState(
  * XtreamRepository / XtreamHubRepository.
  */
 object RadarRepository {
+    /** Test-injectable clock (S2). Production = RadarSystemClock. */
+    internal var clock: RadarClock = RadarSystemClock
+
     private val log = Logger.withTag("RadarRepository")
 
     // Leagues change on the order of weeks; this only needs to be faster than a release.
@@ -187,7 +190,7 @@ object RadarRepository {
      * way this changes what the user sees is a well-formed publish.
      */
     private suspend fun refreshCatalog(cachedAtMs: Long?) {
-        val ageMs = cachedAtMs?.let { RadarTime.nowMs() - it } ?: Long.MAX_VALUE
+        val ageMs = cachedAtMs?.let { clock.nowMs() - it } ?: Long.MAX_VALUE
         if (ageMs < CATALOG_TTL_MS) return
         val envelope = RadarCatalogClient.fetch() ?: return
         val remote = envelope.payload ?: return
@@ -197,7 +200,7 @@ object RadarRepository {
         }
         XtreamAccountStorage.saveRadarCatalogJson(
             currentProfileId,
-            json.encodeToString(RadarCachedCatalog(envelope.version, remote, RadarTime.nowMs())),
+            json.encodeToString(RadarCachedCatalog(envelope.version, remote, clock.nowMs())),
         )
         _uiState.update { it.copy(catalog = remote) }
         log.i { "adopted published catalog v${envelope.version}" }
@@ -220,7 +223,7 @@ object RadarRepository {
     fun refreshFixtures(force: Boolean = false) {
         val mark = lastFetchMark
         if (!force && mark != null && mark.elapsedNow() < FETCH_TTL) return
-        val nowMs = RadarTime.nowMs()
+        val nowMs = clock.nowMs()
         val leagues = leaguesToFetch(nowMs)
         val teams = _uiState.value.followedTeamIds
         if (leagues.isEmpty() && teams.isEmpty()) return
