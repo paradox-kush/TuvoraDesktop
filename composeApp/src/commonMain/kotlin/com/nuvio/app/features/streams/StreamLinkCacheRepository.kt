@@ -136,7 +136,7 @@ object StreamLinkCacheRepository {
     internal fun isIptvAddon(addonId: String?): Boolean {
         if (addonId.isNullOrBlank()) return false
         return addonId == "xtream" ||
-            addonId.startsWith(com.nuvio.app.features.iptv.match.XtreamStreamSource.GROUP_ID_PREFIX)
+            com.nuvio.app.core.contracts.IptvContentClassifierAccess.classifier.isXtreamStreamGroup(addonId)
     }
 
     private fun hashedKey(contentKey: String): String {

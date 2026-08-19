@@ -1,7 +1,6 @@
 package com.nuvio.app.core.storage
 
 import com.nuvio.app.core.build.AppFeaturePolicy
-import com.nuvio.app.core.rec.RecEventLogger
 import com.nuvio.app.core.sync.SyncManager
 import com.nuvio.app.core.sync.ProfileSettingsSync
 import com.nuvio.app.core.tracking.ensureTrackingProvidersRegistered
@@ -14,8 +13,6 @@ import com.nuvio.app.features.details.MetaScreenSettingsRepository
 import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.HomeRepository
-import com.nuvio.app.features.iptv.XtreamLiveRecents
-import com.nuvio.app.features.iptv.XtreamRepository
 import com.nuvio.app.features.library.LibraryRepository
 import com.nuvio.app.features.library.LibraryDisplaySettingsRepository
 import com.nuvio.app.features.notifications.EpisodeReleaseNotificationsRepository
@@ -53,8 +50,7 @@ internal object LocalAccountDataCleaner {
         ContinueWatchingEnrichmentCache.clearLocalState()
         WatchProgressRepository.clearLocalState()
         WatchedRepository.clearLocalState()
-        XtreamLiveRecents.clearLocalState()
-        RecEventLogger.resetLocalState()
+        com.nuvio.app.core.contracts.LocalStateCleanerRegistry.all.forEach { it.clearLocalState() }
         LibraryRepository.runAccountStorageWipe {
             PlatformLocalAccountDataCleaner.wipe()
         }
@@ -87,7 +83,6 @@ internal object LocalAccountDataCleaner {
         SearchRepository.reset()
         SearchHistoryRepository.clearLocalState()
         DownloadsRepository.clearLocalState()
-        XtreamRepository.clearLocalState()
         SubtitleRepository.clear()
         PlayerLaunchStore.clear()
         StreamLaunchStore.clear()

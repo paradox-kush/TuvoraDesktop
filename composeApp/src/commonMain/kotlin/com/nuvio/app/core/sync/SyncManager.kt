@@ -6,12 +6,10 @@ import com.nuvio.app.core.time.EpisodeReleaseDatePlatform
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.collection.CollectionSyncService
 import com.nuvio.app.features.home.HomeCatalogSettingsSyncService
-import com.nuvio.app.features.iptv.XtreamAccountSyncService
 import com.nuvio.app.features.library.LibrarySourceMode
 import com.nuvio.app.features.library.LibraryRepository
 import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.profiles.ProfileRepository
-import com.nuvio.app.features.radar.RadarSyncService
 import com.nuvio.app.features.trakt.TraktAuthRepository
 import com.nuvio.app.features.trakt.TraktPlatformClock
 import com.nuvio.app.features.trakt.TraktSettingsRepository
@@ -469,13 +467,13 @@ object SyncManager {
 
             // Fork surfaces (IPTV accounts + Radar follows) ride alongside the ordered
             // pipeline — upstream's ProfileSyncOperations doesn't know about them.
-            accountScopeSnapshot().launch {
-                runCatching { XtreamAccountSyncService.pullFromServer(profileId) }
-                    .onFailure { log.e(it) { "Xtream accounts pull failed" } }
-            }
-            accountScopeSnapshot().launch {
-                runCatching { RadarSyncService.pullFromServer(profileId) }
-                    .onFailure { log.e(it) { "Radar follows pull failed" } }
+            // Fork surfaces register themselves as SyncParticipants (upstream's
+            // ProfileSyncOperations doesn't know about them).
+            com.nuvio.app.core.contracts.SyncParticipantRegistry.all.forEach { participant ->
+                accountScopeSnapshot().launch {
+                    runCatching { participant.pullFromServer(profileId) }
+                        .onFailure { log.e(it) { "fork sync pull failed: ${participant.name}" } }
+                }
             }
             log.i { "Full profile sync completed profile=$profileId reason=$reason" }
         }

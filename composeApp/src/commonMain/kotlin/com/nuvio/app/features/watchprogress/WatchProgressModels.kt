@@ -3,7 +3,7 @@ package com.nuvio.app.features.watchprogress
 import com.nuvio.app.features.cloud.CloudLibraryContentType
 import com.nuvio.app.features.cloud.cloudLibraryProviderPosterUrl
 import com.nuvio.app.features.details.MetaVideo
-import com.nuvio.app.features.iptv.XtreamItemRegistry
+import com.nuvio.app.core.contracts.IptvContentClassifierAccess
 import com.nuvio.app.features.tracking.TrackingAttributedItem
 import com.nuvio.app.features.tracking.WatchProgressSource
 import com.nuvio.app.features.watching.domain.WatchingContentRef
@@ -251,7 +251,7 @@ internal fun WatchProgressEntry.toContinueWatchingItem(): ContinueWatchingItem {
     // ponytail: an Xtream movie's persisted poster can be null (direct-play never enriched it) —
     // fall back to the in-memory registry poster so Continue Watching shows art, not an empty frame.
     val xtreamPoster = if (normalizedEntry.poster.isNullOrBlank()) {
-        XtreamItemRegistry.get(normalizedEntry.videoId)?.let { it.poster ?: it.logo }
+        IptvContentClassifierAccess.classifier.posterFor(normalizedEntry.videoId)
     } else null
     val resolvedPoster = normalizedEntry.poster.nonBlankOrNull() ?: xtreamPoster.nonBlankOrNull() ?: cloudPosterUrl
     val resolvedBackground = normalizedEntry.background.nonBlankOrNull()
