@@ -581,19 +581,18 @@ internal fun PlayerScreenRuntime.removeFailedStreamFromCache() {
 }
 
 internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message: String?): Boolean {
+    val streamProvider = com.nuvio.app.core.contracts.StreamSourceAccess.current()
     val failedUrl = activeSourceUrl
     // IPTV (xtream/stalker) sources always qualify: a Stalker create_link token is often embedded
     // in the URL PATH (nginx secure_link style), which the query-param heuristic can't see — and a
     // 401 on those means the single-use/short-TTL token died, exactly what a refresh fixes.
     // Two iptv shapes: direct-lane content (xtream videoId) and the TMDB-matched lane, recognised
     // by its provider group id ("xtream-match:<accountId>").
-    val matchedIptvAccountId = activeProviderAddonId
-        ?.takeIf { it.startsWith(com.nuvio.app.features.iptv.match.XtreamStreamSource.GROUP_ID_PREFIX) }
-        ?.removePrefix(com.nuvio.app.features.iptv.match.XtreamStreamSource.GROUP_ID_PREFIX)
-    val isIptvSource = matchedIptvAccountId != null ||
-        com.nuvio.app.features.iptv.XtreamItemRegistry.isXtreamId(activeVideoId)
+    val matchedSourceId = activeProviderAddonId?.takeIf { streamProvider.isMatchSourceId(it) }
+    val isIptvSource = matchedSourceId != null ||
+        streamProvider.isHandledId(activeVideoId)
     iptvRefreshLog.i {
-        "gate: iptv=$isIptvSource matchedAcct=$matchedIptvAccountId addonId=$activeProviderAddonId " +
+        "gate: iptv=$isIptvSource matchedSrc=$matchedSourceId addonId=$activeProviderAddonId " +
             "videoId=$activeVideoId expiringCreds=${failedUrl.hasLikelyExpiringPlaybackCredentials()} " +
             "jobActive=${credentialRefreshJob?.isActive} alreadyTried=${credentialRefreshAttemptedSourceUrl == failedUrl}"
     }
@@ -619,31 +618,24 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
 
     credentialRefreshJob = scope.launch {
         var refreshedStream: StreamItem? = null
-        if (matchedIptvAccountId != null) {
+        if (matchedSourceId != null) {
             // TMDB-matched iptv stream: PlayerStreamsRepository has no xtream-match lane to poll,
-            // so re-run the owning account's TMDB->stream match directly — one targeted resolve
+            // so re-run the owning source's TMDB->stream match directly — one targeted resolve
             // that mints a fresh Stalker create_link (Xtream URLs come back identical and are
             // rejected by the candidate's url != failedUrl check, which is correct: a 401 on a
             // stable URL is an account problem, not a token problem).
-            com.nuvio.app.features.iptv.XtreamRepository.ensureLoaded()
-            val account = com.nuvio.app.features.iptv.XtreamRepository.uiState.value.accounts
-                .firstOrNull { it.id == matchedIptvAccountId }
-            iptvRefreshLog.i { "matched-lane re-resolve: acct=$matchedIptvAccountId found=${account != null} type=$type videoId=$currentVideoId" }
-            if (account != null) {
-                val streams = runCatchingUnlessCancelled {
-                    com.nuvio.app.features.iptv.match.XtreamStreamSource
-                        .streamsFor(account, type, currentVideoId, season, episode)
-                }.getOrDefault(emptyList())
-                iptvRefreshLog.i { "matched-lane re-resolve returned ${streams.size} stream(s)" }
-                refreshedStream = findCredentialRefreshCandidate(
-                    streams = streams,
-                    failedUrl = failedUrl,
-                    expectedProviderAddonId = expectedProviderAddonId,
-                    expectedProviderName = expectedProviderName,
-                    expectedStreamTitle = expectedStreamTitle,
-                    expectedBingeGroup = expectedBingeGroup,
-                )
-            }
+            val streams = runCatchingUnlessCancelled {
+                streamProvider.resolveMatchStreams(matchedSourceId, type, currentVideoId, season, episode)
+            }.getOrDefault(emptyList())
+            iptvRefreshLog.i { "matched-lane re-resolve: sourceId=$matchedSourceId returned ${streams.size} stream(s) type=$type videoId=$currentVideoId" }
+            refreshedStream = findCredentialRefreshCandidate(
+                streams = streams,
+                failedUrl = failedUrl,
+                expectedProviderAddonId = expectedProviderAddonId,
+                expectedProviderName = expectedProviderName,
+                expectedStreamTitle = expectedStreamTitle,
+                expectedBingeGroup = expectedBingeGroup,
+            )
         } else {
             PlayerStreamsRepository.loadSources(
                 type = type,
@@ -691,9 +683,9 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
         // mints. The refresh must hand the engine a REAL url, and it forces the mint: a
         // static-cmd verdict here would rebuild the very URL that just died.
         val refreshedUrl = stream.playableDirectUrl?.let { candidate ->
-            if (com.nuvio.app.features.iptv.match.XtreamStreamSource.isDeferred(candidate)) {
+            if (streamProvider.isDeferredUrl(candidate)) {
                 runCatchingUnlessCancelled {
-                    com.nuvio.app.features.iptv.match.XtreamStreamSource.resolveDeferredUrl(candidate, forceMint = true)
+                    streamProvider.resolveDeferredUrl(candidate, forceMint = true)
                 }.getOrNull()
             } else {
                 candidate

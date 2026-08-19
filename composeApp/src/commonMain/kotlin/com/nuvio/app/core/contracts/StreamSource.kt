@@ -14,7 +14,7 @@ data class StreamSourceGroup(val sourceId: String, val addonName: String)
  */
 interface StreamSourceProvider {
     /** True when [videoId] is a namespaced IPTV id (VOD/live) that resolves to one direct stream. */
-    fun isHandledId(videoId: String): Boolean
+    fun isHandledId(videoId: String?): Boolean
 
     /** True when [videoId]'s account is a Stalker portal (single-use links → never serve the cache). */
     fun isStalkerSource(videoId: String): Boolean
@@ -33,11 +33,20 @@ interface StreamSourceProvider {
         season: Int?,
         episode: Int?,
     ): List<StreamItem>
+
+    /** True when [providerAddonId] identifies a match source (a [matchSourceGroups] entry's id). */
+    fun isMatchSourceId(providerAddonId: String): Boolean
+
+    /** True when [url] is a deferred (not-yet-minted) IPTV play URL. */
+    fun isDeferredUrl(url: String): Boolean
+
+    /** Mint the real play URL for a deferred [url], or null. [forceMint] bypasses static-cmd reuse. */
+    suspend fun resolveDeferredUrl(url: String, forceMint: Boolean): String?
 }
 
 object StreamSourceAccess {
     private val noOp = object : StreamSourceProvider {
-        override fun isHandledId(videoId: String) = false
+        override fun isHandledId(videoId: String?) = false
         override fun isStalkerSource(videoId: String) = false
         override fun directStreamItem(videoId: String): StreamItem? = null
         override fun matchSourceGroups(type: String) = emptyList<StreamSourceGroup>()
@@ -48,6 +57,9 @@ object StreamSourceAccess {
             season: Int?,
             episode: Int?,
         ) = emptyList<StreamItem>()
+        override fun isMatchSourceId(providerAddonId: String) = false
+        override fun isDeferredUrl(url: String) = false
+        override suspend fun resolveDeferredUrl(url: String, forceMint: Boolean): String? = null
     }
     private var provider: StreamSourceProvider? = null
 

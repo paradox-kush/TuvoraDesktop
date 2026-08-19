@@ -13,7 +13,7 @@ import com.nuvio.app.features.streams.StreamItem
  * The account is carried across the firewall only as an opaque groupId and resolved back here.
  */
 internal object XtreamStreamSourceProvider : StreamSourceProvider {
-    override fun isHandledId(videoId: String): Boolean = XtreamItemRegistry.isXtreamId(videoId)
+    override fun isHandledId(videoId: String?): Boolean = XtreamItemRegistry.isXtreamId(videoId)
 
     override fun isStalkerSource(videoId: String): Boolean =
         XtreamItemRegistry.parseId(videoId)?.let { parsed ->
@@ -47,4 +47,12 @@ internal object XtreamStreamSourceProvider : StreamSourceProvider {
             ?: return emptyList()
         return XtreamStreamSource.streamsFor(account, type, videoId, season, episode)
     }
+
+    override fun isMatchSourceId(providerAddonId: String): Boolean =
+        providerAddonId.startsWith(XtreamStreamSource.GROUP_ID_PREFIX)
+
+    override fun isDeferredUrl(url: String): Boolean = XtreamStreamSource.isDeferred(url)
+
+    override suspend fun resolveDeferredUrl(url: String, forceMint: Boolean): String? =
+        XtreamStreamSource.resolveDeferredUrl(url, forceMint = forceMint)
 }
