@@ -11,8 +11,6 @@ import com.nuvio.app.features.debrid.DebridStreamPresentation
 import com.nuvio.app.features.debrid.DirectDebridStreamPreparer
 import com.nuvio.app.features.debrid.LocalDebridAvailabilityService
 import com.nuvio.app.features.details.MetaDetailsRepository
-import com.nuvio.app.features.iptv.XtreamRepository
-import com.nuvio.app.features.iptv.match.XtreamStreamSource
 import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.plugins.PluginsUiState
 import com.nuvio.app.features.plugins.pluginContentId
@@ -151,6 +149,7 @@ object PlayerStreamsRepository {
         jobHolder: () -> Job?,
         setJob: (Job) -> Unit,
     ) {
+        val streamProvider = com.nuvio.app.core.contracts.StreamSourceAccess.current()
         val pluginUiState = if (AppFeaturePolicy.pluginsEnabled) {
             PluginRepository.initialize()
             PluginRepository.uiState.value
@@ -201,16 +200,11 @@ object PlayerStreamsRepository {
         // expired-link refresh (tryRefreshCredentialedSourceAfterError polls THIS repository)
         // could never mint a replacement. Stalker always re-resolves FRESH: its create_link play
         // URLs are single-use/short-TTL, and the registry-cached one was consumed by the last play.
-        if (com.nuvio.app.features.iptv.XtreamItemRegistry.isXtreamId(videoId)) {
-            val registry = com.nuvio.app.features.iptv.XtreamItemRegistry
-            val isStalkerSource = registry.parseId(videoId)?.let { parsed ->
-                com.nuvio.app.features.iptv.XtreamRepository.uiState.value.accounts
-                    .firstOrNull { it.id == parsed.accountId }
-                    ?.sourceType == com.nuvio.app.features.iptv.SOURCE_TYPE_STALKER
-            } ?: false
+        if (streamProvider.isHandledId(videoId)) {
+            val isStalkerSource = streamProvider.isStalkerSource(videoId)
             stateFlow.value = StreamsUiState(isAnyLoading = true)
             val job = scope.launch {
-                if (isStalkerSource || registry.streamItemFor(videoId) == null) {
+                if (isStalkerSource || streamProvider.directStreamItem(videoId) == null) {
                     runCatchingUnlessCancelled {
                         MetaDetailsRepository.ensureXtreamStreamRegistered(
                             videoId,
@@ -219,7 +213,7 @@ object PlayerStreamsRepository {
                         )
                     }
                 }
-                val stream = registry.streamItemFor(videoId)
+                val stream = streamProvider.directStreamItem(videoId)
                 stateFlow.value = if (stream != null) {
                     val group = AddonStreamGroup(
                         addonName = stream.addonName,
@@ -264,17 +258,9 @@ object PlayerStreamsRepository {
         // Xtream/Stalker accounts matched to this TMDB/IMDb title. Users whose only sources are
         // IPTV providers get ALL their streams from this lane, so without it every in-player
         // fetch (next episode, episode switch, source switch) comes back empty for them.
-        val xtreamTargets = if (type == "movie" || type == "series") {
-            XtreamRepository.ensureLoaded()
-            XtreamRepository.uiState.value.accounts.filter {
-                it.enabled && (it.sourceType == com.nuvio.app.features.iptv.SOURCE_TYPE_XTREAM ||
-                    it.sourceType == com.nuvio.app.features.iptv.SOURCE_TYPE_STALKER)
-            }
-        } else {
-            emptyList()
-        }
+        val xtreamSourceGroups = streamProvider.matchSourceGroups(type)
 
-        if (installedAddons.isEmpty() && pluginProviderGroups.isEmpty() && xtreamTargets.isEmpty()) {
+        if (installedAddons.isEmpty() && pluginProviderGroups.isEmpty() && xtreamSourceGroups.isEmpty()) {
             stateFlow.value = StreamsUiState(
                 isAnyLoading = false,
                 emptyStateReason = com.nuvio.app.features.streams.StreamsEmptyStateReason.NoAddonsInstalled,
@@ -301,7 +287,7 @@ object PlayerStreamsRepository {
                 )
             }
 
-        if (streamAddons.isEmpty() && pluginProviderGroups.isEmpty() && xtreamTargets.isEmpty()) {
+        if (streamAddons.isEmpty() && pluginProviderGroups.isEmpty() && xtreamSourceGroups.isEmpty()) {
             stateFlow.value = StreamsUiState(
                 isAnyLoading = false,
                 emptyStateReason = com.nuvio.app.features.streams.StreamsEmptyStateReason.NoCompatibleAddons,
@@ -332,10 +318,10 @@ object PlayerStreamsRepository {
                 streams = emptyList(),
                 isLoading = true,
             )
-        } + xtreamTargets.map { acc ->
+        } + xtreamSourceGroups.map { src ->
             AddonStreamGroup(
-                addonName = acc.name,
-                addonId = XtreamStreamSource.groupId(acc),
+                addonName = src.addonName,
+                addonId = src.sourceId,
                 streams = emptyList(),
                 isLoading = true,
             )
@@ -357,7 +343,7 @@ object PlayerStreamsRepository {
             val pluginFirstErrorByAddonId = mutableMapOf<String, String>()
             val totalTasks = streamAddons.size +
                 pluginProviderGroups.sumOf { it.scrapers.size } +
-                xtreamTargets.size
+                xtreamSourceGroups.size
             val completions = Channel<StreamLoadCompletion>(capacity = Channel.BUFFERED)
             val debridAvailabilityJobs = mutableListOf<Job>()
 
@@ -467,25 +453,25 @@ object PlayerStreamsRepository {
                 }
             }
 
-            xtreamTargets.forEach { acc ->
+            xtreamSourceGroups.forEach { src ->
                 launch {
                     val group = runCatchingUnlessCancelled {
-                        XtreamStreamSource.streamsFor(acc, type, videoId, season, episode)
+                        streamProvider.resolveMatchStreams(src.sourceId, type, videoId, season, episode)
                     }.fold(
                         onSuccess = { streams ->
-                            log.d { "Xtream match: ${streams.size} streams from ${acc.name} for $videoId" }
+                            log.d { "Xtream match: ${streams.size} streams from ${src.addonName} for $videoId" }
                             AddonStreamGroup(
-                                addonName = acc.name,
-                                addonId = XtreamStreamSource.groupId(acc),
+                                addonName = src.addonName,
+                                addonId = src.sourceId,
                                 streams = streams,
                                 isLoading = false,
                             )
                         },
                         onFailure = { err ->
-                            log.w(err) { "Xtream match failed for ${acc.name}" }
+                            log.w(err) { "Xtream match failed for ${src.addonName}" }
                             AddonStreamGroup(
-                                addonName = acc.name,
-                                addonId = XtreamStreamSource.groupId(acc),
+                                addonName = src.addonName,
+                                addonId = src.sourceId,
                                 streams = emptyList(),
                                 isLoading = false,
                                 error = err.message,
