@@ -52,10 +52,7 @@ import com.nuvio.app.features.iptv.IptvRefreshScheduler
 import com.nuvio.app.features.iptv.XtreamHubScreen
 import com.nuvio.app.features.radar.SportsHubScreen
 import com.nuvio.app.features.iptv.XtreamItemRegistry
-import com.nuvio.app.features.iptv.XtreamLiveRecents
 import com.nuvio.app.features.iptv.XtreamRepository
-import com.nuvio.app.features.iptv.match.XtreamStreamSource
-import com.nuvio.app.features.iptv.resolveLivePlaybackUrl
 import com.nuvio.app.features.iptv.toMetaPreview
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.LaunchedEffect
@@ -2965,9 +2962,9 @@ private fun MainAppContent(
                             selectedStream
                         }
                         // Auto-play of a Stalker source: mint its link now (listing left it deferred).
-                        val playableStream = if (XtreamStreamSource.isDeferred(stream.playableDirectUrl)) {
-                            val minted = XtreamStreamSource
-                                .resolveDeferredUrl(stream.playableDirectUrl.orEmpty())
+                        val playableStream = if (com.nuvio.app.core.contracts.StreamSourceAccess.current().isDeferredUrl(stream.playableDirectUrl)) {
+                            val minted = com.nuvio.app.core.contracts.StreamSourceAccess.current()
+                                .resolveDeferredUrl(stream.playableDirectUrl.orEmpty(), forceMint = false)
                             if (minted.isNullOrBlank()) {
                                 StreamsRepository.skipAutoPlayStream(selectedStream)
                                 return@LaunchedEffect
@@ -3076,12 +3073,12 @@ private fun MainAppContent(
                         forceExternal: Boolean,
                         forceInternal: Boolean,
                     ) {
-                        // A Stalker source is listed without a play link (see XtreamStreamSource):
+                        // A Stalker source is listed without a play link (deferred until play):
                         // mint it now, for this edition only, then re-enter with the real URL.
-                        if (XtreamStreamSource.isDeferred(stream.playableDirectUrl)) {
+                        if (com.nuvio.app.core.contracts.StreamSourceAccess.current().isDeferredUrl(stream.playableDirectUrl)) {
                             streamRouteScope.launch {
-                                val minted = XtreamStreamSource
-                                    .resolveDeferredUrl(stream.playableDirectUrl.orEmpty())
+                                val minted = com.nuvio.app.core.contracts.StreamSourceAccess.current()
+                                    .resolveDeferredUrl(stream.playableDirectUrl.orEmpty(), forceMint = false)
                                 if (minted.isNullOrBlank()) {
                                     StreamsRepository.cancelLoading()
                                     return@launch

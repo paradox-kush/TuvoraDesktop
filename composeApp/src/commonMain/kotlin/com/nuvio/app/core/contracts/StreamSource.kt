@@ -38,7 +38,7 @@ interface StreamSourceProvider {
     fun isMatchSourceId(providerAddonId: String): Boolean
 
     /** True when [url] is a deferred (not-yet-minted) IPTV play URL. */
-    fun isDeferredUrl(url: String): Boolean
+    fun isDeferredUrl(url: String?): Boolean
 
     /** Mint the real play URL for a deferred [url], or null. [forceMint] bypasses static-cmd reuse. */
     suspend fun resolveDeferredUrl(url: String, forceMint: Boolean): String?
@@ -58,7 +58,7 @@ object StreamSourceAccess {
             episode: Int?,
         ) = emptyList<StreamItem>()
         override fun isMatchSourceId(providerAddonId: String) = false
-        override fun isDeferredUrl(url: String) = false
+        override fun isDeferredUrl(url: String?) = false
         override suspend fun resolveDeferredUrl(url: String, forceMint: Boolean): String? = null
     }
     private var provider: StreamSourceProvider? = null

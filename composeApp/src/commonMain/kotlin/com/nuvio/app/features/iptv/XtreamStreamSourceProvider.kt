@@ -51,7 +51,7 @@ internal object XtreamStreamSourceProvider : StreamSourceProvider {
     override fun isMatchSourceId(providerAddonId: String): Boolean =
         providerAddonId.startsWith(XtreamStreamSource.GROUP_ID_PREFIX)
 
-    override fun isDeferredUrl(url: String): Boolean = XtreamStreamSource.isDeferred(url)
+    override fun isDeferredUrl(url: String?): Boolean = XtreamStreamSource.isDeferred(url)
 
     override suspend fun resolveDeferredUrl(url: String, forceMint: Boolean): String? =
         XtreamStreamSource.resolveDeferredUrl(url, forceMint = forceMint)
