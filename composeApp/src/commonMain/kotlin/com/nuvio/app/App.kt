@@ -47,11 +47,9 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import com.nuvio.app.features.player.ImmersivePlaybackGate
-import com.nuvio.app.features.iptv.IptvRefreshScheduler
 import com.nuvio.app.features.iptv.XtreamHubScreen
 import com.nuvio.app.features.radar.SportsHubScreen
 import com.nuvio.app.features.iptv.XtreamItemRegistry
-import com.nuvio.app.features.iptv.XtreamRepository
 import com.nuvio.app.features.iptv.toMetaPreview
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.LaunchedEffect
@@ -501,7 +499,7 @@ private suspend fun warmProfileBoundRepositories() {
         ProfileSettingsSync.startObserving()
         // Warm the IPTV catalog indexes off the critical path so the first
         // play/search doesn't pay the full-catalog download on demand.
-        XtreamRepository.warmUpMatchIndexes(startDelayMs = 10_000)
+        com.nuvio.app.core.contracts.IptvCatalogAccess.catalog.warmUpMatchIndexes(startDelayMs = 10_000)
     }
 }
 
@@ -1216,7 +1214,7 @@ private fun MainAppContent(
         if (!ownsAppRuntime) return@LaunchedEffect
         // Restores anything a previous process left unsent and starts the flush timer. Guarded
         // because nothing about recommendation telemetry may ever affect app startup.
-        runCatching { com.nuvio.app.core.rec.RecEventLogger.start() }
+        runCatching { com.nuvio.app.core.contracts.RecTrackingAccess.reporter.startLogging() }
         NetworkStatusRepository.ensureStarted()
         EpisodeReleaseNotificationsRepository.refreshAsync()
         kotlinx.coroutines.delay(5_000)
@@ -1346,7 +1344,7 @@ private fun MainAppContent(
     // WorkManager worker from MainActivity instead, so this stays iOS-only to avoid double work.
     LaunchedEffect(Unit) {
         if (isIos) {
-            runCatching { IptvRefreshScheduler.refreshDuePlaylists() }
+            runCatching { com.nuvio.app.core.contracts.IptvCatalogAccess.catalog.refreshDuePlaylists() }
         }
     }
 

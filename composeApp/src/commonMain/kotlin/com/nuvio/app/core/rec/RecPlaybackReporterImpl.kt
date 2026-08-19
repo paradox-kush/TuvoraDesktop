@@ -4,6 +4,10 @@ import com.nuvio.app.core.contracts.RecPlaybackReporter
 import com.nuvio.app.core.contracts.RecSettings
 
 internal object RecPlaybackReporterImpl : RecPlaybackReporter {
+    override fun startLogging() {
+        RecEventLogger.start()
+    }
+
     override fun onProgress(
         itemId: String,
         contentType: String,

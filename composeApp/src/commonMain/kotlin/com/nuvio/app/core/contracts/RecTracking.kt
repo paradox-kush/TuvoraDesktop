@@ -8,6 +8,9 @@ import kotlinx.coroutines.flow.StateFlow
  * code off features/core.rec.
  */
 interface RecPlaybackReporter {
+    /** Start the rec event pipeline (restore unsent events + flush timer). */
+    fun startLogging()
+
     fun onProgress(
         itemId: String,
         contentType: String,

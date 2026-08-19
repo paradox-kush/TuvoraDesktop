@@ -66,7 +66,11 @@ object XtreamRepository : IptvCatalog {
      * fresh index short-circuits. Called at app start with a delay so the home
      * screen wins the cold-start bandwidth.
      */
-    fun warmUpMatchIndexes(startDelayMs: Long = 0L) {
+    override suspend fun refreshDuePlaylists() {
+        IptvRefreshScheduler.refreshDuePlaylists()
+    }
+
+    override fun warmUpMatchIndexes(startDelayMs: Long) {
         ensureLoaded()
         XtreamTmdbResolver.warmUp(_uiState.value.accounts, startDelayMs)
     }

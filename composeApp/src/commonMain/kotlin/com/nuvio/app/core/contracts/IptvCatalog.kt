@@ -17,6 +17,12 @@ interface IptvCatalog {
 
     /** Count of enabled accounts. */
     val enabledAccountCount: Int
+
+    /** Warm the TMDB<->stream match indexes off the critical path. */
+    fun warmUpMatchIndexes(startDelayMs: Long)
+
+    /** Refresh playlists whose auto-refresh interval is due (iOS foreground path). */
+    suspend fun refreshDuePlaylists()
 }
 
 /** Compose provision (root-provided in FeatureWiring). */
