@@ -1,5 +1,7 @@
 package com.nuvio.app.core.memory
 
+import com.nuvio.app.core.contracts.MemoryTier
+import com.nuvio.app.core.contracts.MemoryTierPolicy
 import kotlin.test.Test
 import kotlin.test.assertEquals
 

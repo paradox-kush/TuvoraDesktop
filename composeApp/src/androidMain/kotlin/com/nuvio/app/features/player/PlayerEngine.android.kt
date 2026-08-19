@@ -72,8 +72,8 @@ import androidx.media3.ui.SubtitleView
 import androidx.media3.ui.CaptionStyleCompat
 import com.nuvio.app.R
 import com.nuvio.app.AppExitReporter
-import com.nuvio.app.core.memory.AndroidMemoryTierProbe
-import com.nuvio.app.core.memory.MemoryTier
+import com.nuvio.app.core.contracts.MemoryPortAccess
+import com.nuvio.app.core.contracts.MemoryTier
 import com.nuvio.app.features.iptv.CatchUpPlayback
 import com.nuvio.app.features.streams.normalizeStreamType
 import `is`.xyz.mpv.BaseMPVView
@@ -403,7 +403,7 @@ private fun ExoPlayerSurface(
         }
 
         val loadControl = DefaultLoadControl.Builder()
-            .setTargetBufferBytes(playerTargetBufferBytes(context))
+            .setTargetBufferBytes(playerTargetBufferBytes())
             // media3's default is already false, but the byte cap above only binds while it is:
             // below minBufferMs loading continues whenever `prioritizeTimeOverSizeThresholds ||
             // !targetBufferSizeReached`, so flipping to true would buffer past the cap that
@@ -1513,7 +1513,7 @@ private class NuvioLibmpvView(
         mpv.setOptionString("network-timeout", "15")
         mpv.setOptionString("tls-verify", "yes")
         mpv.setOptionString("tls-ca-file", "${context.filesDir.path}/cacert.pem")
-        val demuxerBytes = demuxerBytesFor(AndroidMemoryTierProbe.tier(context))
+        val demuxerBytes = demuxerBytesFor(MemoryPortAccess.current().baseTier())
         mpv.setOptionString("demuxer-max-bytes", "${demuxerBytes.maxBytes}").logIfMpvError("demuxer-max-bytes")
         mpv.setOptionString("demuxer-max-back-bytes", "${demuxerBytes.maxBackBytes}").logIfMpvError("demuxer-max-back-bytes")
         Log.i(TAG, "mpv demuxer budget: fwd=${demuxerBytes.maxBytes} back=${demuxerBytes.maxBackBytes}")
@@ -1881,8 +1881,8 @@ internal fun demuxerBytesFor(tier: MemoryTier): MpvDemuxerBytes = when (tier) {
  * on LOW-tier devices — the shared [MemoryTier] selector (isLowRamDevice OR memoryClass ≤ 192)
  * rather than the raw flag, so low-memory-class devices that never set it are covered too.
  */
-private fun playerTargetBufferBytes(context: Context): Int = playerTargetBufferBytes(
-    tier = AndroidMemoryTierProbe.tier(context),
+private fun playerTargetBufferBytes(): Int = playerTargetBufferBytes(
+    tier = MemoryPortAccess.current().baseTier(),
     maxHeapBytes = Runtime.getRuntime().maxMemory(),
 )
 

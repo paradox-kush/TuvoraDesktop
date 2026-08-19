@@ -4,7 +4,7 @@ import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteStatement
 import androidx.sqlite.execSQL
 import com.nuvio.app.core.memory.AppMemory
-import com.nuvio.app.core.memory.MemoryTierPolicy
+import com.nuvio.app.core.contracts.MemoryTierPolicy
 import com.nuvio.app.features.trakt.TraktPlatformClock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

@@ -1,7 +1,7 @@
 package com.nuvio.app.features.player
 
-import com.nuvio.app.core.memory.MemoryTier
-import com.nuvio.app.core.memory.MemoryTierPolicy
+import com.nuvio.app.core.contracts.MemoryTier
+import com.nuvio.app.core.contracts.MemoryTierPolicy
 import kotlin.test.Test
 import kotlin.test.assertEquals
 

@@ -1,4 +1,4 @@
-package com.nuvio.app.core.memory
+package com.nuvio.app.core.contracts
 
 /**
  * The app-wide memory tier. One shared enum; each platform probes itself honestly

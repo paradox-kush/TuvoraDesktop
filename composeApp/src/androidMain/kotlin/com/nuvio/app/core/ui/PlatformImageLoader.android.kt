@@ -8,9 +8,8 @@ import coil3.gif.GifDecoder
 import coil3.memory.MemoryCache
 import coil3.request.allowRgb565
 import coil3.size.Precision
-import com.nuvio.app.core.memory.AndroidMemoryTierProbe
-import com.nuvio.app.core.memory.AppMemory
-import com.nuvio.app.core.memory.MemoryTierPolicy
+import com.nuvio.app.core.contracts.MemoryPortAccess
+import com.nuvio.app.core.contracts.MemoryTierPolicy
 
 internal actual fun ImageLoader.Builder.configurePlatformImageLoader(context: PlatformContext): ImageLoader.Builder =
     components {
@@ -35,9 +34,10 @@ internal actual fun ImageLoader.Builder.configurePlatformImageLoader(context: Pl
         // UNVERIFIED: whether `allowRgb565(true)` below does anything once the hardware-bitmap path
         // wins the config decision. Coil's docs do not state the precedence.
         .memoryCache {
-            val cap = MemoryTierPolicy.imageMemoryCacheBytes(AndroidMemoryTierProbe.tier(context))
+            val memory = MemoryPortAccess.current()
+            val cap = MemoryTierPolicy.imageMemoryCacheBytes(memory.baseTier())
             val cache = MemoryCache.Builder().maxSizeBytes(cap).build()
-            AppMemory.registry.register("image_memory_cache", cap, priority = 0) { cache.clear() }
+            memory.registerBudget("image_memory_cache", cap, priority = 0) { cache.clear() }
             cache
         }
         .allowRgb565(true)

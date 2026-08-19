@@ -3,7 +3,11 @@ package com.nuvio.app
 import androidx.compose.ui.uikit.OnFocusBehavior
 import androidx.compose.ui.window.ComposeUIViewController
 import com.nuvio.app.core.ui.NativeProfileSwitcherController
+import com.nuvio.app.core.contracts.MemoryPortAccess
+import com.nuvio.app.core.contracts.MemoryTierPolicy
+import com.nuvio.app.features.common.lifecycle.FeatureRegistry
 import com.nuvio.app.navigation.AppRoute
+import platform.Foundation.NSProcessInfo
 import platform.UIKit.UIColor
 import platform.UIKit.UIViewController
 
@@ -69,9 +73,29 @@ fun ScreenViewController(
 
 private fun nuvioComposeViewController(
     content: @androidx.compose.runtime.Composable () -> Unit,
-): UIViewController = ComposeUIViewController(
-    configure = { onFocusBehavior = OnFocusBehavior.DoNothing },
-    content = content,
-).apply {
-    view.backgroundColor = nuvioBackgroundColor
+): UIViewController {
+    ensureIosRuntimeBootstrapped()
+    return ComposeUIViewController(
+        configure = { onFocusBehavior = OnFocusBehavior.DoNothing },
+        content = content,
+    ).apply {
+        view.backgroundColor = nuvioBackgroundColor
+    }
+}
+
+/**
+ * iOS process bootstrap — the Kotlin analog of NuvioApplication.onCreate. Swift's iOSApp.init
+ * wires only analytics and the memory-pressure source, so registerFeatureContributions() was
+ * never called on iOS and every feature port sat unregistered (IptvCatalog.current would throw).
+ * Runs at the single ComposeUIViewController chokepoint, before any composition reads a port.
+ */
+private fun ensureIosRuntimeBootstrapped() {
+    if (!FeatureRegistry.isInitialized) {
+        registerFeatureContributions()
+    }
+    // Static half of the iOS memory probe (ProcessInfo.physicalMemory); the dynamic pressure
+    // half is DispatchSource in iOSApp.swift feeding AppMemory.onPressure/onRelax.
+    MemoryPortAccess.current().setBaseTier(
+        MemoryTierPolicy.iosTier(NSProcessInfo.processInfo.physicalMemory.toLong()),
+    )
 }

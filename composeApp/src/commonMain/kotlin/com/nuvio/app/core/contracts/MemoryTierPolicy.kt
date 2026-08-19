@@ -1,4 +1,4 @@
-package com.nuvio.app.core.memory
+package com.nuvio.app.core.contracts
 
 /**
  * Pure tier decisions — the platform probes feed OS facts in, the tier comes out.

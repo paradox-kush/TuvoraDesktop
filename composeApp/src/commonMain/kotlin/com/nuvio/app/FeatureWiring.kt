@@ -4,6 +4,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import co.touchlab.kermit.Logger
 import com.nuvio.app.features.common.lifecycle.FeatureRegistry
+import com.nuvio.app.core.contracts.MemoryPortAccess
+import com.nuvio.app.core.memory.MemoryPortImpl
 import com.nuvio.app.features.common.lifecycle.LocalRevertFailureSink
 import com.nuvio.app.core.contracts.IptvCatalogAccess
 import com.nuvio.app.core.contracts.IptvContentClassifierAccess
@@ -76,6 +78,9 @@ private val revertLog = Logger.withTag("EffectScope")
  * NEVER call from a @Composable body (recomposition re-runs it — same crash class).
  */
 fun registerFeatureContributions() {
+    // S10: app-wide memory port (AppMemory + BudgetRegistry) — image loaders, player buffer
+    // sizing, and the platform startup probes size their budgets through this.
+    MemoryPortAccess.register(MemoryPortImpl)
     // S3a: register the IptvCatalog read port for non-Compose consumers.
     IptvCatalogAccess.register(XtreamRepository)
     IptvContentClassifierAccess.register(XtreamContentClassifier)

@@ -14,6 +14,8 @@ import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import androidx.compose.ui.unit.dp
+import com.nuvio.app.core.contracts.MemoryPortAccess
+import com.nuvio.app.core.contracts.MemoryTierPolicy
 import com.nuvio.app.core.deeplink.handleAppUrl
 import com.nuvio.app.features.p2p.P2pStreamingEngine
 import com.nuvio.app.features.player.PlatformPlayerSurface
@@ -36,6 +38,9 @@ private const val MacosDarkAquaAppearance = "NSAppearanceNameDarkAqua"
 fun main(args: Array<String>) {
     // Feature-contribution bootstrap (once per process — see FeatureWiring.kt).
     registerFeatureContributions()
+    // Resolve the app-wide memory tier once (desktop is always HIGH — bounded by -Xmx1g and the
+    // Skiko GPU cache cap), before anything sizes a cache from it.
+    MemoryPortAccess.current().setBaseTier(MemoryTierPolicy.desktopTier())
     DesktopReliabilityReporter.start()
     configureDesktopChrome()
     installDesktopOpenUriHandler()

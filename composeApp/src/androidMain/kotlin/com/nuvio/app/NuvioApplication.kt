@@ -1,10 +1,13 @@
 package com.nuvio.app
 
 import android.app.Application
+import android.app.ActivityManager
 import android.content.ComponentCallbacks2
+import android.content.Context
 import com.nuvio.app.core.analytics.PostHogPrivacy
-import com.nuvio.app.core.memory.AndroidMemoryTierProbe
-import com.nuvio.app.core.memory.AppMemory
+import com.nuvio.app.core.contracts.MemoryPortAccess
+import com.nuvio.app.core.contracts.MemoryTier
+import com.nuvio.app.core.contracts.MemoryTierPolicy
 import com.nuvio.app.features.settings.SentrySettingsRepository
 import com.nuvio.app.features.settings.SentrySettingsStorage
 import com.posthog.PostHog
@@ -29,8 +32,14 @@ class NuvioApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        // Resolve the memory tier once, before anything sizes a cache from it.
-        AndroidMemoryTierProbe.tier(this)
+        // Resolve the app-wide memory tier once, before anything sizes a cache from it. The OS's
+        // own words (ActivityManager) feed the neutral policy; null never happens in practice and
+        // falls to the bigger cache, as before. (Desktop's Android target is vestigial — the real
+        // desktop entrypoint is Main.kt, which sets the tier to HIGH.)
+        val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        val memoryTier = if (activityManager == null) MemoryTier.HIGH
+            else MemoryTierPolicy.androidTier(activityManager.isLowRamDevice, activityManager.memoryClass)
+        MemoryPortAccess.current().setBaseTier(memoryTier)
         SentrySettingsStorage.initialize(this)
         SentrySettingsRepository.ensureLoaded()
         val crashReportsEnabled = SentrySettingsRepository.enabled.value
@@ -87,7 +96,7 @@ class NuvioApplication : Application() {
         if (level == ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN ||
             level == ComponentCallbacks2.TRIM_MEMORY_BACKGROUND
         ) {
-            AppMemory.trimCaches()
+            MemoryPortAccess.current().trimCaches()
         }
         AppExitReporter.recordMemorySnapshot(this, "trim_memory", level)
     }

@@ -1,5 +1,7 @@
 package com.nuvio.app.core.memory
 
+import com.nuvio.app.core.contracts.MemoryTier
+
 import kotlin.time.TimeSource
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized

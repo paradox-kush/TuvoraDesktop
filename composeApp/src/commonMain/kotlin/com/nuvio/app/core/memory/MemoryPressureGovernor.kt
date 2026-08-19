@@ -1,5 +1,7 @@
 package com.nuvio.app.core.memory
 
+import com.nuvio.app.core.contracts.MemoryTier
+
 /**
  * Transient pressure escalation with anti-flap, shared by every platform's pressure source
  * (iOS DispatchSource.memoryPressure today; Android has no foreground signal since 14).
