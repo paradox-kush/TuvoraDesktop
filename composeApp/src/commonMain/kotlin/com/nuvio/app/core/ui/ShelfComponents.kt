@@ -62,8 +62,6 @@ import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.home_view_all
 import nuvio.composeapp.generated.resources.poster_logo_content_description
 import org.jetbrains.compose.resources.stringResource
-import com.nuvio.app.core.rec.RecRowImpressions
-import com.nuvio.app.core.rec.RecShelfTracking
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -93,21 +91,15 @@ fun <T> NuvioShelfSection(
     key: ((T) -> Any)? = null,
     animatePlacement: Boolean = false,
     state: LazyListState = rememberLazyListState(),
-    recTracking: RecShelfTracking<T>? = null,
+    impressionsAttach: (@Composable (listState: LazyListState) -> Unit)? = null,
     endContent: (@Composable () -> Unit)? = null,
     itemContent: @Composable (T) -> Unit,
 ) {
-    // Recommendation impressions. Opt-in per call site rather than automatic, because this
-    // composable is generic over T and cannot know how to identify an arbitrary entry.
-    recTracking?.let { tracking ->
-        RecRowImpressions(
-            listState = state,
-            surface = tracking.surface,
-            rowId = tracking.rowId,
-            rowIndex = tracking.rowIndex,
-            itemAt = { index -> entries.getOrNull(index)?.let(tracking.itemOf) },
-        )
-    }
+    // Scroll-state observation slot (Invariant S). This is a generic design-system shelf and must
+    // not know about recommendations: it only exposes its LazyListState so a caller can attach an
+    // observer (impression logging, etc.). Fork call sites pass a RecRowImpressions lambda; every
+    // other caller passes nothing and the shelf stays rec-agnostic.
+    impressionsAttach?.invoke(state)
     val tokens = MaterialTheme.nuvio
     val duplicateSafeEntries = remember(entries, key) {
         key?.let { entries.withDuplicateSafeLazyKeys(it) }

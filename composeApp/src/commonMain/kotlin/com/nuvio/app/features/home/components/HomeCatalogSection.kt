@@ -109,20 +109,28 @@ private fun HomeCatalogRowSectionContent(
         key = { item -> item.stableKey() },
         // section.key is the catalogue's stable identity (addon + catalog), which is what makes
         // "this row performs better than that one" answerable across sessions and releases.
-        recTracking = com.nuvio.app.core.rec.RecShelfTracking(
-            surface = com.nuvio.app.core.rec.RecSurface.HOME,
-            rowId = section.key,
-            itemOf = { preview ->
-                com.nuvio.app.core.rec.RecImpressionItem(
-                    itemId = preview.id,
-                    contentType = com.nuvio.app.core.rec.recContentTypeOf(
-                        contentType = preview.type,
-                        season = null,
-                        episode = null,
-                    ),
-                )
-            },
-        ),
+        // The shelf exposes only its scroll state (Invariant S); home owns the rec mapping and
+        // attaches the impression observer here, so core/ui never imports the rec subsystem.
+        impressionsAttach = { listState ->
+            com.nuvio.app.core.rec.RecRowImpressions(
+                listState = listState,
+                surface = com.nuvio.app.core.rec.RecSurface.HOME,
+                rowId = section.key,
+                rowIndex = null,
+                itemAt = { index ->
+                    entries.getOrNull(index)?.let { preview ->
+                        com.nuvio.app.core.rec.RecImpressionItem(
+                            itemId = preview.id,
+                            contentType = com.nuvio.app.core.rec.recContentTypeOf(
+                                contentType = preview.type,
+                                season = null,
+                                episode = null,
+                            ),
+                        )
+                    }
+                },
+            )
+        },
     ) { item ->
         HomePosterCard(
             item = item,
