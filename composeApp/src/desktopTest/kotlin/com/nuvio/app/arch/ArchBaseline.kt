@@ -12,7 +12,6 @@ object ArchBaseline {
         "androidMain/kotlin/com/nuvio/app/NuvioApplication.kt",
         "androidMain/kotlin/com/nuvio/app/core/ui/PlatformImageLoader.android.kt",
         "androidMain/kotlin/com/nuvio/app/features/player/PlayerEngine.android.kt",
-        "commonMain/kotlin/com/nuvio/app/App.kt",
         "desktopMain/kotlin/com/nuvio/app/core/ui/PlatformImageLoader.desktop.kt",
         "iosMain/kotlin/com/nuvio/app/core/ui/PlatformImageLoader.ios.kt",
         "iosMain/kotlin/com/nuvio/app/features/player/PlayerEngine.ios.kt",

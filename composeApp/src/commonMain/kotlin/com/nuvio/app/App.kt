@@ -47,8 +47,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import com.nuvio.app.features.player.ImmersivePlaybackGate
-import com.nuvio.app.features.iptv.XtreamHubScreen
-import com.nuvio.app.features.radar.SportsHubScreen
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -198,7 +196,6 @@ import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.player.LiveReplayLaunch
 import com.nuvio.app.features.player.PlayerLaunch
 import com.nuvio.app.features.player.PlayerLaunchStore
-import com.nuvio.app.features.livetv.LiveTvScreen
 import com.nuvio.app.features.player.PlayerScreen
 import com.nuvio.app.features.player.PlayerPlaybackSnapshot
 import com.nuvio.app.features.player.ExternalPlayerIntentResult
@@ -3453,7 +3450,7 @@ private fun MainAppContent(
                             ImmersivePlaybackGate.setImmersive(false)
                         }
                     }
-                    LiveTvScreen(
+                    com.nuvio.app.core.contracts.LiveTvContentAccess.current()?.Render(
                         initialContentId = launch.videoId,
                         initialTitle = launch.title,
                         initialLogo = launch.logo,
@@ -4219,7 +4216,7 @@ private fun AppTabHost(
                         }
 
                         AppScreenTab.Iptv -> {
-                            XtreamHubScreen(
+                            com.nuvio.app.core.contracts.IptvHubContentAccess.current()?.Render(
                                 modifier = Modifier.fillMaxSize(),
                                 onPosterClick = { meta -> onPosterClick?.invoke(meta) },
                                 onPlayLiveChannel = onPlayLiveChannel,
@@ -4230,7 +4227,7 @@ private fun AppTabHost(
                         }
 
                         AppScreenTab.Sports -> {
-                            SportsHubScreen(
+                            com.nuvio.app.core.contracts.SportsHubContentAccess.current()?.Render(
                                 modifier = Modifier.fillMaxSize(),
                                 // Matched channels are registry-registered live ids — same play route
                                 // as the IPTV hub; the no-playlist CTA deep-links to IPTV settings.

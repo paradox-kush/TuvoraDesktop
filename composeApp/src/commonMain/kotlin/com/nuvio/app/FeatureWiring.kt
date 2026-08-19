@@ -41,6 +41,12 @@ import com.nuvio.app.core.contracts.PlaybackGateAccess
 import com.nuvio.app.features.iptv.IptvPlaybackGateAdapter
 import com.nuvio.app.core.contracts.LivePlaybackAccess
 import com.nuvio.app.features.iptv.XtreamLivePlaybackProvider
+import com.nuvio.app.core.contracts.IptvHubContentAccess
+import com.nuvio.app.features.iptv.XtreamHubContent
+import com.nuvio.app.core.contracts.SportsHubContentAccess
+import com.nuvio.app.features.radar.RadarHubContent
+import com.nuvio.app.core.contracts.LiveTvContentAccess
+import com.nuvio.app.features.livetv.LiveTvContentImpl
 
 /**
  * THE one firewall exception (rules doc Rule 1 / R2b): the only non-fork file allowed to name fork
@@ -91,6 +97,9 @@ fun registerFeatureContributions() {
     MetaSourceAccess.register(XtreamMetaSource)
     PlaybackGateAccess.register(IptvPlaybackGateAdapter)
     LivePlaybackAccess.register(XtreamLivePlaybackProvider)
+    IptvHubContentAccess.register(XtreamHubContent)
+    SportsHubContentAccess.register(RadarHubContent)
+    LiveTvContentAccess.register(LiveTvContentImpl)
     FeatureRegistry.markInitialized()
 }
 
