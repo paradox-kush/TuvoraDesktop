@@ -62,7 +62,7 @@ object RadarChannelMatcher {
     data class ChannelMatch(
         val channel: CandidateChannel,
         /** The EPG programme that matched, when the panel has EPG for this channel. */
-        val programme: XtreamProgram?,
+        val programme: SportsProgramme?,
         val score: Int,
         val via: MatchVia = MatchVia.NAME,
         /** Short language/region tag ("FR", "AR") or the broadcaster country ("France"). */
@@ -143,7 +143,7 @@ object RadarChannelMatcher {
                     semaphore.withPermit {
                         val programmes = epgFor(m.channel)
                         val hit = bestProgramme(programmes, start, fixture.sport, keywords, homeTokens, awayTokens, eventTokens)
-                        if (hit != null) m.copy(programme = hit.first, score = m.score / 10 + hit.second) else m
+                        if (hit != null) m.copy(programme = hit.first.toSportsProgramme(), score = m.score / 10 + hit.second) else m
                     }
                 }
             }.awaitAll() + named.drop(EPG_PROBE_CAP)
@@ -225,7 +225,7 @@ object RadarChannelMatcher {
                     add(
                         ChannelMatch(
                             channel,
-                            programme = XtreamProgram(p.title, p.desc.orEmpty(), p.startMs, p.endMs, false),
+                            programme = SportsProgramme(p.title, p.desc.orEmpty(), p.startMs, p.endMs),
                             score = MIRROR_BASE_SCORE + score / 10,
                             via = MatchVia.EPG,
                         )
@@ -271,7 +271,7 @@ object RadarChannelMatcher {
                     add(
                         ChannelMatch(
                             channel = c,
-                            programme = XtreamProgram(p.title, p.desc.orEmpty(), p.startMs, p.endMs, nowPlaying = false),
+                            programme = SportsProgramme(p.title, p.desc.orEmpty(), p.startMs, p.endMs),
                             score = MIRROR_BASE_SCORE + score / 10,
                             via = MatchVia.EPG,
                             language = EpgLang.of(epgId, c.name, p.title),
@@ -521,6 +521,9 @@ object RadarChannelMatcher {
             else -> 0
         }
     }
+
+    private fun XtreamProgram.toSportsProgramme(): SportsProgramme =
+        SportsProgramme(title, description, startMs, endMs)
 
     private fun bestProgramme(
         programmes: List<XtreamProgram>,

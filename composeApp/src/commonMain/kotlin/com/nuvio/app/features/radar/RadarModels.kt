@@ -377,3 +377,16 @@ val RADAR_LEAGUE_COUNTRIES: List<String> = listOf(
     "Saudi Arabia", "Egypt", "Morocco", "Japan", "South Korea", "China", "Australia",
     "India", "Pakistan", "South Africa", "Nigeria",
 )
+
+/**
+ * Neutral programme value (seam S1) — radar-owned, replacing the iptv-owned XtreamProgram in the
+ * matcher's public ChannelMatch surface (R2c). The matcher still reads panel EPG as XtreamProgram
+ * internally (fork→fork is allowed); only the type that crosses the matcher's public boundary is
+ * neutralised, so a future non-radar consumer never sees an iptv type.
+ */
+data class SportsProgramme(
+    val title: String,
+    val description: String,
+    val startMs: Long,
+    val endMs: Long,
+)
