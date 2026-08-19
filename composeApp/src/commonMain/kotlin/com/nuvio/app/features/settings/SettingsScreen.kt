@@ -49,14 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.max
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.nuvio.app.features.iptv.XtreamAddPage
-import com.nuvio.app.features.iptv.XtreamContentPage
-import com.nuvio.app.features.iptv.XtreamRepository
-import com.nuvio.app.features.iptv.XtreamUiState
-import com.nuvio.app.features.iptv.xtreamAddPlaylistContent
-import com.nuvio.app.features.iptv.xtreamCategoryChecklistContent
-import com.nuvio.app.features.iptv.xtreamContentSettingsContent
-import com.nuvio.app.features.iptv.xtreamSettingsContent
+import com.nuvio.app.core.contracts.IptvSettingsSectionAccess
 import com.nuvio.app.core.ui.AppTheme
 import com.nuvio.app.core.ui.LocalNuvioBottomNavigationOverlayPadding
 import com.nuvio.app.core.ui.NuvioDesktopVerticalScrollbar
@@ -95,7 +88,6 @@ import com.nuvio.app.features.tmdb.TmdbSettingsRepository
 import com.nuvio.app.features.watchprogress.ContinueWatchingPreferencesRepository
 import com.nuvio.app.features.watchprogress.ContinueWatchingPreferencesUiState
 import nuvio.composeapp.generated.resources.Res
-import nuvio.composeapp.generated.resources.compose_settings_page_iptv_edit_playlist
 import nuvio.composeapp.generated.resources.compose_settings_page_root
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -117,16 +109,14 @@ private fun SettingsPage.isEnabledByPolicy(): Boolean =
     }
 
 /**
- * Header title for a page. The IPTV Add-Playlist page is reused for both add and edit, so it flips
- * its title from the shared XtreamAddPage state; every other page just uses its static title res.
+ * Header title for a page. Feature-owned pages (e.g. the IPTV Add-Playlist page, reused for both add
+ * and edit) may override their title via the registered section; every other page uses its static
+ * title res. The override keeps the Xtream state out of this shared screen (firewall).
  */
 @Composable
 private fun settingsPageHeaderTitle(page: SettingsPage): String =
-    if (page == SettingsPage.IptvAddPlaylist && XtreamAddPage.isEdit) {
-        stringResource(Res.string.compose_settings_page_iptv_edit_playlist)
-    } else {
-        stringResource(page.titleRes)
-    }
+    IptvSettingsSectionAccess.current()?.headerTitleOrNull(page)
+        ?: stringResource(page.titleRes)
 
 @Composable
 fun SettingsScreen(
@@ -179,10 +169,6 @@ fun SettingsScreen(
         val debridSettings by remember {
             DebridSettingsRepository.ensureLoaded()
             DebridSettingsRepository.uiState
-        }.collectAsStateWithLifecycle()
-        val xtreamState by remember {
-            XtreamRepository.ensureLoaded()
-            XtreamRepository.uiState
         }.collectAsStateWithLifecycle()
         val traktAuthUiState by remember {
             TraktAuthRepository.ensureLoaded()
@@ -343,7 +329,6 @@ fun SettingsScreen(
                 tmdbSettings = tmdbSettings,
                 mdbListSettings = mdbListSettings,
                 debridSettings = debridSettings,
-                xtreamState = xtreamState,
                 traktAuthUiState = traktAuthUiState,
                 simklAuthUiState = simklAuthUiState,
                 traktCommentsEnabled = traktCommentsEnabled,
@@ -403,7 +388,6 @@ fun SettingsScreen(
                 tmdbSettings = tmdbSettings,
                 mdbListSettings = mdbListSettings,
                 debridSettings = debridSettings,
-                xtreamState = xtreamState,
                 traktAuthUiState = traktAuthUiState,
                 simklAuthUiState = simklAuthUiState,
                 traktCommentsEnabled = traktCommentsEnabled,
@@ -473,7 +457,6 @@ private fun MobileSettingsScreen(
     tmdbSettings: TmdbSettings,
     mdbListSettings: MdbListSettings,
     debridSettings: DebridSettings,
-    xtreamState: XtreamUiState,
     traktAuthUiState: TraktAuthUiState,
     simklAuthUiState: SimklAuthUiState,
     traktCommentsEnabled: Boolean,
@@ -500,6 +483,8 @@ private fun MobileSettingsScreen(
     onCollectionsClick: () -> Unit = {},
 ) {
     val saveableStateHolder = rememberSaveableStateHolder()
+    val iptvSection = IptvSettingsSectionAccess.current()
+    val iptvSettingsState = if (iptvSection != null) iptvSection.rememberState() else null
     saveableStateHolder.SaveableStateProvider(page.name) {
         var settingsSearchQuery by rememberSaveable { mutableStateOf("") }
         var rootSearchVisible by rememberSaveable { mutableStateOf(false) }
@@ -746,53 +731,19 @@ private fun MobileSettingsScreen(
                     isTablet = false,
                     settings = debridSettings,
                 )
-                SettingsPage.Iptv -> xtreamSettingsContent(
-                    isTablet = false,
-                    state = xtreamState,
-                    onAddPlaylist = {
-                        XtreamRepository.clearError()
-                        XtreamAddPage.openAdd()
-                        onPageChange(SettingsPage.IptvAddPlaylist)
-                    },
-                    onEditPlaylist = { account ->
-                        XtreamRepository.clearError()
-                        XtreamAddPage.openEdit(account.id)
-                        onPageChange(SettingsPage.IptvAddPlaylist)
-                    },
-                    onOpenContent = { account ->
-                        XtreamContentPage.open(account.id)
-                        onPageChange(SettingsPage.IptvContent)
-                    },
-                )
-                SettingsPage.IptvAddPlaylist -> xtreamAddPlaylistContent(
-                    isTablet = false,
-                    state = xtreamState,
-                    onDone = { onPageChange(SettingsPage.Iptv) },
-                )
-                SettingsPage.IptvContent -> if (XtreamContentPage.accountId == null) {
-                    // Process-death restore: the page survives (rememberSaveable) but the
-                    // target playlist id is a plain var — bounce back to the playlist list.
-                    item { LaunchedEffect(Unit) { onPageChange(SettingsPage.Iptv) } }
-                } else {
-                    xtreamContentSettingsContent(
-                        isTablet = false,
-                        state = xtreamState,
-                        onOpenType = { type ->
-                            XtreamContentPage.openChecklist(type)
-                            onPageChange(SettingsPage.IptvCategoryChecklist)
-                        },
-                    )
-                }
-                SettingsPage.IptvCategoryChecklist -> if (
-                    XtreamContentPage.accountId == null || XtreamContentPage.type == null
-                ) {
-                    // Process-death restore: the drilled-into type is a plain var — bounce back.
-                    item { LaunchedEffect(Unit) { onPageChange(SettingsPage.Iptv) } }
-                } else {
-                    xtreamCategoryChecklistContent(
-                        isTablet = false,
-                        state = xtreamState,
-                    )
+                SettingsPage.Iptv,
+                SettingsPage.IptvAddPlaylist,
+                SettingsPage.IptvContent,
+                SettingsPage.IptvCategoryChecklist -> {
+                    // IPTV settings pages live in the fork's IptvSettingsSection (firewall); this
+                    // shared screen only forwards the page + its opaque state into the list.
+                    val section = iptvSection
+                    val handle = iptvSettingsState
+                    if (section != null && handle != null) {
+                        with(section) {
+                            renderPage(page, isTablet = false, state = handle, onPageChange = onPageChange)
+                        }
+                    }
                 }
                 SettingsPage.TraktAuthentication -> trackingSettingsContent(
                     isTablet = false,
@@ -889,7 +840,6 @@ private fun TabletSettingsScreen(
     tmdbSettings: TmdbSettings,
     mdbListSettings: MdbListSettings,
     debridSettings: DebridSettings,
-    xtreamState: XtreamUiState,
     traktAuthUiState: TraktAuthUiState,
     simklAuthUiState: SimklAuthUiState,
     traktCommentsEnabled: Boolean,
@@ -910,6 +860,8 @@ private fun TabletSettingsScreen(
     onCollectionsClick: () -> Unit = {},
 ) {
     var selectedCategory by rememberSaveable { mutableStateOf(SettingsCategory.General.name) }
+    val iptvSection = IptvSettingsSectionAccess.current()
+    val iptvSettingsState = if (iptvSection != null) iptvSection.rememberState() else null
     val activeCategory = SettingsCategory.valueOf(selectedCategory)
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val topOffset = max(statusBarPadding + 24.dp, 48.dp) + 64.dp
@@ -1221,53 +1173,19 @@ private fun TabletSettingsScreen(
                             isTablet = true,
                             settings = debridSettings,
                         )
-                        SettingsPage.Iptv -> xtreamSettingsContent(
-                            isTablet = true,
-                            state = xtreamState,
-                            onAddPlaylist = {
-                                XtreamRepository.clearError()
-                                XtreamAddPage.openAdd()
-                                onPageChange(SettingsPage.IptvAddPlaylist)
-                            },
-                            onEditPlaylist = { account ->
-                                XtreamRepository.clearError()
-                                XtreamAddPage.openEdit(account.id)
-                                onPageChange(SettingsPage.IptvAddPlaylist)
-                            },
-                            onOpenContent = { account ->
-                                XtreamContentPage.open(account.id)
-                                onPageChange(SettingsPage.IptvContent)
-                            },
-                        )
-                        SettingsPage.IptvAddPlaylist -> xtreamAddPlaylistContent(
-                            isTablet = true,
-                            state = xtreamState,
-                            onDone = { onPageChange(SettingsPage.Iptv) },
-                        )
-                        SettingsPage.IptvContent -> if (XtreamContentPage.accountId == null) {
-                            // Process-death restore: the page survives (rememberSaveable) but the
-                            // target playlist id is a plain var — bounce back to the playlist list.
-                            item { LaunchedEffect(Unit) { onPageChange(SettingsPage.Iptv) } }
-                        } else {
-                            xtreamContentSettingsContent(
-                                isTablet = true,
-                                state = xtreamState,
-                                onOpenType = { type ->
-                                    XtreamContentPage.openChecklist(type)
-                                    onPageChange(SettingsPage.IptvCategoryChecklist)
-                                },
-                            )
-                        }
-                        SettingsPage.IptvCategoryChecklist -> if (
-                            XtreamContentPage.accountId == null || XtreamContentPage.type == null
-                        ) {
-                            // Process-death restore: the drilled-into type is a plain var — bounce back.
-                            item { LaunchedEffect(Unit) { onPageChange(SettingsPage.Iptv) } }
-                        } else {
-                            xtreamCategoryChecklistContent(
-                                isTablet = true,
-                                state = xtreamState,
-                            )
+                        SettingsPage.Iptv,
+                        SettingsPage.IptvAddPlaylist,
+                        SettingsPage.IptvContent,
+                        SettingsPage.IptvCategoryChecklist -> {
+                            // IPTV settings pages live in the fork's IptvSettingsSection (firewall);
+                            // this shared screen only forwards the page + opaque state into the list.
+                            val section = iptvSection
+                            val handle = iptvSettingsState
+                            if (section != null && handle != null) {
+                                with(section) {
+                                    renderPage(page, isTablet = true, state = handle, onPageChange = onPageChange)
+                                }
+                            }
                         }
                         SettingsPage.TraktAuthentication -> trackingSettingsContent(
                             isTablet = true,
