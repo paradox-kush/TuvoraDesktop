@@ -14,9 +14,17 @@ interface IptvContentClassifier {
     fun isXtreamStreamGroup(addonId: String): Boolean
 }
 
+/** No iptv feature wired (tests, previews, IPTV-free builds) → nothing is iptv content. */
+private object NoOpIptvContentClassifier : IptvContentClassifier {
+    override fun isLiveId(id: String) = false
+    override fun isOrphaned(id: String) = false
+    override fun isXtreamId(id: String) = false
+    override fun posterFor(id: String): String? = null
+    override fun isXtreamStreamGroup(addonId: String) = false
+}
+
 object IptvContentClassifierAccess {
-    private var instance: IptvContentClassifier? = null
-    val classifier: IptvContentClassifier
-        get() = instance ?: error("IptvContentClassifier not registered — see FeatureWiring")
+    private var instance: IptvContentClassifier = NoOpIptvContentClassifier
+    val classifier: IptvContentClassifier get() = instance
     fun register(classifier: IptvContentClassifier) { instance = classifier }
 }

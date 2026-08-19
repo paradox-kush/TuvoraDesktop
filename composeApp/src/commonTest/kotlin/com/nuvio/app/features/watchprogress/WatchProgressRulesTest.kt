@@ -3,6 +3,7 @@ package com.nuvio.app.features.watchprogress
 import com.nuvio.app.features.cloud.TorboxCloudLibraryPosterUrl
 import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.trakt.parseTraktIsoDateTimeToEpochMs
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -10,6 +11,18 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class WatchProgressRulesTest {
+
+    // Neutral fake (no fork import → no firewall crossing) replicating the pure classifier logic.
+    private object TestIptvClassifier : com.nuvio.app.core.contracts.IptvContentClassifier {
+        override fun isLiveId(id: String) = id.contains(":live:")
+        override fun isOrphaned(id: String) = false
+        override fun isXtreamId(id: String) = id.startsWith("xtream:")
+        override fun posterFor(id: String): String? = null
+        override fun isXtreamStreamGroup(addonId: String) = addonId.startsWith("xtream-match:")
+    }
+
+    @BeforeTest
+    fun registerClassifier() { com.nuvio.app.core.contracts.IptvContentClassifierAccess.register(TestIptvClassifier) }
 
     @Test
     fun `codec round trips entries in descending updated order`() {
