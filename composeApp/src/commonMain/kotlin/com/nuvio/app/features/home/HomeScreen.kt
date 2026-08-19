@@ -127,7 +127,7 @@ fun HomeScreen(
     onFirstCatalogRendered: (() -> Unit)? = null,
     onOpenSportsTab: () -> Unit = {},
     onPlaySportsChannel: (String) -> Unit = {},
-    onPlaySportsReplay: (com.nuvio.app.features.radar.RadarChannelMatcher.SportsReplay) -> Unit = {},
+    onPlaySportsReplay: (com.nuvio.app.core.contracts.SportsReplay) -> Unit = {},
     onAddIptvPlaylist: () -> Unit = {},
 ) {
     LaunchedEffect(Unit) {

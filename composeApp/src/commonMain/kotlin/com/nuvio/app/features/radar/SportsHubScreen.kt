@@ -1,5 +1,7 @@
 package com.nuvio.app.features.radar
 
+import com.nuvio.app.core.contracts.SportsReplay
+
 import co.touchlab.kermit.Logger
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -97,7 +99,7 @@ fun SportsHubScreen(
     onAddPlaylist: () -> Unit,
     modifier: Modifier = Modifier,
     onOpenRecording: (String) -> Unit = {},
-    onPlayReplay: (RadarChannelMatcher.SportsReplay) -> Unit = {},
+    onPlayReplay: (SportsReplay) -> Unit = {},
 ) {
     val state by RadarRepository.uiState.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) {
@@ -1204,7 +1206,7 @@ internal fun MatchChannelsSheet(
     onDismiss: () -> Unit,
     onOpenRecording: (String) -> Unit = {},
     /** A catch-up replay of the fixture's programme — carries the bounds the player needs. */
-    onPlayReplay: (RadarChannelMatcher.SportsReplay) -> Unit = {},
+    onPlayReplay: (SportsReplay) -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val xtreamState by XtreamRepository.uiState.collectAsStateWithLifecycle()

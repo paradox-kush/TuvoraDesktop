@@ -50,7 +50,6 @@ import com.nuvio.app.features.iptv.IptvPlaybackGate
 import com.nuvio.app.features.player.ImmersivePlaybackGate
 import com.nuvio.app.features.iptv.IptvRefreshScheduler
 import com.nuvio.app.features.iptv.XtreamHubScreen
-import com.nuvio.app.features.radar.RadarChannelMatcher
 import com.nuvio.app.features.radar.SportsHubScreen
 import com.nuvio.app.features.iptv.XtreamItemRegistry
 import com.nuvio.app.features.iptv.XtreamLiveRecents
@@ -112,6 +111,7 @@ import coil3.request.crossfade
 import coil3.svg.SvgDecoder
 import com.nuvio.app.core.analytics.Breadcrumbs
 import com.nuvio.app.core.build.AppFeaturePolicy
+import com.nuvio.app.core.contracts.SportsReplay
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
 import com.nuvio.app.core.deeplink.AppDeepLink
@@ -4139,7 +4139,7 @@ private fun AppTabHost(
     onPosterLongClick: ((MetaPreview) -> Unit)? = null,
     onIptvAddProvider: () -> Unit = {},
     onPlayLiveChannel: (String) -> Unit = {},
-    onPlaySportsReplay: (RadarChannelMatcher.SportsReplay) -> Unit = {},
+    onPlaySportsReplay: (SportsReplay) -> Unit = {},
     onIptvFavoriteChannel: (String) -> Unit = {},
     onOpenSportsTab: () -> Unit = {},
     onLibraryPosterClick: ((LibraryItem) -> Unit)? = null,
@@ -4298,7 +4298,7 @@ private fun AppHomeTabContent(
     onInitialHomeContentRendered: () -> Unit,
     onOpenSportsTab: () -> Unit = {},
     onPlaySportsChannel: (String) -> Unit = {},
-    onPlaySportsReplay: (RadarChannelMatcher.SportsReplay) -> Unit = {},
+    onPlaySportsReplay: (SportsReplay) -> Unit = {},
     onAddIptvPlaylist: () -> Unit = {},
 ) {
     val animateCollectionGifsProvider = remember(tabsRouteActiveState, homeSelected) {

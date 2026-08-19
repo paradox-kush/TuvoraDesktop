@@ -1,5 +1,7 @@
 package com.nuvio.app.features.radar
 
+import com.nuvio.app.core.contracts.SportsReplay
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -47,7 +49,7 @@ fun RadarHomeSection(
     onAddPlaylist: () -> Unit,
     modifier: Modifier = Modifier,
     onOpenRecording: (String) -> Unit = {},
-    onPlayReplay: (RadarChannelMatcher.SportsReplay) -> Unit = {},
+    onPlayReplay: (SportsReplay) -> Unit = {},
 ) {
     val state by RadarRepository.uiState.collectAsStateWithLifecycle()
     val nowMs = RadarTime.nowMs()

@@ -1,5 +1,7 @@
 package com.nuvio.app.features.radar
 
+import com.nuvio.app.core.contracts.SportsReplay
+
 import com.nuvio.app.features.iptv.CatchUpDialectWalk
 import com.nuvio.app.features.iptv.CatchUpPlayback
 import com.nuvio.app.features.iptv.SOURCE_TYPE_STALKER
@@ -178,7 +180,7 @@ class SportsReplayCatchUpTest {
     private fun walk() = CatchUpDialectWalk(FakeMemory())
 
     /** The walk request the screen builds for a replay launch (LiveTvData.catchUpRequest's shape). */
-    private fun requestFor(replay: RadarChannelMatcher.SportsReplay): CatchUpDialectWalk.Request {
+    private fun requestFor(replay: SportsReplay): CatchUpDialectWalk.Request {
         val account = xtreamAccount()
         return CatchUpDialectWalk.Request(
             accountId = account.id,

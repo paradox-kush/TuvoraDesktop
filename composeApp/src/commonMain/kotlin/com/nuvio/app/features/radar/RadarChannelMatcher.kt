@@ -1,5 +1,6 @@
 package com.nuvio.app.features.radar
 
+import com.nuvio.app.core.contracts.SportsReplay
 import com.nuvio.app.features.epg.EpgLang
 import com.nuvio.app.features.epg.EpgMirrorRepository
 import com.nuvio.app.features.epg.EpgNorm
@@ -362,22 +363,6 @@ object RadarChannelMatcher {
             .getOrDefault(emptyList())
     }
 
-    /**
-     * A replayable programme on a matched channel — the bounds the docked Live TV screen turns
-     * into a catch-up session (the SAME session the guide's replays create: flag on, gates
-     * inherited, dialect walk + winner memory instead of one hardcoded timeshift URL shape).
-     *
-     * [contentId] stays the LIVE channel's id — the replay is a flag beside the live identity,
-     * never a synthetic registry item wearing a single-dialect URL.
-     */
-    data class SportsReplay(
-        val contentId: String,
-        val channelName: String,
-        val logo: String?,
-        val programmeTitle: String,
-        val programmeStartMs: Long,
-        val programmeEndMs: Long,
-    )
 
     /**
      * Catch-up Replay for a started/finished fixture on an archived channel: the programme bounds
