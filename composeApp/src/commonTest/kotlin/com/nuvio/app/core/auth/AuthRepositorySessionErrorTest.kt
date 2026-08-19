@@ -23,19 +23,22 @@ class AuthRepositorySessionErrorTest {
     }
 
     @Test
-    fun rejectedRefreshMeansInvalidSession() {
+    fun genuineInvalidSessionMarkersEject() {
         assertTrue(AuthRepository.isInvalidRefreshError(400, "invalid refresh token"))
-        assertTrue(AuthRepository.isInvalidRefreshError(401, ""))
-        assertTrue(AuthRepository.isInvalidRefreshError(403, ""))
         assertTrue(AuthRepository.isInvalidRefreshError(null, "refresh_token_not_found"))
         assertTrue(AuthRepository.isInvalidRefreshError(null, "invalid_grant"))
+        assertTrue(AuthRepository.isInvalidRefreshError(null, "user not found"))
     }
 
     @Test
-    fun transientRefreshFailuresKeepTheSession() {
+    fun bareStatusOrTransientFailuresKeepTheSession() {
+        // recover-not-eject: a bare 400/401/403 without a genuine marker must NOT sign the user out
+        // (a Cloudflare edge-403, a rate-limit, a lapsed access token). See supabase/auth-js#213.
+        assertFalse(AuthRepository.isInvalidRefreshError(401, ""))
+        assertFalse(AuthRepository.isInvalidRefreshError(403, "error 1020 access denied cloudflare"))
+        assertFalse(AuthRepository.isInvalidRefreshError(400, "bad gateway"))
         assertFalse(AuthRepository.isInvalidRefreshError(null, "unable to resolve host"))
         assertFalse(AuthRepository.isInvalidRefreshError(503, "service unavailable"))
-        assertFalse(AuthRepository.isInvalidRefreshError(null, "connection reset by peer"))
         assertFalse(AuthRepository.isInvalidRefreshError(408, "request timeout"))
     }
 }

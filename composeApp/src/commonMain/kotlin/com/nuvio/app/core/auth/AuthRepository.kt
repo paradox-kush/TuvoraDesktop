@@ -21,8 +21,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import nuvio.composeapp.generated.resources.*
@@ -43,7 +41,6 @@ object AuthRepository {
 
     private var initialized = false
     private var validatedRemoteUserId: String? = null
-    private val refreshMutex = Mutex()
 
     /** Asks the app shell to show the sign-in screen (used from Settings while signed out). */
     fun requestSignIn() {
@@ -248,28 +245,19 @@ object AuthRepository {
 
     suspend fun signOutIfSessionInvalid(error: Throwable, source: String): Boolean {
         if (!couldBeInvalidSessionError(error.restStatusCode(), error.authErrorText())) return false
-        val auth = SupabaseProvider.client.auth
-        val staleToken = auth.currentAccessTokenOrNull() ?: return false
 
-        // A 401/jwt-expired usually just means the access token lapsed. The refresh
-        // endpoint is the authority: only a rejected refresh proves the session is dead.
-        val refreshError = refreshMutex.withLock {
-            if (auth.currentAccessTokenOrNull() != staleToken) {
-                null // another caller already refreshed while we waited
-            } else {
-                runCatching { auth.refreshCurrentSession() }.exceptionOrNull()
-            }
-        }
-        if (refreshError == null) {
-            log.i { "$source hit an auth error but the session refreshed; keeping auth state" }
-            return false
-        }
-        if (!isInvalidRefreshError(refreshError.restStatusCode(), refreshError.authErrorText())) {
-            log.w(refreshError) { "$source hit an auth error and the session refresh failed transiently; keeping auth state" }
+        // Single refresher: do NOT fire our own refresh here — it would race supabase-kt's
+        // alwaysAutoRefresh loop on the rotating refresh token and trip GoTrue reuse detection
+        // (refresh_token_not_found -> forced sign-out mid-session; supabase/auth-js#213). Sign out
+        // only if the error ITSELF is a genuine invalid-session / deleted-user marker; otherwise
+        // keep the session and let the loop recover (recover-not-eject). A genuinely revoked or
+        // deleted session is caught by the loop's NotAuthenticated -> restorePersistedSession path.
+        if (!isInvalidRefreshError(error.restStatusCode(), error.authErrorText())) {
+            log.w(error) { "$source hit an auth error that is not a genuine invalid session; keeping auth state" }
             return false
         }
 
-        log.w(error) { "$source failed because the current Supabase account/session is no longer valid; clearing local auth" }
+        log.w(error) { "$source failed because the Supabase account/session is no longer valid; clearing local auth" }
         clearLocalSessionAfterRemoteInvalidation()
         return true
     }
@@ -382,18 +370,22 @@ object AuthRepository {
         }
 
     internal fun isInvalidRefreshError(statusCode: Int?, text: String): Boolean =
-        statusCode == 400 || statusCode == 401 || statusCode == 403 ||
-            listOf(
-                "invalid refresh token",
-                "refresh token not found",
-                "refresh_token_not_found",
-                "invalid_grant",
-                "session not found",
-                "invalid session",
-                "invalid token",
-                "user not found",
-                "user does not exist",
-            ).any { it in text }
+        // recover-not-eject: a bare 400/401/403 is NOT proof the session is dead (a Cloudflare
+        // edge-403, a rate-limit, a lapsed access token). Only a genuine GoTrue invalid-session or
+        // deleted-user marker signs the user out; everything else keeps the session so the
+        // alwaysAutoRefresh loop can recover. See supabase/auth-js#213. (statusCode retained for the
+        // call/test signature; the decision is reason-based.)
+        listOf(
+            "invalid refresh token",
+            "refresh token not found",
+            "refresh_token_not_found",
+            "invalid_grant",
+            "session not found",
+            "invalid session",
+            "invalid token",
+            "user not found",
+            "user does not exist",
+        ).any { it in text }
 
     private inline fun <reified T : Throwable> Throwable.findCause(): T? {
         var current: Throwable? = this
