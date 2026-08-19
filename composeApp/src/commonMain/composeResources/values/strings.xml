@@ -1052,9 +1052,9 @@
     <string name="settings_playback_secondary_subtitle_language">Secondary Preferred Language</string>
     <string name="settings_playback_section_decoder">DECODER</string>
     <string name="settings_playback_engine">Playback Engine</string>
-    <string name="settings_playback_engine_auto_description">Use ExoPlayer first and fall back to libmpv if playback fails.</string>
-    <string name="settings_playback_engine_exoplayer_description">Use ExoPlayer and Android Media3 decoders.</string>
-    <string name="settings_playback_engine_libmpv_description">Use libmpv for Android playback.</string>
+    <string name="settings_playback_engine_auto_description">ExoPlayer, falling back to libmpv only if a stream won\'t start. Blocky or corrupted video that still plays won\'t trigger the switch — choose libmpv for that.</string>
+    <string name="settings_playback_engine_exoplayer_description">Hardware decoding via ExoPlayer and Android Media3. Best battery life; recommended for most streams.</string>
+    <string name="settings_playback_engine_libmpv_description">Wider codec support via libmpv. Fixes blocky or corrupted video that some devices\' hardware decoders produce on certain streams. Heavier on battery.</string>
     <string name="settings_playback_libmpv_video_output">libmpv Renderer</string>
     <string name="settings_playback_libmpv_video_output_dialog">libmpv Renderer</string>
     <string name="settings_playback_libmpv_hardware_decoding">libmpv Hardware Decoding</string>
