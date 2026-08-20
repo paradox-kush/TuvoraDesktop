@@ -687,6 +687,7 @@ class HomeScreenTest {
 
         assertEquals(setOf("show", "deferred"), result.keys)
         assertEquals("show:1:3", result.getValue("show").second.videoId)
+        assertEquals("Next Up • S1E3 • Live", result.getValue("show").second.subtitle)
         assertEquals("https://example.test/cached-show.jpg", result.getValue("show").second.imageUrl)
         assertEquals("deferred:1:2", result.getValue("deferred").second.videoId)
     }

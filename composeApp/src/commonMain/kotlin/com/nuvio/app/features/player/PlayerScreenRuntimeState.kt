@@ -63,7 +63,7 @@ internal class PlayerScreenRuntime(
     lateinit var scope: CoroutineScope
     lateinit var hapticFeedback: HapticFeedback
 
-    var playerSettingsUiState: PlayerSettingsUiState = PlayerSettingsUiState()
+    var playerSettingsUiState by mutableStateOf(PlayerSettingsUiState())
     var p2pSettingsUiState by mutableStateOf(P2pSettingsUiState())
     var p2pStreamingState by mutableStateOf<P2pStreamingState>(P2pStreamingState.Idle)
     var metaScreenSettingsUiState: MetaScreenSettingsUiState = MetaScreenSettingsUiState()
@@ -172,6 +172,7 @@ internal class PlayerScreenRuntime(
     var skipIntervals by mutableStateOf<List<SkipInterval>>(emptyList())
     var activeSkipInterval by mutableStateOf<SkipInterval?>(null)
     var skipIntervalDismissed by mutableStateOf(false)
+    val autoSkippedIntervalKeys = mutableSetOf<String>()
     var parentalWarnings by mutableStateOf<List<ParentalWarning>>(emptyList())
     var showParentalGuide by mutableStateOf(false)
     var parentalGuideHasShown by mutableStateOf(false)

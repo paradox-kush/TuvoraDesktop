@@ -2,6 +2,7 @@ package com.nuvio.app.features.player
 
 import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.features.player.skip.NextEpisodeThresholdMode
+import com.nuvio.app.features.player.skip.AutoSkipSegmentType
 import com.nuvio.app.features.streams.StreamAutoPlayMode
 import com.nuvio.app.features.streams.StreamAutoPlaySource
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -74,11 +75,13 @@ data class PlayerSettingsUiState(
     val streamAutoPlayRegex: String = "",
     val streamAutoPlayTimeoutSeconds: Int = 3,
     val skipIntroEnabled: Boolean = true,
+    val autoSkipSegmentTypes: Set<AutoSkipSegmentType> = emptySet(),
     val animeSkipEnabled: Boolean = false,
     val animeSkipClientId: String = "",
     val introDbApiKey: String = "",
     val introSubmitEnabled: Boolean = false,
     val streamAutoPlayNextEpisodeEnabled: Boolean = true,
+    val streamAutoPlayNextEpisodeFallbackEnabled: Boolean = true,
     val streamAutoPlayPreferBingeGroup: Boolean = true,
     val streamAutoPlayReuseBingeGroup: Boolean = true,
     val nextEpisodeThresholdMode: NextEpisodeThresholdMode = NextEpisodeThresholdMode.PERCENTAGE,
@@ -142,11 +145,13 @@ object PlayerSettingsRepository {
     private var streamAutoPlayRegex = ""
     private var streamAutoPlayTimeoutSeconds = 3
     private var skipIntroEnabled = true
+    private var autoSkipSegmentTypes: Set<AutoSkipSegmentType> = emptySet()
     private var animeSkipEnabled = false
     private var animeSkipClientId = ""
     private var introDbApiKey = ""
     private var introSubmitEnabled = false
     private var streamAutoPlayNextEpisodeEnabled = true
+    private var streamAutoPlayNextEpisodeFallbackEnabled = true
     private var streamAutoPlayPreferBingeGroup = true
     private var streamAutoPlayReuseBingeGroup = true
     private var nextEpisodeThresholdMode = NextEpisodeThresholdMode.PERCENTAGE
@@ -215,11 +220,13 @@ object PlayerSettingsRepository {
         streamAutoPlayRegex = ""
         streamAutoPlayTimeoutSeconds = 3
         skipIntroEnabled = true
+        autoSkipSegmentTypes = emptySet()
         animeSkipEnabled = false
         animeSkipClientId = ""
         introDbApiKey = ""
         introSubmitEnabled = false
         streamAutoPlayNextEpisodeEnabled = true
+        streamAutoPlayNextEpisodeFallbackEnabled = true
         streamAutoPlayPreferBingeGroup = true
         streamAutoPlayReuseBingeGroup = true
         nextEpisodeThresholdMode = NextEpisodeThresholdMode.PERCENTAGE
@@ -297,6 +304,8 @@ object PlayerSettingsRepository {
                 ?: SubtitleStyleState.DEFAULT.fontSizeSp).coerceIn(subtitleFontSizeRangeSp),
             bottomOffset = PlayerSettingsStorage.loadSubtitleBottomOffset()
                 ?: SubtitleStyleState.DEFAULT.bottomOffset,
+            stripSdh = PlayerSettingsStorage.loadSubtitleStripSdh()
+                ?: SubtitleStyleState.DEFAULT.stripSdh,
             useForcedSubtitles = PlayerSettingsStorage.loadSubtitleUseForcedSubtitles()
                 ?: SubtitleStyleState.DEFAULT.useForcedSubtitles,
             showOnlyPreferredLanguages = PlayerSettingsStorage.loadSubtitleShowOnlyPreferredLanguages()
@@ -348,11 +357,16 @@ object PlayerSettingsRepository {
             PlayerSettingsStorage.saveStreamAutoPlayTimeoutSeconds(streamAutoPlayTimeoutSeconds)
         }
         skipIntroEnabled = PlayerSettingsStorage.loadSkipIntroEnabled() ?: true
+        autoSkipSegmentTypes = PlayerSettingsStorage.loadAutoSkipSegmentTypes()
+            ?.mapNotNull(AutoSkipSegmentType::fromStoredValue)
+            ?.toSet()
+            ?: emptySet()
         animeSkipEnabled = PlayerSettingsStorage.loadAnimeSkipEnabled() ?: false
         animeSkipClientId = PlayerSettingsStorage.loadAnimeSkipClientId() ?: ""
         introDbApiKey = PlayerSettingsStorage.loadIntroDbApiKey() ?: ""
         introSubmitEnabled = PlayerSettingsStorage.loadIntroSubmitEnabled() ?: false
         streamAutoPlayNextEpisodeEnabled = PlayerSettingsStorage.loadStreamAutoPlayNextEpisodeEnabled() ?: true
+        streamAutoPlayNextEpisodeFallbackEnabled = PlayerSettingsStorage.loadStreamAutoPlayNextEpisodeFallbackEnabled() ?: true
         streamAutoPlayPreferBingeGroup = PlayerSettingsStorage.loadStreamAutoPlayPreferBingeGroup() ?: true
         streamAutoPlayReuseBingeGroup = PlayerSettingsStorage.loadStreamAutoPlayReuseBingeGroup() ?: true
         nextEpisodeThresholdMode = PlayerSettingsStorage.loadNextEpisodeThresholdMode()
@@ -545,6 +559,7 @@ object PlayerSettingsRepository {
         PlayerSettingsStorage.saveSubtitleBold(normalized.bold)
         PlayerSettingsStorage.saveSubtitleFontSizeSp(normalized.fontSizeSp)
         PlayerSettingsStorage.saveSubtitleBottomOffset(normalized.bottomOffset)
+        PlayerSettingsStorage.saveSubtitleStripSdh(normalized.stripSdh)
         PlayerSettingsStorage.saveSubtitleUseForcedSubtitles(normalized.useForcedSubtitles)
         PlayerSettingsStorage.saveSubtitleShowOnlyPreferredLanguages(normalized.showOnlyPreferredLanguages)
     }
@@ -687,6 +702,15 @@ object PlayerSettingsRepository {
         PlayerSettingsStorage.saveSkipIntroEnabled(enabled)
     }
 
+    fun setAutoSkipSegmentTypeEnabled(segmentType: AutoSkipSegmentType, enabled: Boolean) {
+        ensureLoaded()
+        val updated = if (enabled) autoSkipSegmentTypes + segmentType else autoSkipSegmentTypes - segmentType
+        if (autoSkipSegmentTypes == updated) return
+        autoSkipSegmentTypes = updated
+        publish()
+        PlayerSettingsStorage.saveAutoSkipSegmentTypes(updated.mapTo(linkedSetOf()) { it.storedValue })
+    }
+
     fun setAnimeSkipEnabled(enabled: Boolean) {
         ensureLoaded()
         if (animeSkipEnabled == enabled) return
@@ -725,6 +749,14 @@ object PlayerSettingsRepository {
         streamAutoPlayNextEpisodeEnabled = enabled
         publish()
         PlayerSettingsStorage.saveStreamAutoPlayNextEpisodeEnabled(enabled)
+    }
+
+    fun setStreamAutoPlayNextEpisodeFallbackEnabled(enabled: Boolean) {
+        ensureLoaded()
+        if (streamAutoPlayNextEpisodeFallbackEnabled == enabled) return
+        streamAutoPlayNextEpisodeFallbackEnabled = enabled
+        publish()
+        PlayerSettingsStorage.saveStreamAutoPlayNextEpisodeFallbackEnabled(enabled)
     }
 
     fun setStreamAutoPlayPreferBingeGroup(enabled: Boolean) {
@@ -991,11 +1023,13 @@ object PlayerSettingsRepository {
             streamAutoPlayRegex = streamAutoPlayRegex,
             streamAutoPlayTimeoutSeconds = streamAutoPlayTimeoutSeconds,
             skipIntroEnabled = skipIntroEnabled,
+            autoSkipSegmentTypes = autoSkipSegmentTypes,
             animeSkipEnabled = animeSkipEnabled,
             animeSkipClientId = animeSkipClientId,
             introDbApiKey = introDbApiKey,
             introSubmitEnabled = introSubmitEnabled,
             streamAutoPlayNextEpisodeEnabled = streamAutoPlayNextEpisodeEnabled,
+            streamAutoPlayNextEpisodeFallbackEnabled = streamAutoPlayNextEpisodeFallbackEnabled,
             streamAutoPlayPreferBingeGroup = streamAutoPlayPreferBingeGroup,
             streamAutoPlayReuseBingeGroup = streamAutoPlayReuseBingeGroup,
             nextEpisodeThresholdMode = nextEpisodeThresholdMode,

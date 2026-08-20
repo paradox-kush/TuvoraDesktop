@@ -60,5 +60,6 @@ internal actual object PlatformLocalAccountDataCleaner {
                 .clear()
                 .commit()
         }
+        context.filesDir.resolve("nuvio_plugin_scrapers").deleteRecursively()
     }
 }

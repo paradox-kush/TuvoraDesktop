@@ -36,6 +36,7 @@ import com.nuvio.app.core.ui.NuvioBottomSheetDivider
 import com.nuvio.app.core.ui.NuvioModalBottomSheet
 import com.nuvio.app.core.ui.dismissNuvioBottomSheet
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
+import com.nuvio.app.isDesktop
 import com.nuvio.app.features.player.PlatformPlayerSurface
 import com.nuvio.app.features.player.PlayerControlsAction
 import com.nuvio.app.features.player.PlayerResizeMode
@@ -71,6 +72,7 @@ fun TrailerPlayerPopup(
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val coroutineScope = rememberCoroutineScope()
+    val playbackErrorText = stringResource(Res.string.trailer_no_playable_stream)
     var playerError by remember(playbackSource?.videoUrl, playbackSource?.audioUrl) {
         mutableStateOf<String?>(null)
     }
@@ -171,29 +173,31 @@ fun TrailerPlayerPopup(
                     }
 
                     playbackSource != null -> {
-                        PlatformPlayerSurface(
-                            sourceUrl = playbackSource.videoUrl,
-                            sourceAudioUrl = playbackSource.audioUrl,
-                            useYoutubeChunkedPlayback = true,
-                            modifier = Modifier.fillMaxSize(),
-                            playWhenReady = true,
-                            resizeMode = PlayerResizeMode.Fit,
-                            useNativeController = true,
-                            // Where the controls are native they cover this box, so their close
-                            // button — not the sheet header's — is the one under the pointer.
-                            // Unanswered it does nothing; the rest falls through to the engine.
-                            onPlayerControlsAction = { action ->
-                                if (action == PlayerControlsAction.Back) {
-                                    dismissSheet()
-                                    true
-                                } else {
-                                    false
-                                }
-                            },
-                            onControllerReady = {},
-                            onSnapshot = {},
-                            onError = { playerError = it },
-                        )
+                        if (isDesktop) {
+                            HeroTrailerPlayerSurface(
+                                sourceUrl = playbackSource.videoUrl,
+                                sourceAudioUrl = playbackSource.audioUrl,
+                                playWhenReady = true,
+                                muted = false,
+                                modifier = Modifier.fillMaxSize(),
+                                onReady = {},
+                                onEnded = {},
+                                onError = { playerError = playbackErrorText },
+                            )
+                        } else {
+                            PlatformPlayerSurface(
+                                sourceUrl = playbackSource.videoUrl,
+                                sourceAudioUrl = playbackSource.audioUrl,
+                                useYoutubeChunkedPlayback = true,
+                                modifier = Modifier.fillMaxSize(),
+                                playWhenReady = true,
+                                resizeMode = PlayerResizeMode.Fit,
+                                useNativeController = true,
+                                onControllerReady = {},
+                                onSnapshot = {},
+                                onError = { playerError = it },
+                            )
+                        }
                     }
                 }
             }

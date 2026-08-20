@@ -3,7 +3,8 @@ package com.nuvio.app.features.settings
 import platform.Foundation.NSUserDefaults
 
 internal actual object SentrySettingsPlatform {
-    actual val crashReportsSupported: Boolean = true
+    actual val crashReportsSupported: Boolean = false
+    actual val usesDesktopCopy: Boolean = false
 }
 
 internal actual object SentrySettingsStorage {

@@ -1285,6 +1285,17 @@ private fun TmdbSourcePickerScreen(
                                 },
                             )
                             TmdbFilterField(
+                                label = stringResource(Res.string.collections_editor_tmdb_without_genres),
+                                helper = stringResource(Res.string.collections_editor_tmdb_without_genres_helper),
+                                value = state.tmdbFilters.withoutGenres.orEmpty(),
+                                placeholder = stringResource(Res.string.collections_editor_tmdb_without_genres_placeholder),
+                                onValueChange = { value ->
+                                    CollectionEditorRepository.updateTmdbFilters {
+                                        it.copy(withoutGenres = value.ifBlank { null })
+                                    }
+                                },
+                            )
+                            TmdbFilterField(
                                 label = stringResource(Res.string.collections_editor_tmdb_date_from),
                                 helper = stringResource(Res.string.collections_editor_tmdb_date_helper),
                                 value = state.tmdbFilters.releaseDateGte.orEmpty(),
@@ -1410,6 +1421,17 @@ private fun TmdbSourcePickerScreen(
                                     }
                                 },
                             )
+                            TmdbFilterField(
+                                label = stringResource(Res.string.collections_editor_tmdb_without_keywords),
+                                helper = stringResource(Res.string.collections_editor_tmdb_without_keywords_helper),
+                                value = state.tmdbFilters.withoutKeywords.orEmpty(),
+                                placeholder = stringResource(Res.string.collections_editor_tmdb_without_keywords_placeholder),
+                                onValueChange = { value ->
+                                    CollectionEditorRepository.updateTmdbFilters {
+                                        it.copy(withoutKeywords = value.ifBlank { null })
+                                    }
+                                },
+                            )
                             TmdbQuickChips(
                                 label = stringResource(Res.string.collections_editor_tmdb_quick_studios),
                                 chips = listOf(
@@ -1431,6 +1453,17 @@ private fun TmdbSourcePickerScreen(
                                 onValueChange = { value ->
                                     CollectionEditorRepository.updateTmdbFilters {
                                         it.copy(withCompanies = value.ifBlank { null })
+                                    }
+                                },
+                            )
+                            TmdbFilterField(
+                                label = stringResource(Res.string.collections_editor_tmdb_without_companies),
+                                helper = stringResource(Res.string.collections_editor_tmdb_without_companies_helper),
+                                value = state.tmdbFilters.withoutCompanies.orEmpty(),
+                                placeholder = stringResource(Res.string.collections_editor_tmdb_without_companies_placeholder),
+                                onValueChange = { value ->
+                                    CollectionEditorRepository.updateTmdbFilters {
+                                        it.copy(withoutCompanies = value.ifBlank { null })
                                     }
                                 },
                             )
@@ -1490,6 +1523,17 @@ private fun TmdbSourcePickerScreen(
                                 onValueChange = { value ->
                                     CollectionEditorRepository.updateTmdbFilters {
                                         it.copy(withWatchProviders = value.ifBlank { null })
+                                    }
+                                },
+                            )
+                            TmdbFilterField(
+                                label = stringResource(Res.string.collections_editor_tmdb_without_watch_providers),
+                                helper = stringResource(Res.string.collections_editor_tmdb_without_watch_providers_helper),
+                                value = state.tmdbFilters.withoutWatchProviders.orEmpty(),
+                                placeholder = stringResource(Res.string.collections_editor_tmdb_without_watch_providers_placeholder),
+                                onValueChange = { value ->
+                                    CollectionEditorRepository.updateTmdbFilters {
+                                        it.copy(withoutWatchProviders = value.ifBlank { null })
                                     }
                                 },
                             )

@@ -86,6 +86,7 @@ import com.nuvio.app.features.watchprogress.buildContinueWatchingEpisodeSubtitle
 import com.nuvio.app.features.watchprogress.continueWatchingEntries
 import com.nuvio.app.features.watchprogress.toContinueWatchingItem
 import com.nuvio.app.features.watchprogress.toUpNextContinueWatchingItem
+import com.nuvio.app.core.ui.DisintegrationRequest
 import com.nuvio.app.features.watching.application.WatchingState
 import com.nuvio.app.features.watching.domain.WatchingContentRef
 import com.nuvio.app.features.watching.domain.isReleasedBy
@@ -119,6 +120,7 @@ fun HomeScreen(
     onPosterLongClick: ((MetaPreview) -> Unit)? = null,
     onContinueWatchingClick: ((ContinueWatchingItem) -> Unit)? = null,
     onContinueWatchingLongPress: ((ContinueWatchingItem) -> Unit)? = null,
+    continueWatchingDisintegrationRequest: DisintegrationRequest<String>? = null,
     onFolderClick: ((collectionId: String, folderId: String) -> Unit)? = null,
     onFirstCatalogRendered: (() -> Unit)? = null,
     onOpenSportsTab: () -> Unit = {},
@@ -942,6 +944,7 @@ fun HomeScreen(
                         onItemLongPress = onContinueWatchingLongPress,
                         onLivePosterClick = { onPosterClick?.invoke(it) },
                         onLivePosterLongPress = { liveRecentActionTarget = it.toLiveRecentActionTarget() },
+                        disintegrationRequest = continueWatchingDisintegrationRequest,
                     )
                     item {
                         // Store builds hide the addon system, so point at IPTV setup instead.
@@ -974,6 +977,7 @@ fun HomeScreen(
                         onItemLongPress = onContinueWatchingLongPress,
                         onLivePosterClick = { onPosterClick?.invoke(it) },
                         onLivePosterLongPress = { liveRecentActionTarget = it.toLiveRecentActionTarget() },
+                        disintegrationRequest = continueWatchingDisintegrationRequest,
                     )
                     items(3) {
                         HomeSkeletonRow(
@@ -1021,6 +1025,7 @@ fun HomeScreen(
                         onItemLongPress = onContinueWatchingLongPress,
                         onLivePosterClick = { onPosterClick?.invoke(it) },
                         onLivePosterLongPress = { liveRecentActionTarget = it.toLiveRecentActionTarget() },
+                        disintegrationRequest = continueWatchingDisintegrationRequest,
                     )
 
                     keyedEnabledHomeItems.forEach { keyedSettingsItem ->
@@ -1090,6 +1095,7 @@ private fun LazyListScope.homeContinueWatchingSections(
     onItemLongPress: ((ContinueWatchingItem) -> Unit)?,
     onLivePosterClick: (MetaPreview) -> Unit,
     onLivePosterLongPress: (MetaPreview) -> Unit,
+    disintegrationRequest: DisintegrationRequest<String>?,
 ) {
     if (!preferences.isVisible) return
 
@@ -1129,6 +1135,7 @@ private fun LazyListScope.homeContinueWatchingSections(
                 listState = upcomingListState,
                 onItemClick = onItemClick,
                 onItemLongPress = onItemLongPress,
+                disintegrationRequest = disintegrationRequest,
             )
         }
     }
@@ -1471,7 +1478,10 @@ internal fun buildHomeContinueWatchingItems(
                 HomeContinueWatchingCandidate(
                     lastUpdatedEpochMs = entry.lastUpdatedEpochMs,
                     item = liveItem
-                        .withFallbackMetadata(cachedInProgressByProgressKey[entry.resolvedProgressKey()])
+                        .withFallbackMetadata(
+                            fallback = cachedInProgressByProgressKey[entry.resolvedProgressKey()],
+                            preferFallbackPlaybackFields = true,
+                        )
                         .withCloudLibraryMetadata(cloudLibraryUiState),
                     isProgressEntry = true,
                 )
@@ -1818,6 +1828,7 @@ private fun CachedInProgressItem.toContinueWatchingItem(): ContinueWatchingItem 
 
 private fun ContinueWatchingItem.withFallbackMetadata(
     fallback: ContinueWatchingItem?,
+    preferFallbackPlaybackFields: Boolean = false,
 ): ContinueWatchingItem {
     val nonBlankFallbackTitle = fallback?.title?.takeIf { it.isNotBlank() }
     val fallbackHasPlaceholderTitle = fallback?.hasPlaceholderHomeTitle() == true
@@ -1830,12 +1841,20 @@ private fun ContinueWatchingItem.withFallbackMetadata(
             hasPlaceholderHomeTitle() && fallbackTitle != null -> fallbackTitle
             else -> title
         },
-        subtitle = subtitle.takeIf { it.isNotBlank() }
-            ?: fallback?.subtitle?.takeIf { it.isNotBlank() }.orEmpty(),
+        subtitle = when {
+            preferFallbackPlaybackFields && !fallback?.subtitle.isNullOrBlank() -> fallback.subtitle
+            subtitle.isBlank() -> fallback?.subtitle?.takeIf { it.isNotBlank() }.orEmpty()
+            else -> subtitle
+        },
         imageUrl = imageUrl.orNonBlank(fallback?.imageUrl),
         logo = logo.orNonBlank(fallback?.logo),
         poster = poster.orNonBlank(fallback?.poster),
         background = background.orNonBlank(fallback?.background),
+        videoId = if (preferFallbackPlaybackFields) {
+            fallback?.videoId?.takeIf { it.isNotBlank() } ?: videoId
+        } else {
+            videoId
+        },
         episodeTitle = episodeTitle.orNonBlank(fallback?.episodeTitle),
         episodeThumbnail = episodeThumbnail.orNonBlank(fallback?.episodeThumbnail),
         pauseDescription = pauseDescription.orNonBlank(fallback?.pauseDescription),

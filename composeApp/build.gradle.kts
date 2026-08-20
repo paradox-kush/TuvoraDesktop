@@ -62,6 +62,9 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
     abstract val sentryDsn: Property<String>
 
     @get:Input
+    abstract val sentryDesktopDsn: Property<String>
+
+    @get:Input
     abstract val sentryEnvironment: Property<String>
 
     @get:Input
@@ -126,6 +129,7 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
                 |
                 |object SentryConfig {
                 |    const val DSN = "${sentryDsn.get()}"
+                |    const val DESKTOP_DSN = "${sentryDesktopDsn.get()}"
                 |    const val ENVIRONMENT = "${sentryEnvironment.get()}"
                 |}
                 """.trimMargin()
@@ -185,6 +189,19 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
                 |    const val CLIENT_ID = "${props.getProperty("SIMKL_CLIENT_ID", "")}"
                 |    const val REDIRECT_URI = "${props.getProperty("SIMKL_REDIRECT_URI", "nuvio://auth/simkl")}"
                 |    const val APP_NAME = "${props.getProperty("SIMKL_APP_NAME", "nuvio")}"
+                |}
+                """.trimMargin()
+            )
+        }
+
+        outDir.resolve("com/nuvio/app/features/discordrpc").apply {
+            mkdirs()
+            resolve("DiscordConfig.kt").writeText(
+                """
+                |package com.nuvio.app.features.discordrpc
+                |
+                |object DiscordConfig {
+                |    const val CLIENT_ID = "${props.getProperty("NUVIO_DISCORD_CLIENT_ID", "1538974392376369212")}"
                 |}
                 """.trimMargin()
             )
@@ -573,7 +590,9 @@ val iosFrameworkBundleId = "com.nuvio.media"
 val nuvioEngineAppleFramework = rootProject.file("../nuvio-engine/platform/apple/NuvioEngine.xcframework")
 val fullCommonSourceDir = project.file("src/fullCommonMain/kotlin")
 val fullPluginSourceDir = fullCommonSourceDir.resolve("com/nuvio/app/features/plugins")
+val fullTrailerSourceDir = fullCommonSourceDir.resolve("com/nuvio/app/features/trailer")
 val generatedRuntimeConfigDir = layout.buildDirectory.dir("generated/runtime-config/kotlin")
+val desktopSentryResourceDir = rootProject.layout.projectDirectory.dir("desktopSentry/build/generated/sentry")
 val requestedGradleTasks = gradle.startParameter.taskNames.map { taskName ->
     taskName.substringAfterLast(':').lowercase()
 }
@@ -677,6 +696,7 @@ val generateRuntimeConfigs = tasks.register<GenerateRuntimeConfigsTask>("generat
     realtimeSyncEnabled.set(runtimeConfigBoolean("NUVIO_REALTIME_SYNC_ENABLED", true))
     debugBuild.set(isDebugBuild)
     sentryDsn.set(runtimeConfigValue("SENTRY_DSN"))
+    sentryDesktopDsn.set(runtimeConfigValue("SENTRY_DESKTOP_DSN"))
     sentryEnvironment.set(
         when {
             requestedGradleTasks.any { "benchmark" in it } -> "benchmark"
@@ -917,6 +937,7 @@ val windowsPlayerBridgeCommand = if (missingWindowsPlayerBridgeInputs.isNotEmpty
         "User32.lib",
         "Gdi32.lib",
         "Dwmapi.lib",
+        "Shell32.lib",
     ).joinToString(" ")
     val powershellCompileCommand = compileCommand.replace("\"", "__DQ__")
     val powershellCommand = """
@@ -1236,8 +1257,20 @@ kotlin {
         }
         val desktopMain by getting {
             kotlin.srcDir(fullPluginSourceDir)
+            kotlin.srcDir(fullTrailerSourceDir)
+            kotlin.srcDir(
+                if (isWindowsHost) {
+                    "src/windowsDesktopMain/kotlin"
+                } else {
+                    "src/nonWindowsDesktopMain/kotlin"
+                },
+            )
+            resources.srcDir(desktopSentryResourceDir)
             dependencies {
                 implementation(compose.desktop.currentOs)
+                if (!isWindowsHost) {
+                    implementation(project(":composeMediaPlayer"))
+                }
                 implementation(libs.kotlinx.coroutines.swing)
                 implementation(libs.ktor.client.cio)
                 implementation(libs.posthog.core)
@@ -1246,6 +1279,7 @@ kotlin {
                 implementation(libs.ksoup)
                 // Fork IPTV/EPG stores (iptv_content/xtream_match/epg_mirror dbs) on the JVM.
                 implementation(libs.androidx.sqlite.bundled)
+                implementation(libs.sentry.jvm)
             }
         }
         commonMain.dependencies {
@@ -1253,6 +1287,9 @@ kotlin {
                 exclude(group = "org.jetbrains.skiko", module = "skiko")
             }
             implementation("io.coil-kt.coil3:coil-network-ktor3:${libs.versions.coil.get()}") {
+                exclude(group = "org.jetbrains.skiko", module = "skiko")
+            }
+            implementation("io.coil-kt.coil3:coil-network-cache-control:${libs.versions.coil.get()}") {
                 exclude(group = "org.jetbrains.skiko", module = "skiko")
             }
             implementation("io.coil-kt.coil3:coil-svg:${libs.versions.coil.get()}") {
@@ -1294,6 +1331,12 @@ kotlin {
             }
         }
     }
+}
+
+tasks.matching {
+    it.name == "desktopProcessResources" || it.name == "processDesktopMainResources"
+}.configureEach {
+    dependsOn(":desktopSentry:generateSentryDebugMetaPropertiesjava")
 }
 
 compose.desktop {

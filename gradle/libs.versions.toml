@@ -37,7 +37,8 @@ ksoup = "0.2.6"
 reorderable = "3.0.0"
 desugarJdkLibs = "2.1.5"
 sentry = "8.47.0"
-sentryGradle = "6.14.0"
+sentryDesktop = "8.52.0"
+sentryGradle = "6.18.0"
 
 [libraries]
 konsist = { module = "com.lemonappdev:konsist", version.ref = "konsist" }
@@ -71,6 +72,7 @@ compottie = { module = "io.github.alexzhirkevich:compottie", version.ref = "comp
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 coil-gif = { module = "io.coil-kt.coil3:coil-gif", version.ref = "coil" }
 coil-network-ktor3 = { module = "io.coil-kt.coil3:coil-network-ktor3", version.ref = "coil" }
+coil-network-cache-control = { module = "io.coil-kt.coil3:coil-network-cache-control", version.ref = "coil" }
 coil-svg = { module = "io.coil-kt.coil3:coil-svg", version.ref = "coil" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 kotlinx-coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "kotlinx-coroutines" }
@@ -104,6 +106,7 @@ ksoup = { module = "com.fleeksoft.ksoup:ksoup", version.ref = "ksoup" }
 reorderable = { module = "sh.calvin.reorderable:reorderable", version.ref = "reorderable" }
 desugar-jdk-libs = { module = "com.android.tools:desugar_jdk_libs", version.ref = "desugarJdkLibs" }
 sentry-android = { module = "io.sentry:sentry-android", version.ref = "sentry" }
+sentry-jvm = { module = "io.sentry:sentry", version.ref = "sentryDesktop" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }
@@ -114,3 +117,4 @@ composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "k
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlinxSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 sentry-android-gradle = { id = "io.sentry.android.gradle", version.ref = "sentryGradle" }
+sentry-jvm-gradle = { id = "io.sentry.jvm.gradle", version.ref = "sentryGradle" }

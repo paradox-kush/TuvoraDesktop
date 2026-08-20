@@ -1,5 +1,6 @@
 package com.nuvio.app.features.player.desktop
 
+import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowState
 import java.awt.GraphicsEnvironment
@@ -79,7 +80,7 @@ internal class DesktopAppFullscreenController {
         if (DesktopHostOs.current == DesktopHostOs.WINDOWS) {
             toggleWindowsFullscreen(window)
         } else {
-            toggleComposeFullscreen(windowState)
+            toggleComposeFullscreen(window, windowState)
         }
     }
 
@@ -111,15 +112,38 @@ internal class DesktopAppFullscreenController {
             windowState.placement == WindowPlacement.Fullscreen
         }
 
-    private fun toggleComposeFullscreen(windowState: WindowState) {
-        if (windowState.placement == WindowPlacement.Fullscreen) {
-            windowState.placement = restoreWindowPlacement
+    private fun toggleComposeFullscreen(window: Window, windowState: WindowState) {
+        if (isFullscreen(window, windowState)) {
+            if (DesktopHostOs.current == DesktopHostOs.MACOS) {
+                applyMacosComposeFullscreenExit(
+                    restorePlacement = restoreWindowPlacement,
+                    requestNativeFullscreenExit = { requestNativeComposeFullscreenExit(window) },
+                    clearComposeFullscreen = {
+                        (window as? ComposeWindow)?.placement = WindowPlacement.Floating
+                    },
+                    setStatePlacement = { placement ->
+                        windowState.placement = placement
+                    },
+                )
+            } else {
+                windowState.placement = restoreWindowPlacement
+            }
         } else {
             restoreWindowPlacement = windowState.placement
                 .takeUnless { it == WindowPlacement.Fullscreen }
                 ?: WindowPlacement.Floating
             windowState.placement = WindowPlacement.Fullscreen
         }
+    }
+
+    private fun requestNativeComposeFullscreenExit(window: Window): Boolean {
+        if (DesktopHostOs.current != DesktopHostOs.MACOS) return false
+        return runCatching {
+            NativePlayerBridge.setMacosWindowFullscreen(
+                windowViewPtr = AwtNativeViewResolver.resolveNativeViewPointer(window),
+                fullscreen = false,
+            )
+        }.isSuccess
     }
 
     private fun toggleWindowsFullscreen(window: Window) {
@@ -169,6 +193,28 @@ internal class DesktopAppFullscreenController {
         val window: Window,
         val windowHwnd: Long,
     )
+}
+
+/**
+ * ComposeWindow does not clear its fullscreen flag when placement is changed directly from
+ * Fullscreen to Maximized on macOS. Let AppKit complete its asynchronous fullscreen exit and let
+ * Compose's native window listener restore WindowState; writing Maximized during that transition
+ * can alter the frame AppKit is restoring. The Compose fallback is only used if the native macOS
+ * request cannot be made.
+ */
+internal fun applyMacosComposeFullscreenExit(
+    restorePlacement: WindowPlacement,
+    requestNativeFullscreenExit: () -> Boolean,
+    clearComposeFullscreen: () -> Unit,
+    setStatePlacement: (WindowPlacement) -> Unit,
+) {
+    if (requestNativeFullscreenExit()) return
+
+    val targetPlacement = restorePlacement
+        .takeUnless { it == WindowPlacement.Fullscreen }
+        ?: WindowPlacement.Floating
+    clearComposeFullscreen()
+    setStatePlacement(targetPlacement)
 }
 
 internal fun installDesktopAppFullscreenShortcuts(window: Window): () -> Unit {
