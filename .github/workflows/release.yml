@@ -184,6 +184,11 @@ jobs:
             echo "DONATIONS_DONATE_URL=${DONATIONS_DONATE_URL}"
           } > local.properties
 
+      - name: Install GStreamer (ComposeMediaPlayer native deps)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+
       - name: Build DEB
         env:
           RELEASE_VERSION: ${{ needs.version.outputs.version }}
