@@ -87,6 +87,21 @@ private val addonHttpClient = HttpClient(Darwin) {
 }
 
 /**
+ * Streaming client for [httpStreamLines] (M3U ingest + the Stalker bulk get_epg_info). Those bodies
+ * run for minutes on a large portal, so a WHOLE-request cap is wrong — it would kill a long-but-
+ * healthy download. Only the between-bytes [socketTimeoutMillis] guards a genuinely stalled stream;
+ * [requestTimeoutMillis] is deliberately omitted (unlimited). Mirrors OkHttp's `m3uIngest` client on
+ * Android/desktop, which uses a 10-minute read window for the same ~192 MB bodies.
+ */
+private val addonStreamHttpClient = HttpClient(Darwin) {
+    install(HttpTimeout) {
+        connectTimeoutMillis = 60_000
+        socketTimeoutMillis = 60_000
+    }
+    expectSuccess = false
+}
+
+/**
  * [bodyAsText] with the [MaxTextResponseBytes] guard in front of it.
  *
  * Ktor materializes the whole body here just as OkHttp does on Android, where a real provider's
@@ -208,7 +223,7 @@ actual suspend fun httpStreamLines(
     headers: Map<String, String>,
     onLine: (String) -> Unit,
 ) {
-    addonHttpClient.prepareGet(url) {
+    addonStreamHttpClient.prepareGet(url) {
         if (!userAgent.isNullOrBlank()) header(HttpHeaders.UserAgent, userAgent)
         for ((k, v) in headers) header(k, v)
     }.execute { response ->

@@ -18,6 +18,10 @@ import com.nuvio.app.features.iptv.content.IptvEpisodeRow
 import com.nuvio.app.features.iptv.content.IptvSeriesRow
 import com.nuvio.app.features.iptv.content.IptvStreamRow
 import com.nuvio.app.features.trakt.TraktPlatformClock
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -411,6 +415,29 @@ object StalkerClient : IptvClient {
             releaseDate = row.str("year"),
             episodes = episodes
         )
+    }
+
+    /**
+     * The warm scope. A lineup + bulk-EPG pull must OUTLIVE the screen that triggered it, so it never
+     * rides a ViewModel/tile-queue job: scrolling cancels those, and before this the bulk
+     * `get_epg_info` only ever finished once the user stopped moving (the "Stalker EPG only shows
+     * after OK" symptom, ported from NuvioTV 2026-08-20).
+     */
+    // Dispatchers.Default (not IO): IO is JVM-only — internal on Kotlin/Native (iOS). The warm mostly
+    // awaits network anyway, which the platform HTTP clients run on their own threads.
+    private val warmScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /**
+     * Pull this account's lineup + the ONE bulk `get_epg_info` into the local store up front, so the
+     * guide serves now/next from the store as the user scrolls. Fire-and-forget on [warmScope]; both
+     * steps single-flight + TTL-gate internally ([ensureLineup]/[ensureBulkEpg]), so calling it on
+     * every account visit is cheap.
+     */
+    override fun warm(acc: XtreamAccount) {
+        warmScope.launch {
+            runCatching { ensureLineup(acc) }
+            runCatching { ensureBulkEpg(acc) }
+        }
     }
 
     /**

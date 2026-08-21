@@ -559,6 +559,10 @@ object XtreamHubRepository {
         // and the per-channel asks stop. Fire-and-forget on the ingest's own scope, throttled by a
         // 12h TTL inside — calling it per tile is cheap and idempotent.
         com.nuvio.app.features.iptv.epg.XmltvClient.warm(account)
+        // Stalker warms its lineup + the ONE bulk get_epg_info on the client's own scope (no-op for
+        // Xtream/M3U — the xmltv line above is their warm). Without this the bulk rides this
+        // cancellable tile queue and only completes once scrolling stops. See StalkerClient.warm.
+        IptvClient.forAccount(account).warm(account)
         com.nuvio.app.core.diag.HubTrace.log("tileEpg", "enqueue") { contentId }
         TileEpgQueue.enqueue(contentId, onEvicted = { epgFetched.remove(contentId) }) {
             val t0 = com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs()

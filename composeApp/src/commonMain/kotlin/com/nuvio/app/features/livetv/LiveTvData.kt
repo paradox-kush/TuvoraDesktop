@@ -130,6 +130,10 @@ object LiveTvData {
         val streamId = parsed.id.toIntOrNull() ?: return emptyList()
         val account = XtreamRepository.uiState.value.accounts
             .firstOrNull { it.id == parsed.accountId } ?: return emptyList()
+        // Stalker warms its lineup + the ONE bulk get_epg_info on the client's own scope, so the
+        // docked guide shows now/next as you scroll rather than only after settling (no-op for
+        // Xtream/M3U — they warm via XmltvClient). See StalkerClient.warm.
+        IptvClient.forAccount(account).warm(account)
         val nowMs = TraktPlatformClock.nowEpochMs()
         return EpgSourceLadder.resolveAndRemember(
             memory = EpgSourceLadder.sessionMemory,

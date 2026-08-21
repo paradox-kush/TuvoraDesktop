@@ -2777,7 +2777,14 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_updateHostBounds(
 ) {
     if (handle == 0) return;
     MpvWebPlayer *player = (__bridge MpvWebPlayer *)(void *)(intptr_t)handle;
-    runOnMainSync(^{
+    // Async, NOT sync: updateHostBounds is invoked on the AWT EDT from NativePlayerHost's
+    // componentResized/componentMoved. During a macOS window resize the AppKit main thread is
+    // inside LWCToolkit.invokeAndWait (delivering the resize, blocked waiting on the EDT), so a
+    // dispatch_sync from the EDT to the main queue deadlocks: the EDT waits on main, main waits on
+    // the EDT, and the window freezes (confirmed via thread dump, 2026-08-20). Bounds are
+    // fire-and-forget (void return); applying them on the next main-loop drain is imperceptible,
+    // and FIFO ordering on the main queue preserves create -> updateHostBounds -> dispose order.
+    runOnMainAsync(^{
         [player updateHostX:x y:y width:width height:height];
     });
 }
