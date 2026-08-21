@@ -133,7 +133,11 @@ object RadarChannelMatcher {
 
         // Same rule for the early partial: flashing a list of guesses and then clearing it
         // when the guide tiers land is worse than showing the spinner a moment longer.
-        if (named.any { it.score > GENERIC_NAME_SCORE }) onPartial(named.take(RESULT_CAP))
+        // Dedup by channel before the partial renders: two enabled accounts (or a provider listing a
+        // stream twice) can yield equal contentIds, and a duplicate Compose `key` is a hard crash. The
+        // final `merged` list is already keyed-unique; the partial was the gap. `named` is score-sorted
+        // desc, so distinctBy keeps the best match per channel.
+        if (named.any { it.score > GENERIC_NAME_SCORE }) onPartial(named.distinctBy { it.channel.contentId }.take(RESULT_CAP))
 
         // Stage 2: EPG probes for the strongest name candidates.
         val start = fixture.startEpochMs

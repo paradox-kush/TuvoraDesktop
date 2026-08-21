@@ -5,6 +5,7 @@ import com.nuvio.app.core.build.AppVersionConfig
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.auth.Auth
+import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.functions.Functions
 import io.github.jan.supabase.postgrest.Postgrest
@@ -106,7 +107,17 @@ object SupabaseProvider {
             // Storage backs user-uploaded profile avatars (the 'user-avatars' bucket).
             install(Storage)
             // Realtime backs the fork's sync-invalidation service (upstream dropped realtime).
-            install(Realtime)
+            install(Realtime) {
+                // Never use the default accessToken provider. Its resolveAccessToken() force-
+                // refreshes an expired session on channel (re)join and throws TokenExpiredException
+                // on Realtime's own internal scope (no CoroutineExceptionHandler) -> uncaught ->
+                // process death on a reconnect. It is also a SECOND refresher racing GoTrue's
+                // refresh-token reuse window, which revokes the family -> spurious sign-out
+                // (auth-js#213; see AuthManager single-refresher discipline). Return the CURRENT
+                // token only: alwaysAutoRefresh keeps it fresh and propagates via setAuth, and a
+                // null (session-less) token is simply omitted so the socket authenticates by apikey.
+                accessToken = { auth.currentAccessTokenOrNull() }
+            }
         }
         holder = ClientHolder(backend = config, client = nextClient)
         nextClient

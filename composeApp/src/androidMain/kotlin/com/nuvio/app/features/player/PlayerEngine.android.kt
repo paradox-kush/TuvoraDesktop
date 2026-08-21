@@ -626,7 +626,7 @@ private fun ExoPlayerSurface(
                         "elapsedMs=${diagnosticElapsedSince(playbackDiagnostics.prepareStartedAtMs)} " +
                         "positionMs=${exoPlayer.currentPosition.coerceAtLeast(0L)} " +
                         "bufferedMs=${exoPlayer.bufferedPosition.coerceAtLeast(0L)} " +
-                        "bufferedPercent=${exoPlayer.bufferedPercentage} playWhenReady=${exoPlayer.playWhenReady}",
+                        "bufferedPercent=${BufferedPercent.of(exoPlayer.bufferedPosition, exoPlayer.duration)} playWhenReady=${exoPlayer.playWhenReady}",
                 )
                 if (playbackState == Player.STATE_READY) {
                     fallbackStartPositionMs = null

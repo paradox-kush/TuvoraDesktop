@@ -7,6 +7,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.graphics.drawable.Icon
 import android.os.Build
 import kotlin.math.roundToInt
@@ -20,6 +21,14 @@ import androidx.lifecycle.Lifecycle
 import com.nuvio.app.R
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.getString
+
+/**
+ * PiP requires BOTH API >= 26 and the FEATURE_PICTURE_IN_PICTURE system feature. A device can be on
+ * O+ yet lack the feature (Go / low-RAM / OEM builds), where the OS PiP calls throw. Pure so it can
+ * be unit-tested off-device.
+ */
+internal fun pictureInPictureSupported(sdkInt: Int, hasPictureInPictureFeature: Boolean): Boolean =
+    sdkInt >= Build.VERSION_CODES.O && hasPictureInPictureFeature
 
 internal const val PIP_ACTION_TOGGLE_PLAY_PAUSE = "com.nuvio.app.action.PIP_TOGGLE_PLAY_PAUSE"
 
@@ -108,19 +117,33 @@ internal object PlayerPictureInPictureManager {
         }
     }
 
+    // API >= 26 is necessary but NOT sufficient: a device can be on O+ and still lack
+    // FEATURE_PICTURE_IN_PICTURE (Go/low-RAM/OEM builds), where setPictureInPictureParams /
+    // enterPictureInPictureMode throw IllegalStateException. Capability is constant per device, so
+    // probe once and cache. https://developer.android.com/develop/ui/views/picture-in-picture
+    private var pipSupportedCache: Boolean? = null
+
+    private fun pipSupported(activity: Activity): Boolean =
+        pipSupportedCache ?: pictureInPictureSupported(
+            Build.VERSION.SDK_INT,
+            activity.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE),
+        ).also { pipSupportedCache = it }
+
     private fun applyPictureInPictureParams(activity: Activity) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        if (!pipSupported(activity)) return
         if (sessionState == lastAppliedSessionState) return
         lastAppliedSessionState = sessionState
-        activity.setPictureInPictureParams(buildParams(activity))
+        // runCatching: hasSystemFeature covers device capability, but the per-app PiP app-op can be
+        // disabled independently (user / enterprise policy) and OEMs vary -- never crash on it.
+        runCatching { activity.setPictureInPictureParams(buildParams(activity)) }
     }
 
     private fun enterIfEligible(activity: Activity): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        if (!pipSupported(activity)) return false
         if (!sessionState.isActive || !sessionState.isPlaying) return false
         if (activity.isFinishing) return false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && activity.isInPictureInPictureMode) return false
-        return activity.enterPictureInPictureMode(buildParams(activity))
+        return runCatching { activity.enterPictureInPictureMode(buildParams(activity)) }.getOrDefault(false)
     }
 
     private fun buildParams(activity: Activity): PictureInPictureParams {

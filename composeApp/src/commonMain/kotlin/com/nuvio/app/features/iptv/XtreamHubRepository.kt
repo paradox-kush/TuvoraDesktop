@@ -316,7 +316,11 @@ object XtreamHubRepository {
                     com.nuvio.app.core.diag.HubTrace.log("category", "fetched") {
                         "cat=$categoryId n=${items.size} total=${com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs() - tClaim}ms"
                     }
-                    updateCategory(accountId, section, categoryId) { it.copy(items = items, loaded = true, loading = false, hasMore = hasMore) }
+                    // Dedup the initial window by id BEFORE it becomes Lazy-list keys: a provider
+                    // can return the same stream_id twice in one page, and a duplicate Compose `key`
+                    // is a hard crash (a message-less SIGABRT on iOS, `Key … already used` on Android).
+                    // Appended pages are already deduped by mergePagedWindow; the initial window was the gap.
+                    updateCategory(accountId, section, categoryId) { it.copy(items = items.distinctBy { it.id }, loaded = true, loading = false, hasMore = hasMore) }
                     noteLoadedAndEvict(key)
                     completed = true
                 }

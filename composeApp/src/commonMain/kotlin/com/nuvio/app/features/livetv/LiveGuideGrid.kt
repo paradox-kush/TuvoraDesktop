@@ -220,7 +220,10 @@ fun LiveGuideGrid(
         }
 
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-            items(channels, key = { it.contentId }) { channel ->
+            // Dedup at the key-consumption point: guideChannels can carry a duplicate contentId
+            // (provider listing a channel twice), and a duplicate Compose `key` is a hard crash
+            // (message-less SIGABRT on iOS). Keys stay unique regardless of the producer.
+            items(channels.distinctBy { it.contentId }, key = { it.contentId }) { channel ->
                 GuideRow(
                     channel = channel,
                     isCurrent = channel.contentId == currentContentId,
