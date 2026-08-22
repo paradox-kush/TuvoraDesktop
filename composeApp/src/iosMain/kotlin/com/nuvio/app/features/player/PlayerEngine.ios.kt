@@ -267,7 +267,8 @@ actual fun PlatformPlayerSurface(
                 bridge.setSubtitleDelayMs(delayMs.coerceIn(SUBTITLE_DELAY_MIN_MS, SUBTITLE_DELAY_MAX_MS))
             }
 
-            override fun applySubtitleStyle(style: SubtitleStyleState) {
+            override fun applySubtitleStyle(style: SubtitleStyleState, useLibass: Boolean) {
+                // iOS renders through mpv/libass already; useLibass is desktop's ComposeMediaPlayer switch.
                 bridge.applySubtitleStyle(
                     textColor = style.textColor.toMpvColorString(),
                     backgroundColor = style.backgroundColor.toMpvColorString(),
