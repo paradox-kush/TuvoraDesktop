@@ -318,6 +318,7 @@ internal class NativePlayerController(
                 }
             }
             "volumeChange" -> setFallbackVolume(value.toFloat())
+            "volumeChangeTemporary" -> setTemporaryVolume(value.toFloat())
             else -> {
                 val eventHandled = onEvent(type, value)
                 if (type.shouldLogNativeControlEvent()) {
@@ -382,6 +383,16 @@ internal class NativePlayerController(
             val nextLevel = level.coerceIn(0f, 1f)
             rememberedVolumeLevel = nextLevel
             DesktopPlayerVolumeStorage.saveVolumeLevel(nextLevel)
+            NativePlayerBridge.setVolume(current, nextLevel)
+            controlsState = controlsState.copy(volumeLevel = nextLevel)
+            updateControls(controlsState)
+        }
+    }
+
+    private fun setTemporaryVolume(level: Float) {
+        val current = handle
+        if (current != 0L) {
+            val nextLevel = level.coerceIn(0f, 1f)
             NativePlayerBridge.setVolume(current, nextLevel)
             controlsState = controlsState.copy(volumeLevel = nextLevel)
             updateControls(controlsState)

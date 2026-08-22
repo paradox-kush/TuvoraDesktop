@@ -12,6 +12,8 @@ expect object AppFeaturePolicy {
     /** Stremio-style addon system (user-installable catalog/stream sources). Off in store builds. */
     val addonsEnabled: Boolean
     val supportersContributorsPageEnabled: Boolean
+    val donationActionsEnabled: Boolean
+    val donationProgressEnabled: Boolean
     val accountDeletionEnabled: Boolean
     val personalMediaAddonCopyEnabled: Boolean
     val p2pEnabled: Boolean
@@ -22,4 +24,5 @@ expect object AppFeaturePolicy {
     val imdbRatingLogoEnabled: Boolean
     val mediaPlaybackForegroundServiceEnabled: Boolean
     val debugBackendSwitcherEnabled: Boolean
+    val customServerConnectionsEnabled: Boolean
 }

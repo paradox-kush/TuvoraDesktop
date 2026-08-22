@@ -271,6 +271,7 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
                 |
                 |object CommunityConfig {
                 |    const val CONTRIBUTIONS_URL = "${props.getProperty("CONTRIBUTIONS_URL", "")}" 
+                |    const val SUPPORTERS_WALL_URL = "${props.getProperty("SUPPORTERS_WALL_URL", "https://nuvio.tv/api/supporters/wall")}"
                 |    const val DONATIONS_BASE_URL = "${props.getProperty("DONATIONS_BASE_URL", "")}" 
                 |    const val DONATIONS_DONATE_URL = "${props.getProperty("DONATIONS_DONATE_URL", "")}" 
                 |}
@@ -1280,6 +1281,11 @@ kotlin {
                 // Fork IPTV/EPG stores (iptv_content/xtream_match/epg_mirror dbs) on the JVM.
                 implementation(libs.androidx.sqlite.bundled)
                 implementation(libs.sentry.jvm)
+            }
+        }
+        val androidHostTest by getting {
+            if (androidDistribution == "full") {
+                kotlin.srcDir(project.file("src/androidFullHostTest/kotlin"))
             }
         }
         commonMain.dependencies {

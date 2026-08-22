@@ -113,6 +113,7 @@ import com.nuvio.app.core.sync.ProfileSettingsSync
 import com.nuvio.app.core.sync.RealtimeSyncConfig
 import com.nuvio.app.core.sync.RealtimeSyncInvalidationService
 import com.nuvio.app.core.sync.SyncManager
+import com.nuvio.app.features.membership.MemberAccessRepository
 import com.nuvio.app.core.ui.LocalNuvioNavBarScrollState
 import com.nuvio.app.core.ui.NuvioNavigationBar
 import com.nuvio.app.core.ui.NuvioClassicNavigationBar
@@ -1258,6 +1259,7 @@ private fun MainAppContent(
         if (!ownsAppRuntime) return@LaunchedEffect
         AppForegroundMonitor.events().collect {
             NetworkStatusRepository.requestForegroundRefresh()
+            MemberAccessRepository.refreshIfStale()
         }
     }
 
@@ -1287,6 +1289,7 @@ private fun MainAppContent(
                     previousConditionName == NetworkCondition.NoInternet.name ||
                     previousConditionName == NetworkCondition.ServersUnreachable.name
                 ) {
+                    MemberAccessRepository.refresh()
                     NuvioToastController.show(getString(Res.string.network_back_online))
                 }
             }

@@ -47,6 +47,10 @@ import com.nuvio.app.core.ui.NuvioModalBottomSheet
 import com.nuvio.app.core.ui.dismissNuvioBottomSheet
 import com.nuvio.app.core.ui.labelRes
 import com.nuvio.app.core.ui.ThemeColors
+import com.nuvio.app.core.ui.accentBrush
+import com.nuvio.app.features.membership.MemberAccessRepository
+import com.nuvio.app.features.membership.availableAppThemes
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.cd_selected
@@ -529,7 +533,7 @@ private fun ThemeChip(
                 modifier = Modifier
                     .size(44.dp)
                     .clip(CircleShape)
-                    .background(palette.secondary),
+                    .background(palette.accentBrush()),
                 contentAlignment = Alignment.Center,
             ) {
                 if (isSelected) {

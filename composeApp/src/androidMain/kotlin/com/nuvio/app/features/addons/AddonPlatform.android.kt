@@ -12,6 +12,7 @@ import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.network_empty_response_body
 import nuvio.composeapp.generated.resources.network_request_failed_http
 import org.jetbrains.compose.resources.getString
+import okhttp3.Cache
 import okhttp3.ResponseBody
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -19,6 +20,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.Proxy
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.InputStream
 import kotlin.text.Charsets
 import java.util.concurrent.TimeUnit
@@ -81,16 +83,39 @@ private fun parseEnabledStateLine(line: String): Pair<String, Boolean>? {
     return url to enabled
 }
 
-private val addonHttpClient = OkHttpClient.Builder()
-    .dns(IPv4FirstDns())
-    .connectTimeout(60, TimeUnit.SECONDS)
-    .readTimeout(60, TimeUnit.SECONDS)
-    .writeTimeout(60, TimeUnit.SECONDS)
-    .followRedirects(true)
-    .followSslRedirects(true)
-    .addInterceptor(SentryNetworkBreadcrumbInterceptor())
-    .proxy(Proxy.NO_PROXY)
-    .build()
+internal object AddonHttpClientProvider {
+    private const val cacheSizeBytes = 50L * 1024L * 1024L
+    private var client = buildAddonHttpClient()
+
+    fun initialize(context: Context) {
+        if (client.cache != null) return
+        client = buildAddonHttpClient(
+            cache = Cache(
+                directory = File(context.cacheDir, "addon_http"),
+                maxSize = cacheSizeBytes,
+            ),
+        )
+    }
+
+    fun get(): OkHttpClient = client
+}
+
+private fun buildAddonHttpClient(cache: Cache? = null): OkHttpClient =
+    OkHttpClient.Builder()
+        .dns(IPv4FirstDns())
+        .connectTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .addInterceptor(SentryNetworkBreadcrumbInterceptor())
+        .proxy(Proxy.NO_PROXY)
+        .apply {
+            if (cache != null) {
+                cache(cache)
+            }
+        }
+        .build()
 
 private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
@@ -153,8 +178,8 @@ private fun readResponseBodyLimited(body: ResponseBody?, maxBytes: Int): String 
  * Whole-body read, bounded by [MaxTextResponseBytes].
  *
  * `body.bytes()` asks for the entire response as ONE array, which is how a large Xtream catalog
- * produced `Failed to allocate a 26891064 byte allocation`. Bulk lists stream now, so this cap is
- * a backstop against anything else on this path growing without warning.
+ * produced `Failed to allocate a 26891064 byte allocation` here. Bulk lists stream now, so this
+ * cap is a backstop against anything else on this path growing without warning.
  *
  * A declared Content-Length over the cap is refused before a single byte is read — the cheapest
  * possible outcome. Within the cap it still goes through `bytes()`, whose one exact-sized
@@ -198,7 +223,7 @@ private fun responseTooLarge(declaredLength: Long): ResponseTooLargeException {
  * [addonHttpClient] — DNS must never break a fetch.
  */
 private fun clientForDns(dnsProvider: String?): OkHttpClient =
-    runCatching { PlaylistDns.clientFor(dnsProvider, addonHttpClient) }.getOrNull() ?: addonHttpClient
+    runCatching { PlaylistDns.clientFor(dnsProvider, AddonHttpClientProvider.get()) }.getOrNull() ?: AddonHttpClientProvider.get()
 
 private suspend fun executeTextRequest(
     method: String,
@@ -227,7 +252,7 @@ private suspend fun executeTextRequest(
     clientForDns(dnsProvider).newCall(request).execute().use { response ->
         val payload = readResponseBody(response.body)
         if (!response.isSuccessful) {
-            error(runBlocking { getString(Res.string.network_request_failed_http, response.code) })
+            throw HttpStatusException(response.code, runBlocking { getString(Res.string.network_request_failed_http, response.code) })
         }
         if (payload.isBlank()) {
             throw EmptyResponseBodyException(runBlocking { getString(Res.string.network_empty_response_body) })
@@ -308,9 +333,9 @@ actual suspend fun httpRequestRaw(
         }.build()
 
         val client = if (followRedirects) {
-            addonHttpClient
+            AddonHttpClientProvider.get()
         } else {
-            addonHttpClient.newBuilder()
+            AddonHttpClientProvider.get().newBuilder()
                 .followRedirects(false)
                 .followSslRedirects(false)
                 .build()
@@ -347,7 +372,7 @@ actual suspend fun httpStreamLines(
     val request = builder.build()
     clientForDns(dnsProvider).newCall(request).execute().use { response ->
         if (!response.isSuccessful) {
-            error(runBlocking { getString(Res.string.network_request_failed_http, response.code) })
+            throw HttpStatusException(response.code, runBlocking { getString(Res.string.network_request_failed_http, response.code) })
         }
         val body = response.body ?: return@use
         val rawSource = body.source()
@@ -383,10 +408,8 @@ private const val MAX_LINE_BYTES = 1L * 1024 * 1024
  * against a ~192MB heap, which killed the app on launch. Here the search for the newline is capped,
  * and when none is found within the cap the buffered slice is emitted as its own chunk.
  *
- * Safe for all three consumers: M3U lines are far below the cap so they still arrive whole, the
- * XMLTV tokenizer explicitly accepts chunk boundaries falling anywhere, and so does the Xtream
- * catalog splitter — whose JSON is typically minified onto one line, so the cap is the only thing
- * bounding it.
+ * Safe for both consumers: M3U lines are far below the cap so they still arrive whole, and the
+ * XMLTV tokenizer explicitly accepts chunk boundaries falling anywhere, even mid-tag.
  */
 internal fun streamBoundedLines(source: okio.BufferedSource, onLine: (String) -> Unit) {
     while (true) {

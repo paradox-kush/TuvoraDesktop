@@ -87,10 +87,28 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.URL
 
 private const val TAG = "NuvioPlayer"
+
+
+/**
+ * Codec label for the stream info panel. ExoPlayer describes a track by MIME type; strip
+ * it back to the short name and run it through the shared table so ExoPlayer and libmpv
+ * agree on how a codec is spelled.
+ */
+private fun Format.displayCodecName(): String? {
+    val fromMime = sampleMimeType
+        ?.substringAfter('/', "")
+        ?.takeIf { it.isNotBlank() }
+        ?.removePrefix("x-")
+    // RFC 6381 strings ("avc1.640028", "mp4a.40.2") carry the codec before the first dot.
+    val fromCodecs = codecs?.substringBefore('.')?.trim()?.takeIf { it.isNotBlank() }
+    return StreamCodecNames.display(fromMime ?: fromCodecs)
+}
 private const val PLAYER_DIAGNOSTIC_TAG = "NuvioPlayerDiag"
 
 private class PlaybackDiagnostics {
@@ -108,6 +126,7 @@ actual fun PlatformPlayerSurface(
     externalSubtitles: List<com.nuvio.app.features.streams.StreamSubtitle>,
     streamType: String?,
     isCatchUpPlayback: Boolean,
+    playbackSurface: String?,
     useYoutubeChunkedPlayback: Boolean,
     modifier: Modifier,
     playWhenReady: Boolean,
@@ -115,11 +134,6 @@ actual fun PlatformPlayerSurface(
     initialPositionRequestKey: String?,
     resizeMode: PlayerResizeMode,
     useNativeController: Boolean,
-    playerControlsState: PlayerControlsState,
-    onPlayerControlsAction: (PlayerControlsAction) -> Boolean,
-    onPlayerControlsEvent: (String, Double) -> Boolean,
-    onPlayerControlsScrubChange: (Long) -> Boolean,
-    onPlayerControlsScrubFinished: (Long) -> Boolean,
     onInitialPositionHandled: (key: String, handled: Boolean) -> Unit,
     onControllerReady: (PlayerEngineController) -> Unit,
     onSnapshot: (PlayerPlaybackSnapshot) -> Unit,
@@ -175,8 +189,15 @@ actual fun PlatformPlayerSurface(
             onInitialPositionHandled = onInitialPositionHandled,
             onControllerReady = onControllerReady,
             onSnapshot = onSnapshot,
-            onError = { message ->
-                if (message != null && playerSettings.androidPlaybackEngine == AndroidPlaybackEngine.Auto) {
+            onError = { message, linkAuthFailure ->
+                // A 401/403/410 is the LINK being refused, not a decoding problem — libmpv would be
+                // handed the same dead URL and fail identically. Worse, swallowing it as `null` here
+                // hid it from the screen's expired-link recovery (which only runs for a non-null
+                // message), so an IPTV token/stream-id failure could never self-heal on Android.
+                // Pass those straight through; keep the engine failover for real playback failures.
+                if (message != null && !linkAuthFailure &&
+                    playerSettings.androidPlaybackEngine == AndroidPlaybackEngine.Auto
+                ) {
                     Log.w(TAG, "ExoPlayer failed; falling back to libmpv: $message")
                     initialPositionRequestKey?.let { key ->
                         onInitialPositionHandled(key, false)
@@ -208,7 +229,15 @@ actual fun PlatformPlayerSurface(
                 modifier = modifier,
                 playWhenReady = playWhenReady,
                 resizeMode = resizeMode,
-                videoOutput = playerSettings.androidLibmpvVideoOutput,
+                // Routed through the policy: on the live path it downgrades a leaking gpu-next to
+                // gpu (the fence-fd leak fix — see LiveVideoOutputPolicy); off the live path it
+                // passes the user's renderer through unchanged.
+                videoOutput = LiveVideoOutputPolicy.videoOutputFor(
+                    isLive = normalizeStreamType(streamType) == "live",
+                    isCatchUpPlayback = isCatchUpPlayback,
+                    surface = playbackSurface,
+                    userPreference = playerSettings.androidLibmpvVideoOutput.mpvValue,
+                ),
                 hardwareDecodingEnabled = playerSettings.androidLibmpvHardwareDecodingEnabled,
                 yuv420pEnabled = playerSettings.androidLibmpvYuv420pEnabled,
                 onControllerReady = onControllerReady,
@@ -250,7 +279,8 @@ private fun ExoPlayerSurface(
     onInitialPositionHandled: (key: String, handled: Boolean) -> Unit,
     onControllerReady: (PlayerEngineController) -> Unit,
     onSnapshot: (PlayerPlaybackSnapshot) -> Unit,
-    onError: (String?) -> Unit,
+    /** [linkAuthFailure] = the server refused the URL itself (401/403/410), not a decode problem. */
+    onError: (message: String?, linkAuthFailure: Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -295,6 +325,7 @@ private fun ExoPlayerSurface(
     var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
     var videoAspectRatio by remember(playerSourceKey) { mutableStateOf(0f) }
     val latestVideoAspectRatio = rememberUpdatedState(videoAspectRatio)
+    var currentSubtitleStyle by remember { mutableStateOf(SubtitleStyleState.DEFAULT) }
     var decoderPriorityOverride by remember(playerSourceKey) { mutableStateOf<Int?>(null) }
     var fallbackStartPositionMs by remember(playerSourceKey) { mutableStateOf<Long?>(null) }
     val effectiveDecoderPriority = decoderPriorityOverride ?: playerSettings.decoderPriority
@@ -328,6 +359,11 @@ private fun ExoPlayerSurface(
 
     val extractorsFactory = remember {
         DefaultExtractorsFactory()
+            // A direct live `.ts` is a single-program transport stream. The default multi-PMT mode
+            // scans for multiple programs and can mis-select PIDs / mis-frame the ES on some panels,
+            // feeding the decoder malformed access units (macroblocking). StreamVault + TiviMate both
+            // pin SINGLE_PMT for live .ts. (Phase 0, research/iptv-playback-engine-design.md)
+            .setTsExtractorMode(TsExtractor.MODE_SINGLE_PMT)
             .setTsExtractorFlags(LIVE_TS_EXTRACTOR_FLAGS)
             .setTsExtractorTimestampSearchBytes(1500 * TsExtractor.TS_PACKET_SIZE)
     }
@@ -383,6 +419,7 @@ private fun ExoPlayerSurface(
             shouldNormalizeCuePositionProvider = {
                 latestExternalSubtitleMimeType.value == MimeTypes.TEXT_VTT
             },
+            shouldStripSdhProvider = { currentSubtitleStyle.stripSdh },
             videoBoundsFractionProvider = {
                 playerViewRef?.videoBoundsFraction(latestVideoAspectRatio.value)
             },
@@ -401,20 +438,35 @@ private fun ExoPlayerSurface(
             }
         }
 
+        val minBufferMs = 15_000
+        val maxBufferMs = 70_000
+        val bufferForPlaybackMs = DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS
+        val bufferForPlaybackAfterRebufferMs = 5_000
         val loadControl = DefaultLoadControl.Builder()
             .setTargetBufferBytes(playerTargetBufferBytes())
-            // media3's default is already false, but the byte cap above only binds while it is:
-            // below minBufferMs loading continues whenever `prioritizeTimeOverSizeThresholds ||
-            // !targetBufferSizeReached`, so flipping to true would buffer past the cap that
-            // field OOMs forced us onto. Pinned explicitly (twin of mobile, WP2).
+            // Pinned to media3 1.8.0's default, because the heap/4 byte cap above only bounds
+            // memory while it holds: shouldContinueLoading keeps loading below minBufferMs
+            // whenever `prioritizeTimeOverSizeThresholds || !targetBufferSizeReached`, so
+            // flipping this to true would let a high-bitrate stream buffer straight past the
+            // cap that field OOMs forced us onto.
             .setPrioritizeTimeOverSizeThresholds(false)
             .setBufferDurationsMs(
-                15_000,
-                70_000,
-                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
-                5_000
+                minBufferMs,
+                maxBufferMs,
+                bufferForPlaybackMs,
+                bufferForPlaybackAfterRebufferMs
             )
             .build()
+        // Published so a reported live freeze carries the thresholds that were actually in
+        // effect; a stall that never clears is only explained by these if the player needed
+        // more buffered media to resume than a realtime source could produce.
+        com.nuvio.app.core.analytics.LivePlaybackBufferProfile.current =
+            com.nuvio.app.core.analytics.LivePlaybackBufferProfile.Values(
+                minBufferMs = minBufferMs,
+                maxBufferMs = maxBufferMs,
+                bufferForPlaybackMs = bufferForPlaybackMs,
+                bufferForPlaybackAfterRebufferMs = bufferForPlaybackAfterRebufferMs,
+            )
 
         val player = if (useLibass) {
             ExoPlayer.Builder(context)
@@ -498,7 +550,6 @@ private fun ExoPlayerSurface(
 
     val pendingSubtitleTrackIndex = remember { mutableListOf<Int>() }
     val pendingAudioTrackSelection = remember { mutableListOf<TrackSelectionSnapshot>() }
-    var currentSubtitleStyle by remember { mutableStateOf(SubtitleStyleState.DEFAULT) }
     var subtitleSelectionJob by remember { mutableStateOf<Job?>(null) }
     val isInPip = rememberIsInPictureInPicture()
     val pipSubtitleScale by rememberUpdatedState(if (isInPip) 0.4f else 1.0f)
@@ -542,10 +593,13 @@ private fun ExoPlayerSurface(
                 )
                 fallbackStartPositionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
                 decoderPriorityOverride = DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-                latestOnError.value(null)
+                latestOnError.value(null, false)
                 return
             }
-            latestOnError.value(error.localizedMessage ?: runBlocking { getString(Res.string.player_unable_to_play_stream) })
+            latestOnError.value(
+                error.localizedMessage ?: runBlocking { getString(Res.string.player_unable_to_play_stream) },
+                error.isLinkAuthFailure(),
+            )
         }
 
         val listener = object : Player.Listener {
@@ -556,7 +610,11 @@ private fun ExoPlayerSurface(
                     "error attempt=${playbackDiagnostics.attempt} " +
                         "elapsedMs=${diagnosticElapsedSince(playbackDiagnostics.prepareStartedAtMs)} " +
                         "code=${error.errorCodeName} cause=${error.cause?.javaClass?.simpleName ?: "none"} " +
-                        "message=${diagnosticPlayerMessage(error.message)}",
+                        "positionMs=${exoPlayer.currentPosition.coerceAtLeast(0L)} " +
+                        "bufferedMs=${exoPlayer.bufferedPosition.coerceAtLeast(0L)} " +
+                        "durationMs=${exoPlayer.duration.coerceAtLeast(0L)} " +
+                        "message=${diagnosticPlayerMessage(error.message)} " +
+                        "causeChain=${diagnosticThrowableChain(error)}",
                     error,
                 )
 
@@ -603,7 +661,7 @@ private fun ExoPlayerSurface(
                             .build()
                         // A retry that also fails re-enters here with probeAttempted set, and the
                         // error is reported then.
-                        latestOnError.value(null)
+                        latestOnError.value(null, false)
                     }
                     return
                 }
@@ -626,11 +684,13 @@ private fun ExoPlayerSurface(
                         "elapsedMs=${diagnosticElapsedSince(playbackDiagnostics.prepareStartedAtMs)} " +
                         "positionMs=${exoPlayer.currentPosition.coerceAtLeast(0L)} " +
                         "bufferedMs=${exoPlayer.bufferedPosition.coerceAtLeast(0L)} " +
-                        "bufferedPercent=${BufferedPercent.of(exoPlayer.bufferedPosition, exoPlayer.duration)} playWhenReady=${exoPlayer.playWhenReady}",
+                        "durationMs=${exoPlayer.duration.coerceAtLeast(0L)} " +
+                        "bufferedPercent=${BufferedPercent.of(exoPlayer.bufferedPosition, exoPlayer.duration)} playWhenReady=${exoPlayer.playWhenReady} " +
+                        "terminalError=${exoPlayer.playerError?.errorCodeName ?: "none"}",
                 )
                 if (playbackState == Player.STATE_READY) {
                     fallbackStartPositionMs = null
-                    latestOnError.value(null)
+                    latestOnError.value(null, false)
                     exoPlayer.logCurrentTracks("STATE_READY")
                 }
                 syncPlayerViewKeepScreenOn()
@@ -756,6 +816,26 @@ private fun ExoPlayerSurface(
                 override fun retry() {
                     exoPlayer.prepare()
                     exoPlayer.playWhenReady = true
+                }
+
+                override fun getStreamInfo(): PlayerStreamInfo = runCatching {
+                    val video = exoPlayer.videoFormat
+                    val audio = exoPlayer.audioFormat
+                    PlayerStreamInfo(
+                        videoCodec = video?.displayCodecName(),
+                        videoWidth = video?.width?.takeIf { it > 0 },
+                        videoHeight = video?.height?.takeIf { it > 0 },
+                        videoFrameRate = video?.frameRate?.takeIf { it > 0f },
+                        videoBitrate = video?.bitrate?.takeIf { it > 0 },
+                        audioCodec = audio?.displayCodecName(),
+                        audioChannelCount = audio?.channelCount?.takeIf { it > 0 },
+                        audioSampleRate = audio?.sampleRate?.takeIf { it > 0 },
+                        audioBitrate = audio?.bitrate?.takeIf { it > 0 },
+                        playerEngine = ENGINE_LABEL_EXOPLAYER,
+                    )
+                }.getOrElse {
+                    Log.w(TAG, "Failed to read ExoPlayer stream info: ${it.message}")
+                    PlayerStreamInfo(playerEngine = ENGINE_LABEL_EXOPLAYER)
                 }
 
                 override fun setPlaybackSpeed(speed: Float) {
@@ -948,7 +1028,8 @@ private fun LibmpvPlayerSurface(
     modifier: Modifier,
     playWhenReady: Boolean,
     resizeMode: PlayerResizeMode,
-    videoOutput: AndroidLibmpvVideoOutput,
+    /** Already resolved by [LiveVideoOutputPolicy]: gpu on the live path, else the user's renderer. */
+    videoOutput: String,
     hardwareDecodingEnabled: Boolean,
     yuv420pEnabled: Boolean,
     onControllerReady: (PlayerEngineController) -> Unit,
@@ -956,11 +1037,13 @@ private fun LibmpvPlayerSurface(
     onError: (String?) -> Unit,
 ) {
     val context = LocalContext.current
+    val isLocalFileSource = sourceUrl.startsWith("file:", ignoreCase = true)
     val lifecycleOwner = LocalLifecycleOwner.current
     val latestOnSnapshot = rememberUpdatedState(onSnapshot)
     val latestOnError = rememberUpdatedState(onError)
     val latestPlayWhenReady = rememberUpdatedState(playWhenReady)
     val coroutineScope = rememberCoroutineScope()
+    val playbackDiagnostics = remember { PlaybackDiagnostics() }
     val sanitizedSourceHeaders = remember(sourceHeaders) {
         sanitizePlaybackHeaders(sourceHeaders)
     }
@@ -1027,6 +1110,13 @@ private fun LibmpvPlayerSurface(
                 }
             }
             override fun eventProperty(property: String, value: Boolean) {
+                if (property == "eof-reached" && value) {
+                    Log.w(
+                        PLAYER_DIAGNOSTIC_TAG,
+                        "mpv_property=eof-reached value=true attempt=${playbackDiagnostics.attempt} " +
+                            "elapsedMs=${diagnosticElapsedSince(playbackDiagnostics.prepareStartedAtMs)}",
+                    )
+                }
                 if (property == "eof-reached" || property == "pause" || property == "paused-for-cache" || property == "seeking") {
                     dispatchSnapshot(updateKeepScreenOn = true)
                 }
@@ -1043,6 +1133,11 @@ private fun LibmpvPlayerSurface(
             override fun event(eventId: Int, data: MPVNode) {
                 when (eventId) {
                     MPV.mpvEvent.MPV_EVENT_START_FILE -> {
+                        Log.i(
+                            PLAYER_DIAGNOSTIC_TAG,
+                            "mpv_event=START_FILE attempt=${playbackDiagnostics.attempt} " +
+                                "elapsedMs=${diagnosticElapsedSince(playbackDiagnostics.prepareStartedAtMs)}",
+                        )
                         coroutineScope.launch(Dispatchers.Main.immediate) {
                             latestOnError.value(null)
                             val snapshot = PlayerPlaybackSnapshot()
@@ -1055,17 +1150,51 @@ private fun LibmpvPlayerSurface(
                         coroutineScope.launch(Dispatchers.Main.immediate) {
                             latestOnError.value(null)
                             val snapshot = view.snapshot()
+                            Log.i(
+                                PLAYER_DIAGNOSTIC_TAG,
+                                "mpv_event=${if (eventId == MPV.mpvEvent.MPV_EVENT_FILE_LOADED) "FILE_LOADED" else "PLAYBACK_RESTART"} " +
+                                    "attempt=${playbackDiagnostics.attempt} " +
+                                    "elapsedMs=${diagnosticElapsedSince(playbackDiagnostics.prepareStartedAtMs)} " +
+                                    "positionMs=${snapshot.positionMs} bufferedMs=${snapshot.bufferedPositionMs} " +
+                                    "durationMs=${snapshot.durationMs}",
+                            )
                             latestOnSnapshot.value(snapshot)
                             nowPlayingController?.syncPlayback(snapshot)
                         }
                     }
-                    MPV.mpvEvent.MPV_EVENT_END_FILE -> dispatchSnapshot()
+                    MPV.mpvEvent.MPV_EVENT_END_FILE -> {
+                        coroutineScope.launch(Dispatchers.Main.immediate) {
+                            val snapshot = view.snapshot()
+                            Log.w(
+                                PLAYER_DIAGNOSTIC_TAG,
+                                "mpv_event=END_FILE attempt=${playbackDiagnostics.attempt} " +
+                                    "elapsedMs=${diagnosticElapsedSince(playbackDiagnostics.prepareStartedAtMs)} " +
+                                    "positionMs=${snapshot.positionMs} bufferedMs=${snapshot.bufferedPositionMs} " +
+                                    "durationMs=${snapshot.durationMs} eof=${snapshot.isEnded} " +
+                                    "data=${diagnosticPlayerMessage(data.toJson())}",
+                            )
+                            latestOnSnapshot.value(snapshot)
+                            nowPlayingController?.syncPlayback(snapshot)
+                            view.keepScreenOn = view.shouldKeepScreenOn()
+                        }
+                    }
                 }
             }
         }
+        val logObserver = object : MPV.LogObserver {
+            override fun logMessage(prefix: String, level: Int, text: String) {
+                Log.w(
+                    PLAYER_DIAGNOSTIC_TAG,
+                    "mpv_log level=$level prefix=${diagnosticPlayerMessage(prefix)} " +
+                        "message=${diagnosticPlayerMessage(text)}",
+                )
+            }
+        }
         view.mpv.addObserver(observer)
+        view.mpv.addLogObserver(logObserver)
         onDispose {
             view.mpv.removeObserver(observer)
+            view.mpv.removeLogObserver(logObserver)
         }
     }
 
@@ -1094,6 +1223,13 @@ private fun LibmpvPlayerSurface(
 
     LaunchedEffect(playerViewRef, sourceUrl, sourceAudioUrl, sanitizedSourceHeaders, externalSubtitles) {
         val view = playerViewRef ?: return@LaunchedEffect
+        playbackDiagnostics.attempt += 1
+        playbackDiagnostics.prepareStartedAtMs = SystemClock.elapsedRealtime()
+        Log.i(
+            PLAYER_DIAGNOSTIC_TAG,
+            "mpv_prepare_begin attempt=${playbackDiagnostics.attempt} " +
+                "source=${diagnosticPlaybackSource(sourceUrl)} audioSource=${!sourceAudioUrl.isNullOrBlank()}",
+        )
         val snapshot = PlayerPlaybackSnapshot()
         latestOnSnapshot.value(snapshot)
         nowPlayingController?.syncPlayback(snapshot)
@@ -1140,8 +1276,8 @@ private fun LibmpvPlayerSurface(
         factory = { viewContext ->
             NuvioLibmpvView(
                 context = viewContext,
-                videoOutput = videoOutput,
-                hardwareDecodingEnabled = hardwareDecodingEnabled,
+                videoOutput = if (isLocalFileSource) AndroidLibmpvVideoOutput.Gpu.mpvValue else videoOutput,
+                hardwareDecodingEnabled = if (isLocalFileSource) false else hardwareDecodingEnabled,
                 yuv420pEnabled = yuv420pEnabled,
             ).apply {
                 layoutParams = android.view.ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT)
@@ -1180,7 +1316,7 @@ private tailrec fun Context.findActivity(): Activity? =
 
 private class NuvioLibmpvView(
     context: Context,
-    private val videoOutput: AndroidLibmpvVideoOutput,
+    private val videoOutput: String,
     private val hardwareDecodingEnabled: Boolean,
     private val yuv420pEnabled: Boolean,
     attrs: AttributeSet? = null,
@@ -1377,6 +1513,30 @@ private class NuvioLibmpvView(
     @Volatile private var obsCachePositionMs = 0L
     @Volatile private var obsSpeed = 1.0
     @Volatile private var obsTrackList: MPVNode? = null
+    @Volatile private var obsVideoParams: MPVNode? = null
+    // Rolling estimates. Live MPEG-TS rarely declares a bitrate in the container, so
+    // mpv's running measurement is the only number the stream info panel can show.
+    @Volatile private var obsVideoBitrate: Double? = null
+    @Volatile private var obsAudioBitrate: Double? = null
+
+    /**
+     * Counts samples where mpv reported the video output running. Incremented on the mpv event
+     * thread — never read through mpv from the main thread, which is what keeps `snapshot()`
+     * mpv-free (the ANR fix).
+     *
+     * CAVEAT: `estimated-vf-fps` measures the *filter chain* output, so it proves decoding is
+     * still producing frames rather than that the VO presented them. It catches the reported
+     * "picture frozen, audio playing" wedge; a VO that stops presenting frames a healthy decoder
+     * keeps producing would slip past it. Verify against a genuinely frozen channel before
+     * trusting it as the only signal.
+     */
+    @Volatile private var obsVideoFrameTicks = 0L
+
+    // VO-level counters, straight from mpv. `estimated-vf-fps` above proves decoding, not
+    // presentation; these are the closest signals mpv has to "the picture reached the screen"
+    // (no true presented-frames property exists). Snapshot diagnostics only for now.
+    @Volatile private var obsVoDroppedFrames = 0L
+    @Volatile private var obsVoDelayedFrames = 0L
 
     private val propertyShadow = object : MPV.EventObserver {
         override fun eventProperty(property: String) {
@@ -1394,11 +1554,25 @@ private class NuvioLibmpvView(
                 "demuxer-cache-time" -> obsCachePositionMs = 0L
                 "speed" -> obsSpeed = 1.0
                 "track-list" -> obsTrackList = null
+                "video-params" -> obsVideoParams = null
+                "video-bitrate" -> obsVideoBitrate = null
+                "audio-bitrate" -> obsAudioBitrate = null
+                // Deliberately NOT reset: the freeze policy treats any change in this counter as
+                // a rendered frame, so zeroing it when the property goes unavailable would read
+                // as the picture coming back. loadSource rebases it instead.
+                "estimated-vf-fps" -> Unit
+                // Unavailable means no active VO — the same 0 a fresh core reports.
+                "frame-drop-count" -> obsVoDroppedFrames = 0L
+                "vo-delayed-frame-count" -> obsVoDelayedFrames = 0L
             }
         }
 
         override fun eventProperty(property: String, value: Long) {
-            if (property == "cache-buffering-state") obsCacheBufferingState = value.toInt()
+            when (property) {
+                "cache-buffering-state" -> obsCacheBufferingState = value.toInt()
+                "frame-drop-count" -> obsVoDroppedFrames = value
+                "vo-delayed-frame-count" -> obsVoDelayedFrames = value
+            }
         }
 
         override fun eventProperty(property: String, value: Boolean) {
@@ -1417,13 +1591,19 @@ private class NuvioLibmpvView(
                 "time-pos" -> obsPositionMs = value.toMillis()
                 "demuxer-cache-time" -> obsCachePositionMs = value.toMillis()
                 "speed" -> obsSpeed = value
+                "video-bitrate" -> obsVideoBitrate = value.takeIf { it > 0.0 }
+                "audio-bitrate" -> obsAudioBitrate = value.takeIf { it > 0.0 }
+                "estimated-vf-fps" -> if (value > 0.0) obsVideoFrameTicks++
             }
         }
 
         override fun eventProperty(property: String, value: String) = Unit
 
         override fun eventProperty(property: String, value: MPVNode) {
-            if (property == "track-list") obsTrackList = value
+            when (property) {
+                "track-list" -> obsTrackList = value
+                "video-params" -> obsVideoParams = value
+            }
         }
 
         override fun event(eventId: Int, data: MPVNode) = Unit
@@ -1481,10 +1661,10 @@ private class NuvioLibmpvView(
         mpv.attachSurface(surface)
         attachedSurface = surface
         mpv.setOptionString("force-window", "yes")
-        mpv.setPropertyString("vo", videoOutput.mpvValue)
-        // setPropertyString returns Unit, so a libmpv build that refused the value here would
-        // black-screen with nothing saying why; this line makes the applied vo visible in logcat.
-        Log.i(TAG, "mpv vo applied: '${videoOutput.mpvValue}'")
+        mpv.setPropertyString("vo", videoOutput)
+        // Logged so the applied renderer (gpu on live, else the user's choice) is visible in logcat
+        // when a black screen or fence-fd leak has to be diagnosed. setPropertyString returns Unit.
+        Log.i(TAG, "mpv vo applied: '$videoOutput'")
         recordMpvStage("surface_attached")
     }
 
@@ -1497,7 +1677,7 @@ private class NuvioLibmpvView(
     }
 
     override fun initOptions() {
-        setVo(videoOutput.mpvValue)
+        setVo(videoOutput)
         mpv.setOptionString("profile", "fast")
         mpv.setOptionString("hwdec", if (hardwareDecodingEnabled) "auto" else "no")
         if (yuv420pEnabled) {
@@ -1510,6 +1690,14 @@ private class NuvioLibmpvView(
         // Bound blocking network reads (ffmpeg rw_timeout): a half-dead live socket
         // otherwise wedges the demuxer — and with it any thread waiting on the core.
         mpv.setOptionString("network-timeout", "15")
+        // keep-open (set below) parks the core on the last frame at EOF, which is right for a
+        // file and wrong for a live channel: an IPTV panel closing the socket mid-stream reads
+        // as a clean EOF. Letting ffmpeg re-open the URL heals a transient drop before the
+        // app-level reconnect (LivePlaybackFreezeTracking) has to rebuild playback.
+        mpv.setOptionString(
+            "stream-lavf-o",
+            "reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=5"
+        )
         mpv.setOptionString("tls-verify", "yes")
         mpv.setOptionString("tls-ca-file", "${context.filesDir.path}/cacert.pem")
         val demuxerBytes = demuxerBytesFor(MemoryPortAccess.current().baseTier())
@@ -1540,6 +1728,16 @@ private class NuvioLibmpvView(
             "demuxer-cache-time" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
             "speed" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
             "track-list" to MPV.mpvFormat.MPV_FORMAT_NODE,
+            "video-params" to MPV.mpvFormat.MPV_FORMAT_NODE,
+            "video-bitrate" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
+            "audio-bitrate" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
+            // Fires roughly per frame, like time-pos above; the shadow handler is a volatile
+            // increment, so the cost is comparable to what this observer already carries.
+            "estimated-vf-fps" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
+            // VO-level counters: change only when a frame is dropped or a vsync runs long, so
+            // they are near-silent during healthy playback.
+            "frame-drop-count" to MPV.mpvFormat.MPV_FORMAT_INT64,
+            "vo-delayed-frame-count" to MPV.mpvFormat.MPV_FORMAT_INT64,
         )
         props.forEach { (name, format) -> mpv.observeProperty(name, format) }
     }
@@ -1578,9 +1776,9 @@ private class NuvioLibmpvView(
         applyRequestHeaders(currentRequestHeaders)
         obsPaused = !playWhenReady
         mpv.setPropertyBoolean("pause", !playWhenReady)
-        mpv.command("loadfile", sourceUrl, "replace")
+        mpv.command("loadfile", sourceUrl.toMpvSource(), "replace")
         currentSourceAudioUrl?.takeIf { it.isNotBlank() }?.let { sourceAudioUrl ->
-            mpv.command("audio-add", sourceAudioUrl, "auto")
+            mpv.command("audio-add", sourceAudioUrl.toMpvSource(), "auto")
         }
         currentExternalSubtitles.forEachIndexed { index, subtitle ->
             val flag = if (index == 0) "auto" else "cached"
@@ -1588,6 +1786,13 @@ private class NuvioLibmpvView(
         }
         mpv.setPropertyBoolean("pause", !playWhenReady)
     }
+
+    private fun String.toMpvSource(): String =
+        if (!startsWith("file:", ignoreCase = true)) {
+            this
+        } else {
+            runCatching { File(URI(this)).absolutePath }.getOrDefault(this)
+        }
 
     fun setPaused(paused: Boolean) {
         // Optimistic shadow echo so a snapshot() issued right after reflects the intent;
@@ -1627,6 +1832,12 @@ private class NuvioLibmpvView(
             positionMs = positionMs,
             bufferedPositionMs = maxOf(positionMs, cachePositionMs),
             playbackSpeed = obsSpeed.toFloat(),
+            videoProgressTicks = obsVideoFrameTicks,
+            // video-params is present exactly when a video track is decoding, and it is already
+            // in the shadow — so "has a picture" costs nothing extra and stays off the main thread.
+            hasVideoTrack = obsVideoParams != null,
+            voDroppedFrameCount = obsVoDroppedFrames,
+            voDelayedFrameCount = obsVoDelayedFrames,
             // ponytail: videoWidth/videoHeight left at their 0 defaults. Upstream read them via
             // mpv.getPropertyInt here, but snapshot() runs on the main thread and must stay mpv-free
             // (the ANR fix). To restore PiP aspect ratio, observe video-params/dw,dh in the property
@@ -1641,8 +1852,7 @@ private class NuvioLibmpvView(
 
     fun applyResizeMode(resizeMode: PlayerResizeMode) = ctl {
         when (resizeMode) {
-            PlayerResizeMode.Fit,
-            PlayerResizeMode.Stretch -> {
+            PlayerResizeMode.Fit -> {
                 mpv.setPropertyDouble("panscan", 0.0)
                 mpv.setPropertyString("video-aspect-override", "no")
             }
@@ -1661,6 +1871,47 @@ private class NuvioLibmpvView(
         ctl { mpv.command("seek", (offsetMs / 1000.0).toString(), "relative") }
     }
 
+    /**
+     * Stream facts for the info panel, read off the observed-property shadow only — never
+     * the mpv core, so this is safe on the main thread (a synchronous mpv_get_property
+     * takes the core lock, which a wedged live demuxer holds for seconds).
+     *
+     * Total by contract: any node access can throw if mpv publishes an unexpected shape,
+     * and this is called straight from the UI event that opens the panel.
+     */
+    fun readStreamInfo(): PlayerStreamInfo = runCatching {
+        val tracks = obsTrackList?.asArray()?.toList().orEmpty()
+        fun selected(type: String) = tracks.firstOrNull {
+            it.nodeString("type") == type && it.nodeBoolean("selected") == true
+        }
+        val video = selected("video")
+        val audio = selected("audio")
+        PlayerStreamInfo(
+            videoCodec = StreamCodecNames.display(video?.nodeString("codec")),
+            videoWidth = obsVideoParams?.nodeInt("w") ?: video?.nodeInt("demux-w"),
+            videoHeight = obsVideoParams?.nodeInt("h") ?: video?.nodeInt("demux-h"),
+            videoFrameRate = video?.nodeDouble("demux-fps")?.toFloat()?.takeIf { it > 0f },
+            // Bits per second, same unit as ExoPlayer's Format.bitrate. Measured first,
+            // then the container's average, then the HLS variant's declared rate — the
+            // only one many Xtream live channels expose.
+            videoBitrate = (
+                obsVideoBitrate
+                    ?: video?.nodeDouble("demux-bitrate")
+                    ?: video?.nodeDouble("hls-bitrate")
+                )?.takeIf { it > 0.0 }?.toInt(),
+            audioCodec = StreamCodecNames.display(audio?.nodeString("codec")),
+            audioChannelCount = audio?.nodeInt("demux-channel-count")
+                ?: audio?.nodeInt("audio-channels"),
+            audioSampleRate = audio?.nodeInt("demux-samplerate"),
+            audioBitrate = (obsAudioBitrate ?: audio?.nodeDouble("demux-bitrate"))
+                ?.takeIf { it > 0.0 }?.toInt(),
+            playerEngine = ENGINE_LABEL_LIBMPV,
+        )
+    }.getOrElse {
+        Log.w(TAG, "Failed to read libmpv stream info: ${it.message}")
+        PlayerStreamInfo(playerEngine = ENGINE_LABEL_LIBMPV)
+    }
+
     fun controller(
         context: Context,
         nowPlayingController: AndroidPlayerNowPlayingController?,
@@ -1677,6 +1928,18 @@ private class NuvioLibmpvView(
             override fun retry() {
                 ctl { loadCurrentSource(playWhenReady = true) }
             }
+
+            /**
+             * `video-reload` reinitialises the video track off the demuxer that is already
+             * connected, so a wedged decoder is reset without asking the provider for a new
+             * link. Queued through [ctl] like every other mpv write — never on Main.
+             */
+            override fun resetVideoPipeline(): Boolean {
+                ctl { mpv.command("video-reload") }
+                return true
+            }
+
+            override fun getStreamInfo(): PlayerStreamInfo = readStreamInfo()
 
             override fun setPlaybackSpeed(speed: Float) {
                 ctl { mpv.setPropertyDouble("speed", speed.coerceIn(0.25f, 4f).toDouble()) }
@@ -1761,6 +2024,8 @@ private class NuvioLibmpvView(
                 mpv.setPropertyInt("sub-outline-size", style.toMpvSubtitleOutlineSize())
                 mpv.setPropertyInt("sub-border-size", style.toMpvSubtitleOutlineSize())
                 mpv.setPropertyInt("sub-pos", (100 - style.bottomOffset / 10).coerceIn(0, 100))
+                mpv.setPropertyBoolean("sub-filter-sdh", style.stripSdh)
+                mpv.setPropertyBoolean("sub-filter-sdh-harder", style.stripSdh)
             }
 
             override fun setSubtitleDelayMs(delayMs: Int) {
@@ -1839,13 +2104,14 @@ private data class LibmpvTrack(
  * result; StreamVault (media3-only, no mpv at all) sets them plus MODE_SINGLE_PMT.
  *
  * The pre-existing HDMV DTS flag is retained — some providers' audio depends on it.
- * Pinned on mobile by LiveTsExtractorFlagsTest (this fork has no android target to run it),
- * because removing a flag here breaks live SILENTLY: no crash, no error, just an infinite spinner.
+ * Pinned by LiveTsExtractorFlagsTest, because removing a flag here breaks live SILENTLY: no crash,
+ * no error, just an infinite spinner.
  */
 internal const val LIVE_TS_EXTRACTOR_FLAGS: Int =
     DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS or
         DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS or
-        DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES
+        DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or
+        DefaultTsPayloadReaderFactory.FLAG_IGNORE_SPLICE_INFO_STREAM
 
 /** Demuxer cache budget: the forward window plus the seek-back window, in bytes. */
 internal data class MpvDemuxerBytes(val maxBytes: Long, val maxBackBytes: Long)
@@ -1908,6 +2174,9 @@ private fun MPVNode.nodeInt(key: String): Int? =
 private fun MPVNode.nodeBoolean(key: String): Boolean? =
     runCatching { this[key]?.asBoolean() }.getOrNull()
 
+private fun MPVNode.nodeDouble(key: String): Double? =
+    runCatching { this[key]?.asDouble() }.getOrNull()
+
 private fun androidx.compose.ui.graphics.Color.toMpvColor(): String {
     val argb = toArgb()
     val alpha = (argb ushr 24) and 0xff
@@ -1955,6 +2224,10 @@ private fun ExoPlayer.snapshot(): PlayerPlaybackSnapshot {
         playbackSpeed = playbackParameters.speed,
         videoWidth = videoWidth,
         videoHeight = videoHeight,
+        // The renderer's own count of frames it put on screen — the one playback signal audio
+        // cannot keep alive, and the direct analogue of libvlc's `i_displayed_pictures`.
+        videoProgressTicks = videoDecoderCounters?.renderedOutputBufferCount?.toLong() ?: 0L,
+        hasVideoTrack = videoFormat != null,
     )
 }
 
@@ -2054,6 +2327,24 @@ private fun ExoPlayer.restoreTrackSelection(selection: TrackSelectionSnapshot): 
     return selectTrackByIndex(selection.trackType, selection.index)
 }
 
+/**
+ * The server refused the URL itself rather than the content being unplayable: 401/403 (token
+ * expired, session taken over by another device, stream no longer authorised) or 410 (gone).
+ *
+ * These must NOT trigger the libmpv failover — libmpv would be handed the same dead link — and
+ * must reach the screen so the expired-link recovery can mint a fresh one.
+ */
+private fun PlaybackException.isLinkAuthFailure(): Boolean {
+    var current: Throwable? = cause
+    while (current != null) {
+        if (current is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) {
+            return current.responseCode == 401 || current.responseCode == 403 || current.responseCode == 410
+        }
+        current = current.cause
+    }
+    return false
+}
+
 private fun PlaybackException.isDecoderFailure(): Boolean =
     errorCode in setOf(
         PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
@@ -2069,7 +2360,6 @@ private fun PlayerResizeMode.toExoResizeMode(): Int =
         PlayerResizeMode.Fit -> AspectRatioFrameLayout.RESIZE_MODE_FIT
         PlayerResizeMode.Fill -> AspectRatioFrameLayout.RESIZE_MODE_FILL
         PlayerResizeMode.Zoom -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-        PlayerResizeMode.Stretch -> AspectRatioFrameLayout.RESIZE_MODE_FIT
     }
 
 private fun PlayerView.syncLibassOverlay(
@@ -2300,6 +2590,7 @@ private class SubtitleOffsetRenderersFactory(
     context: Context,
     private val subtitleDelayUsProvider: () -> Long,
     private val shouldNormalizeCuePositionProvider: () -> Boolean,
+    private val shouldStripSdhProvider: () -> Boolean,
     private val videoBoundsFractionProvider: () -> RectF?,
 ) : DefaultRenderersFactory(context) {
     override fun buildTextRenderers(
@@ -2312,6 +2603,7 @@ private class SubtitleOffsetRenderersFactory(
         val normalizingOutput = CueNormalizingTextOutput(
             delegate = output,
             shouldNormalizeCuePositionProvider = shouldNormalizeCuePositionProvider,
+            shouldStripSdhProvider = shouldStripSdhProvider,
             videoBoundsFractionProvider = videoBoundsFractionProvider,
         )
         val startIndex = out.size
@@ -2328,20 +2620,28 @@ private class SubtitleOffsetRenderersFactory(
 private class CueNormalizingTextOutput(
     private val delegate: TextOutput,
     private val shouldNormalizeCuePositionProvider: () -> Boolean,
+    private val shouldStripSdhProvider: () -> Boolean,
     private val videoBoundsFractionProvider: () -> RectF?,
 ) : TextOutput {
     override fun onCues(cueGroup: CueGroup) {
-        val processed = cueGroup.cues.map(::processCue)
+        val processed = cueGroup.cues.mapNotNull(::processCue)
         delegate.onCues(CueGroup(processed, cueGroup.presentationTimeUs))
     }
 
     @Deprecated("Uses the deprecated Media3 callback for text outputs.")
     override fun onCues(cues: List<Cue>) {
-        delegate.onCues(cues.map(::processCue))
+        delegate.onCues(cues.mapNotNull(::processCue))
     }
 
-    private fun processCue(cue: Cue): Cue {
+    private fun processCue(cue: Cue): Cue? {
         var processed = fixRtlCueText(cue)
+        if (shouldStripSdhProvider()) {
+            val text = processed.text?.toString() ?: return processed
+            val filtered = SubtitleSdhFilter.filter(text) ?: return null
+            if (filtered != text) {
+                processed = processed.buildUpon().setText(filtered).build()
+            }
+        }
         if (shouldNormalizeCuePositionProvider()) {
             processed = normalizeCuePosition(processed)
         }
@@ -2529,6 +2829,14 @@ private fun isLoopbackPlaybackSource(value: String): Boolean = runCatching {
 private fun diagnosticPlayerMessage(value: String?): String =
     value?.replace('\n', ' ')?.replace('\r', ' ')?.take(160) ?: "none"
 
+private fun diagnosticThrowableChain(value: Throwable): String =
+    generateSequence(value) { it.cause }
+        .take(6)
+        .joinToString(" -> ") { error ->
+            "${error.javaClass.simpleName}:${diagnosticPlayerMessage(error.message)}"
+        }
+        .let(::diagnosticPlayerMessage)
+
 internal class SubtitleRequestHeaderDataSourceFactory(
     private val upstreamFactory: DataSource.Factory,
     private val externalSubtitles: List<com.nuvio.app.features.streams.StreamSubtitle>,
@@ -2552,7 +2860,7 @@ internal class SubtitleRequestHeaderDataSource(
         val url = dataSpec.uri.toString()
         val subtitle = externalSubtitles.find { it.url == url }
         val headers = subtitle?.headers
-
+        
         return if (headers.isNullOrEmpty()) {
             upstream.open(dataSpec)
         } else {
