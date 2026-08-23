@@ -2009,7 +2009,10 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     if (!_mpv) return -1;
     NSString *videoFormat = [self stringProperty:"video-format" fallback:@""];
     if (videoFormat.length == 0) return -1;
-    if ([self doubleProperty:"estimated-vf-fps" fallback:0.0] > 0.0) {
+    // Advanced at read time (this call), the correct pattern — a callback-driven count plateaus once
+    // the estimate settles. Floor of 1.0 fps matches Kotlin's MpvVideoOutputSignal.MIN_LIVE_FPS so
+    // all platforms agree on "the picture is alive".
+    if ([self doubleProperty:"estimated-vf-fps" fallback:0.0] >= 1.0) {
         _videoFrameTicks.fetch_add(1);
     }
     return _videoFrameTicks.load();
