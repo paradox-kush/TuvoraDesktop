@@ -16,6 +16,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -42,6 +43,10 @@ object AuthRepository {
     private var initialized = false
     private var validatedRemoteUserId: String? = null
 
+    // How long startup may sit in Loading before the watchdog surfaces the persisted/anonymous
+    // session (or signed-out). Matches NuvioTV AuthManager's 3s stall timeout.
+    private const val AUTH_INIT_STALL_TIMEOUT_MS = 3_000L
+
     /** Asks the app shell to show the sign-in screen (used from Settings while signed out). */
     fun requestSignIn() {
         _signInRequests.value += 1
@@ -52,6 +57,14 @@ object AuthRepository {
         initialized = true
 
         scope.launch {
+            // Load the persisted sync-backend selection up front so SyncBackendState.isLoaded flips
+            // regardless of whether any other subsystem happens to touch SupabaseProvider first.
+            // Without this, an anonymous / zero-profile viewer whose avatar catalog cache is warm
+            // never triggers a Supabase client build (the only accidental toucher), isLoaded stays
+            // false, and this collector parks on the guard below forever -> auth is stuck in Loading
+            // -> infinite startup spinner on every launch after the first. Mirrors NuvioTV's
+            // AuthManager, which has always called ensureLoaded() here. (Fixes the startup deadlock.)
+            SyncBackendRepository.ensureLoaded()
             SyncBackendRepository.state.collectLatest { backendState ->
                 if (!backendState.isLoaded) return@collectLatest
                 validatedRemoteUserId = null
@@ -108,6 +121,29 @@ object AuthRepository {
                     }
                 }
             }
+        }
+
+        // Watchdog: if auth has not settled shortly after start, surface whatever the device
+        // already knows so the UI leaves the loading gate. Two real stalls need this: an offline
+        // cold start, where supabase-kt retries the boot token refresh indefinitely (~10s/attempt)
+        // while sessionStatus sits in Initializing and authState stays Loading; and any regression
+        // that leaves the sync backend's isLoaded unflipped. The collector above overwrites this
+        // once the real state settles. Mirrors NuvioTV AuthManager.unblockUiIfAuthInitStalls().
+        scope.launch {
+            SyncBackendRepository.ensureLoaded()
+            delay(AUTH_INIT_STALL_TIMEOUT_MS)
+            if (_state.value !is AuthState.Loading) return@launch
+            val anonymousUserId = runCatching { AuthStorage.loadAnonymousUserId() }.getOrNull()
+            val persistedUser = runCatching {
+                SupabaseProvider.client.auth.sessionManager.loadSession()
+            }.getOrNull()?.user
+            _state.value = authStateAfterInitStall(
+                current = _state.value,
+                anonymousUserId = anonymousUserId,
+                persistedUserId = persistedUser?.id,
+                persistedEmail = persistedUser?.email,
+            )
+            log.w { "Auth init not settled after ${AUTH_INIT_STALL_TIMEOUT_MS}ms; proceeding with ${_state.value::class.simpleName}" }
         }
     }
 
@@ -367,6 +403,34 @@ object AuthRepository {
             )
         } else {
             current
+        }
+
+    /**
+     * The fallback [AuthState] applied by the init-stall watchdog when startup has not settled in
+     * time. Precedence mirrors [initialize]'s own: a state that already left [AuthState.Loading]
+     * wins (never override a settled state); then a saved anonymous id (a "Continue Without
+     * Account" viewer, whose id lives outside the Supabase session); then a persisted full-account
+     * session; otherwise signed-out. Pure so it tests without Supabase, storage, or the player.
+     */
+    internal fun authStateAfterInitStall(
+        current: AuthState,
+        anonymousUserId: String?,
+        persistedUserId: String?,
+        persistedEmail: String?,
+    ): AuthState =
+        when {
+            current !is AuthState.Loading -> current
+            !anonymousUserId.isNullOrBlank() -> AuthState.Authenticated(
+                userId = anonymousUserId,
+                email = null,
+                isAnonymous = true,
+            )
+            !persistedUserId.isNullOrBlank() -> AuthState.Authenticated(
+                userId = persistedUserId,
+                email = persistedEmail,
+                isAnonymous = false,
+            )
+            else -> AuthState.Unauthenticated
         }
 
     internal fun isInvalidRefreshError(statusCode: Int?, text: String): Boolean =
