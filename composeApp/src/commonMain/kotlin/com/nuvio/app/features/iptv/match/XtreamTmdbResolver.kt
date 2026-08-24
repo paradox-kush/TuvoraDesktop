@@ -134,6 +134,9 @@ internal object XtreamTmdbResolver {
         if (variants.isEmpty()) return null
 
         var verifyCalls = 0
+        // best candidate whose panel tmdb id disagreed but whose year+exact-name confirmed
+        // (junk-id panels) — accepted only after the whole verify budget fails to CONFIRM
+        var provisional: XtreamMatch? = null
         for (probe in TitleNormalizer.probesFor(variants)) {
             val bucket = XtreamMatchIndex.probe(acc.id, kind, probe.key)
             if (bucket.isEmpty()) continue
@@ -153,14 +156,27 @@ internal object XtreamTmdbResolver {
                     exactTier = probe.exactTier && inYear,
                     via = probe.via,
                 )
-                if (decision) {
-                    log.d { "matched tmdb=$tmdbId via=${probe.via} sid=${cand.sid} '${cand.name}'" }
-                    XtreamMatchIndex.putMapping(acc.id, kind, tmdbId, cand.sid, cand.name)
-                    XtreamMatchSyncService.triggerPush(acc.id)
-                    return XtreamMatch(cand, probe.via)
+                when (decision) {
+                    VerifyVerdict.CONFIRMED -> {
+                        log.d { "matched tmdb=$tmdbId via=${probe.via} sid=${cand.sid} '${cand.name}'" }
+                        XtreamMatchIndex.putMapping(acc.id, kind, tmdbId, cand.sid, cand.name)
+                        XtreamMatchSyncService.triggerPush(acc.id)
+                        return XtreamMatch(cand, probe.via)
+                    }
+                    // probes run best-first, so the first provisional is the best-ranked one
+                    VerifyVerdict.PROVISIONAL -> if (provisional == null) {
+                        provisional = XtreamMatch(cand, "${probe.via}+id-mismatch")
+                    }
+                    VerifyVerdict.REJECTED -> {}
                 }
             }
             if (verifyCalls >= MAX_VERIFY_CALLS) break
+        }
+        provisional?.let {
+            log.d { "matched tmdb=$tmdbId via=${it.via} sid=${it.item.sid} '${it.item.name}' (panel id overridden by exact name+year)" }
+            XtreamMatchIndex.putMapping(acc.id, kind, tmdbId, it.item.sid, it.item.name)
+            XtreamMatchSyncService.triggerPush(acc.id)
+            return it
         }
 
         // only cache "not on this provider" when we actually had an index to search —
@@ -189,13 +205,23 @@ internal object XtreamTmdbResolver {
     /**
      * The acceptance rules distilled from the live-panel campaign — pure so the test suite
      * can hammer them:
-     *  - panel tmdb id decides outright when present (equality or rejection)
+     *  - a matching panel tmdb id confirms outright
+     *  - a MISMATCHING panel id rejects — unless the panel's own year signal confirms the
+     *    target exactly on an exact-tier primary/original name hit, which downgrades to
+     *    PROVISIONAL instead: junk id feeds exist (a live panel ships the constant tmdb_id
+     *    1111 for its entire catalog), and there the id contradicts the panel's own
+     *    metadata. A provisional candidate is used only when nothing CONFIRMS, so panels
+     *    with real ids behave exactly as before whenever a genuine match exists.
      *  - else best year signal (info year, then name year): exact tiers get ±1, inexact
-     *    tiers (trunc/skeleton/nodigit/off-year) demand an exact year
-     *  - no signal at all: only exact-tier primary/original matches pass ("Wanted" 2008 vs
-     *    2009 are different films; an alt-title hit with nothing to confirm it is how
-     *    O11CE's alt title "11" once matched an unrelated show)
+     *    tiers (trunc/skeleton/nodigit/off-year) demand an exact year — "Wanted" 2008 vs
+     *    2009 are different films, which is also why the provisional demands a year
+     *    distance of exactly 0, never ±1
+     *  - no signal at all: only exact-tier primary/original matches pass (an alt-title hit
+     *    with nothing to confirm it is how O11CE's alt title "11" once matched an
+     *    unrelated show — alt titles can't ride the provisional either)
      */
+    internal enum class VerifyVerdict { CONFIRMED, PROVISIONAL, REJECTED }
+
     internal fun verifyDecision(
         signal: VerifySignal,
         targetTmdb: Int,
@@ -203,14 +229,22 @@ internal object XtreamTmdbResolver {
         nameYear: Int?,
         exactTier: Boolean,
         via: String,
-    ): Boolean {
-        signal.tmdb?.let { return it == targetTmdb }
+    ): VerifyVerdict {
+        val exactPrimary = exactTier && (via.startsWith("primary") || via.startsWith("original"))
         val year = signal.year ?: nameYear
+        signal.tmdb?.let {
+            if (it == targetTmdb) return VerifyVerdict.CONFIRMED
+            return if (exactPrimary && year != null && targetYear != null && yearDistance(year, targetYear) == 0) {
+                VerifyVerdict.PROVISIONAL
+            } else {
+                VerifyVerdict.REJECTED
+            }
+        }
         if (year != null && targetYear != null) {
             val d = yearDistance(year, targetYear)
-            return if (exactTier) d <= 1 else d == 0
+            return if (if (exactTier) d <= 1 else d == 0) VerifyVerdict.CONFIRMED else VerifyVerdict.REJECTED
         }
-        return exactTier && (via.startsWith("primary") || via.startsWith("original"))
+        return if (exactPrimary) VerifyVerdict.CONFIRMED else VerifyVerdict.REJECTED
     }
 
     private fun yearDistance(a: Int?, b: Int?): Int = if (a == null || b == null) 0 else if (a > b) a - b else b - a

@@ -194,6 +194,14 @@ internal object XtreamMatchIndex {
             runCatching { it.execSQL("ALTER TABLE idx_meta ADD COLUMN last_added_at INTEGER NOT NULL DEFAULT 0") }
             it.execSQL("PRAGMA user_version = 5")
         }
+        // v6 ships the id-mismatch override in verifyDecision: "not on this provider" verdicts
+        // cached by the old rule can be junk-tmdb false negatives (a panel returning a constant
+        // tmdb_id rejected its whole catalog). One-time purge — positives untouched, a negative
+        // regenerates in a single resolve. Only 2..5 have a surviving tmdb_map (v<2 dropped it).
+        if (version in 2..5) {
+            it.execSQL("DELETE FROM tmdb_map WHERE sid IS NULL")
+        }
+        if (version < 6) it.execSQL("PRAGMA user_version = 6")
         it.execSQL("CREATE TABLE IF NOT EXISTS items(provider TEXT NOT NULL, kind TEXT NOT NULL, sid INTEGER NOT NULL, name TEXT NOT NULL, year INTEGER, tmdb INTEGER, ext TEXT, poster TEXT, category_id TEXT, epg_id TEXT, tv_archive INTEGER NOT NULL DEFAULT 0, pos INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, kind, sid)) WITHOUT ROWID")
         it.execSQL("CREATE INDEX IF NOT EXISTS items_tmdb ON items(provider, kind, tmdb)")
         it.execSQL("CREATE INDEX IF NOT EXISTS items_cat ON items(provider, kind, category_id, pos)")
