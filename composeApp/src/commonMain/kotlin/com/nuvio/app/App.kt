@@ -761,6 +761,12 @@ fun App(
                 is AuthState.Authenticated -> {
                     val authenticatedState = authState as AuthState.Authenticated
                     ProfileRepository.ensureLoaded(authenticatedState.userId)
+                    // A fresh anonymous ("Continue Without Account") session has no profile; seed one
+                    // default local profile BEFORE entering the profile gate so it auto-skips straight
+                    // into the app (profiles.size == 1) instead of an empty "Who's watching?" grid.
+                    // No-op for a signed-in account (backend pull owns its profiles) or once a profile
+                    // exists.
+                    ProfileRepository.ensureDefaultLocalProfile()
                     if (gateScreen == AppGateScreen.Loading.name || gateScreen == AppGateScreen.Auth.name) {
                         enterProfileGate(ProfileRepository.state.value.profiles, syncOnEnter = true)
                     }

@@ -77,6 +77,7 @@ object ProfileRepository {
 
     private var activeProfileIndex: Int = 1
     private var loadedCacheForUserId: String? = null
+    private var seedingDefaultProfile = false
 
     val activeProfileId: Int get() = activeProfileIndex
 
@@ -288,6 +289,36 @@ object ProfileRepository {
         )
 
         return pushProfiles(allPayloads)
+    }
+
+    /**
+     * Seed one default profile for a fresh local-only (anonymous / "Continue Without Account")
+     * session so it lands straight in the app instead of the empty "Who's watching?" grid. No-op for
+     * a signed-in account (its profiles come from the backend pull) or when a profile already exists
+     * ([DefaultProfileSeedPolicy]). Local-only, so [createProfile] routes through applyPayloadsLocally
+     * — never a sync_push_profiles that would 42501 for a session-less client. The flag guards the
+     * check-then-create against a concurrent second call (the gate can recompose mid-seed).
+     */
+    suspend fun ensureDefaultLocalProfile() {
+        if (seedingDefaultProfile) return
+        if (!DefaultProfileSeedPolicy.shouldSeed(
+                isLocalOnly = AuthRepository.state.value.isLocalOnly,
+                existingProfileCount = _state.value.profiles.size,
+            )
+        ) {
+            return
+        }
+        seedingDefaultProfile = true
+        try {
+            createProfile(
+                // "Profile 1" — matches NuvioTV's default primary-profile name (and the app's own
+                // profile_label_number convention) rather than inventing a new default string.
+                name = getString(Res.string.profile_label_number, 1),
+                avatarColorHex = PROFILE_COLORS.first(),
+            )
+        } finally {
+            seedingDefaultProfile = false
+        }
     }
 
     suspend fun updateProfile(
