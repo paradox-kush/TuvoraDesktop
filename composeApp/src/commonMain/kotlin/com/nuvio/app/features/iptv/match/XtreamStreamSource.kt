@@ -121,6 +121,10 @@ internal object XtreamStreamSource {
         // the PORTAL to find the title (get_ordered_list&search=, 1-2 requests).
         if (acc.sourceType == SOURCE_TYPE_STALKER) return stalkerStreams(acc, kind, titles, season, episode)
 
+        // Series need season-aware gathering across entries (split-season panels give each season
+        // its own id), so they don't go through the single-match movie path.
+        if (kind == MatchKind.SERIES) return seriesStreams(acc, tmdbId, titles, season, episode)
+
         val match = XtreamTmdbResolver.resolve(acc, kind, tmdbId, titles) ?: return emptyList()
 
         return when (kind) {
@@ -145,25 +149,56 @@ internal object XtreamStreamSource {
                     )
                 }
             }
-            MatchKind.SERIES -> {
-                val s = season ?: return emptyList()
-                val e = episode ?: return emptyList()
-                val editions = XtreamMatchIndex.byTmdb(acc.id, kind, tmdbId)
-                    .ifEmpty { sameNameEditions(acc.id, kind, match.item, titles.year) }
-                    .take(MAX_SERIES_EDITIONS) // one get_series_info per edition — bound it
-                editions.flatMap { ed ->
-                    val detail = XtreamClient.seriesInfo(acc, ed.sid).getOrNull() ?: return@flatMap emptyList<StreamItem>()
-                    detail.episodes.filter { it.season == s && it.episodeNum == e }.map { ep ->
-                        StreamItem(
-                            name = "S${s}E${e} · ${ep.title}",
-                            // the edition's catalog name so language variants are tellable apart
-                            title = ed.name,
-                            url = XtreamClient.episodeStreamUrl(acc, ep.episodeId, ep.containerExtension ?: "mp4"),
-                            addonName = acc.name,
-                            addonId = groupId(acc),
-                        )
-                    }
-                }
+            MatchKind.SERIES -> emptyList()   // handled by seriesStreams (returned above)
+        }
+    }
+
+    /**
+     * Series episodes for a TMDB (show, season, episode) over an Xtream panel. Unlike the movie
+     * path this can't rely on one id per show: split-season panels (e.g. xsc.loruhon.com) publish
+     * each season as its OWN series_id named "<Show> S<n> <lang>", with episodes flattened to an
+     * internal season 1. So we gather every entry for the show by its base name key (plus any
+     * tmdb-id and the verified match), then let [XtreamSeriesEpisodePolicy] read the real season
+     * from each entry's name and pick episodes accordingly. Whole-series panels fall through the
+     * same policy unchanged (no name-season -> real internal-season match).
+     *
+     * Year is deliberately NOT gated here: a split entry carries its SEASON's air year, not the
+     * show's first-air year, so year-guarding would drop later seasons (same reasoning as the
+     * Stalker series path).
+     */
+    private suspend fun seriesStreams(
+        acc: XtreamAccount,
+        tmdbId: Int,
+        titles: TmdbTitleBundle,
+        season: Int?,
+        episode: Int?,
+    ): List<StreamItem> {
+        val s = season ?: return emptyList()
+        val e = episode ?: return emptyList()
+        val entries = LinkedHashSet<IndexedItem>()
+        // resolve() contributes the verified/synced entry (and keeps the cross-device cache warm);
+        // it may be null on split panels where the earliest season's year misses the show's first-
+        // air year — that's fine, the name probe below is the real source of truth for series.
+        XtreamTmdbResolver.resolve(acc, MatchKind.SERIES, tmdbId, titles)?.let { entries.add(it.item) }
+        entries.addAll(XtreamMatchIndex.byTmdb(acc.id, MatchKind.SERIES, tmdbId))
+        for (key in listOfNotNull(titles.primary, titles.original)
+            .map { TitleNormalizer.normKey(it) }.filter { it.isNotEmpty() }.toSet()
+        ) {
+            entries.addAll(XtreamMatchIndex.probe(acc.id, MatchKind.SERIES, key))
+        }
+        val editions = XtreamSeriesEpisodePolicy.editionsForSeason(entries.toList(), s)
+            .take(MAX_SERIES_EDITIONS) // one get_series_info per edition — bound it
+        return editions.flatMap { ed ->
+            val detail = XtreamClient.seriesInfo(acc, ed.sid).getOrNull() ?: return@flatMap emptyList<StreamItem>()
+            XtreamSeriesEpisodePolicy.pickEpisodes(ed, detail.episodes, s, e).map { ep ->
+                StreamItem(
+                    name = "S${s}E${e} · ${ep.title}",
+                    // the edition's catalog name so language/season variants are tellable apart
+                    title = ed.name,
+                    url = XtreamClient.episodeStreamUrl(acc, ep.episodeId, ep.containerExtension ?: "mp4"),
+                    addonName = acc.name,
+                    addonId = groupId(acc),
+                )
             }
         }
     }
