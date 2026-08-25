@@ -438,9 +438,9 @@ object RadarChannelMatcher {
             for (q in queries) {
                 XtreamMatchIndex.searchByName(account.id, MatchKind.MOVIE, q, 30).forEach { item ->
                     val text = normalize(item.name)
-                    val bothTeams = homeTokens.any { hits(text, it) } && awayTokens.any { hits(text, it) }
-                    val eventMatch = eventTokens.isNotEmpty() && eventTokens.count { hits(text, it) } >= 2
-                    if (!bothTeams && !eventMatch) return@forEach
+                    if (!SportsRecordingMatchPolicy.accepts(homeTokens, awayTokens, eventTokens) { hits(text, it) }) {
+                        return@forEach
+                    }
                     val movie = com.nuvio.app.features.iptv.XtreamMovie(
                         streamId = item.sid,
                         name = item.name,
@@ -496,19 +496,10 @@ object RadarChannelMatcher {
         eventTokens: List<String>,
     ): Int {
         if (name.isBlank()) return 0
-        val homeHit = homeTokens.any { hits(name, it) }
-        val awayHit = awayTokens.any { hits(name, it) }
-        val keywordHit = keywords.any { hits(name, it) }
-        val eventHit = eventTokens.count { hits(name, it) } >= 2
         val genericHit = GENERIC_SPORT_MARKERS.any { name.contains(it) }
-        return when {
-            homeHit && awayHit -> 50
-            keywordHit -> 25
-            eventHit -> 20
-            homeHit || awayHit -> 12
-            genericHit -> 8
-            else -> 0
-        }
+        return SportsChannelMatchPolicy.nameScore(
+            homeTokens, awayTokens, keywords, eventTokens, genericHit,
+        ) { hits(name, it) }
     }
 
     private fun XtreamProgram.toSportsProgramme(): SportsProgramme =
@@ -543,18 +534,9 @@ object RadarChannelMatcher {
         eventTokens: List<String>,
     ): Int {
         if (text.isBlank()) return 0
-        val home = homeTokens.any { hits(text, it) }
-        val away = awayTokens.any { hits(text, it) }
-        val keyword = keywords.any { hits(text, it) }
-        val event = eventTokens.count { hits(text, it) } >= 2
-        return when {
-            home && away -> 100
-            event -> 90
-            (home || away) && keyword -> 70
-            keyword -> 35
-            home || away -> 25
-            else -> 0
-        }
+        return SportsChannelMatchPolicy.programmeScore(
+            homeTokens, awayTokens, keywords, eventTokens,
+        ) { hits(text, it) }
     }
 
     private fun normalize(s: String?): String =

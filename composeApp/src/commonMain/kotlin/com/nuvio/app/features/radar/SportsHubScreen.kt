@@ -193,9 +193,6 @@ private fun SportsOverview(
     onFixtureClick: (RadarFixture) -> Unit,
 ) {
     val nowMs = RadarTime.nowMs()
-    // null = closed, "" = choosing a sport, else the chosen sport.
-    var addLeagueSport by remember { mutableStateOf<String?>(null) }
-    var addingTeam by remember { mutableStateOf(false) }
     val featured = state.activeFeatured(nowMs)
     // Followed clubs feed the same Live & Upcoming row as followed leagues — someone who
     // follows only Arsenal still expects their match at the top, not buried under Browse.
@@ -224,10 +221,39 @@ private fun SportsOverview(
                 .takeIf { it.isNotEmpty() }?.let { league to it }
         }
     }
+    // Top search bar: sports, leagues, and teams in one place instead of nested add-sheets.
+    var searchQuery by remember { mutableStateOf("") }
+    var searchLeaguesResult by remember { mutableStateOf<List<RadarLeague>>(emptyList()) }
+    var searchTeamsResult by remember { mutableStateOf<List<RadarTeam>>(emptyList()) }
+    var searching by remember { mutableStateOf(false) }
+    val trimmedSearch = searchQuery.trim()
+    val searchActive = trimmedSearch.length >= MIN_LEAGUE_QUERY
+    LaunchedEffect(trimmedSearch) {
+        if (trimmedSearch.length < MIN_LEAGUE_QUERY) {
+            searching = false
+            searchLeaguesResult = emptyList()
+            searchTeamsResult = emptyList()
+            return@LaunchedEffect
+        }
+        searching = true
+        delay(SEARCH_DEBOUNCE_MS)
+        searchLeaguesResult = RadarCatalogClient.searchLeagues(text = trimmedSearch)
+        searchTeamsResult = RadarCatalogClient.searchTeams(trimmedSearch)
+        searching = false
+    }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val sectionPadding = homeSectionHorizontalPaddingForWidth(maxWidth.value)
         val tokens = MaterialTheme.nuvio
         val rowPadding = PaddingValues(horizontal = sectionPadding)
+        Column(Modifier.fillMaxSize()) {
+        LeagueSearchField(
+            query = searchQuery,
+            onQueryChange = { searchQuery = it },
+            placeholder = "Search sports, leagues, teams",
+            // Clear the global profile avatar that floats over the top-right of every tab.
+            modifier = Modifier.padding(end = 56.dp),
+        )
+        Box(Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(tokens.spacing.listGap),
@@ -339,69 +365,45 @@ private fun SportsOverview(
                 }
             }
             item(key = "browse") {
-                // Sport tiles + the add-your-own escape hatches, as one shelf. The add tiles sit
-                // last so the popular sports stay first.
-                val browseEntries: List<Any> =
-                    state.catalog.categories + listOf(AddLeagueTileMarker, AddTeamTileMarker)
+                // Sport tiles only — adding a league or team now happens through the top search bar.
                 NuvioShelfSection(
                     title = "Browse sports",
-                    entries = browseEntries,
+                    entries = state.catalog.categories,
                     headerHorizontalPadding = sectionPadding,
                     rowContentPadding = rowPadding,
                     onViewAllClick = onOpenBrowse,
                     viewAllPillSize = NuvioViewAllPillSize.Compact,
-                    key = { entry ->
-                        when (entry) {
-                            is RadarCategory -> "cat-${entry.name}"
-                            AddLeagueTileMarker -> "add-league"
-                            else -> "add-team"
-                        }
-                    },
+                    key = { "cat-${it.name}" },
                 ) { entry ->
-                    when (entry) {
-                        is RadarCategory -> {
-                            val followedCount = entry.leagues.count { it.id in state.followedLeagueIds }
-                            SportTile(
-                                badge = entry.leagues.firstOrNull()?.badge,
-                                name = entry.name,
-                                subtitle = if (followedCount > 0) "$followedCount followed"
-                                else "${entry.leagues.size} to track",
-                                // Straight into the sport that was tapped — never the generic
-                                // "pick a sport" list of these very same categories.
-                                onClick = { onOpenCategory(entry) },
-                            )
-                        }
-                        AddLeagueTileMarker -> AddTile(
-                            name = "Add a league",
-                            subtitle = if (state.customLeagues.isEmpty()) "Search any sport"
-                            else "${state.customLeagues.size} added",
-                            onClick = { addLeagueSport = "" },
-                        )
-                        else -> AddTile(
-                            name = "Add a team",
-                            subtitle = if (state.teamFollows.isEmpty()) "Follow your club"
-                            else "${state.teamFollows.size} followed",
-                            onClick = { addingTeam = true },
-                        )
-                    }
+                    val followedCount = entry.leagues.count { it.id in state.followedLeagueIds }
+                    SportTile(
+                        badge = entry.leagues.firstOrNull()?.badge,
+                        name = entry.name,
+                        subtitle = if (followedCount > 0) "$followedCount followed"
+                        else "${entry.leagues.size} to track",
+                        // Straight into the sport that was tapped — never the generic
+                        // "pick a sport" list of these very same categories.
+                        onClick = { onOpenCategory(entry) },
+                    )
                 }
             }
         }
+            if (searchActive) {
+                SportsSearchResults(
+                    leagues = searchLeaguesResult,
+                    teams = searchTeamsResult,
+                    searching = searching,
+                    query = trimmedSearch,
+                    followedLeagueIds = state.followedLeagueIds,
+                    followedTeamIds = state.followedTeamIds,
+                    catalog = state.catalog,
+                    onOpenCategory = onOpenCategory,
+                )
+            }
+        }
+        }
     }
 
-    if (addingTeam) {
-        AddTeamSheet(
-            followedTeamIds = state.followedTeamIds,
-            onDismiss = { addingTeam = false },
-        )
-    }
-
-    AddLeagueSheets(
-        sportOrEmpty = addLeagueSport,
-        followedLeagueIds = state.followedLeagueIds,
-        onDismiss = { addLeagueSport = null },
-        onPickSport = { addLeagueSport = it },
-    )
 }
 
 private data class SportsFixturesPage(
@@ -1248,10 +1250,11 @@ internal fun MatchChannelsSheet(
                         emptyList()
                     }
                 }
-                val result = RadarChannelMatcher.match(fixture, league, stations, onPartial = { partial ->
-                    withContext(Dispatchers.Main) { matches = partial }
-                })
-                // match() returns to LaunchedEffect's Main dispatcher before Compose state changes.
+                // Render ONCE, when the fully-ranked result is ready — no name-only partial. The fast
+                // name pass and the EPG tiers score on different scales, so showing the partial and then
+                // replacing it made the whole list visibly reorder and grow; the skeleton (matching &&
+                // matches.isEmpty()) holds until the final list lands instead.
+                val result = RadarChannelMatcher.match(fixture, league, stations)
                 matches = result
             }
         } catch (error: CancellationException) {
@@ -1561,6 +1564,7 @@ private fun LeagueSearchField(
     query: String,
     onQueryChange: (String) -> Unit,
     placeholder: String = "Search leagues",
+    modifier: Modifier = Modifier,
 ) {
     OutlinedTextField(
         value = query,
@@ -1575,10 +1579,134 @@ private fun LeagueSearchField(
                 }
             }
         },
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s8),
     )
+}
+
+/**
+ * Top-of-Sports search: sports (catalog categories), leagues (catalog + backend), and teams (backend),
+ * each followable inline — replaces hunting through the nested Add sheets.
+ */
+@Composable
+private fun SportsSearchResults(
+    leagues: List<RadarLeague>,
+    teams: List<RadarTeam>,
+    searching: Boolean,
+    query: String,
+    followedLeagueIds: Set<String>,
+    followedTeamIds: Set<String>,
+    catalog: RadarCatalog,
+    onOpenCategory: (RadarCategory) -> Unit,
+) {
+    val sportMatches = remember(query, catalog) {
+        catalog.categories.filter { it.name.contains(query, ignoreCase = true) }
+    }
+    val mergedLeagues = remember(query, catalog, leagues) {
+        val local = catalog.categories.flatMap { it.leagues }.filter {
+            it.name.contains(query, ignoreCase = true) ||
+                it.keywords.any { k -> k.contains(query, ignoreCase = true) }
+        }
+        (local + leagues).distinctBy { it.id }
+    }
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        LazyColumn(contentPadding = PaddingValues(bottom = nuvioSafeBottomPadding(NuvioTokens.Space.s24))) {
+            if (sportMatches.isNotEmpty()) {
+                item(key = "search-sports") { SectionTitle("Sports") }
+                items(sportMatches, key = { "sport-${it.name}" }) { category ->
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clickable { onOpenCategory(category) }
+                            .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s12),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            category.name,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Icon(
+                            Icons.Filled.ChevronRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            if (mergedLeagues.isNotEmpty()) {
+                item(key = "search-leagues") { SectionTitle("Leagues") }
+                items(mergedLeagues, key = { "league-${it.id}" }) { league ->
+                    SearchFollowRow(
+                        badge = league.badge,
+                        title = league.name,
+                        subtitle = null,
+                        following = league.id in followedLeagueIds,
+                        onToggle = { RadarRepository.toggleFollow(league) },
+                    )
+                }
+            }
+            if (teams.isNotEmpty()) {
+                item(key = "search-teams") { SectionTitle("Teams") }
+                items(teams, key = { "team-${it.id}" }) { team ->
+                    SearchFollowRow(
+                        badge = team.badge,
+                        title = team.name,
+                        subtitle = listOfNotNull(team.league, team.country).firstOrNull { it.isNotBlank() },
+                        following = team.id in followedTeamIds,
+                        onToggle = { RadarRepository.toggleFollowTeam(team) },
+                    )
+                }
+            }
+            item(key = "search-hint") {
+                val hint = when {
+                    searching -> "Searching…"
+                    sportMatches.isEmpty() && mergedLeagues.isEmpty() && teams.isEmpty() ->
+                        "Nothing matches \"$query\"."
+                    else -> null
+                }
+                if (hint != null) {
+                    Text(
+                        hint,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(NuvioTokens.Space.s16),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchFollowRow(
+    badge: String?,
+    title: String,
+    subtitle: String?,
+    following: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth()
+            .clickable { onToggle() }
+            .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s12),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AsyncImage(model = badge, contentDescription = null, modifier = Modifier.size(32.dp))
+        Spacer(Modifier.width(NuvioTokens.Space.s12))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+            if (subtitle != null) {
+                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Text(
+            if (following) "Following" else "Follow",
+            style = MaterialTheme.typography.labelLarge,
+            color = if (following) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
+        )
+    }
 }
 
 /** The follow list shared by the country drill-down and the search results. */
