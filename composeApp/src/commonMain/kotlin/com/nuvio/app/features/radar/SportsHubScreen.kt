@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
@@ -59,6 +62,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -223,6 +227,10 @@ private fun SportsOverview(
                 .takeIf { it.isNotEmpty() }?.let { league to it }
         }
     }
+    // The spotlight highlights the single most-relevant fixture: a live one if any, else the next up.
+    val heroFixture = remember(upcoming, state, nowMs) {
+        upcoming.firstOrNull { state.isLive(it, nowMs) } ?: upcoming.firstOrNull()
+    }
     // Top search bar: sports, leagues, and teams in one place instead of nested add-sheets.
     var searchQuery by remember { mutableStateOf("") }
     var searchLeaguesResult by remember { mutableStateOf<List<RadarLeague>>(emptyList()) }
@@ -245,6 +253,8 @@ private fun SportsOverview(
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val sectionPadding = homeSectionHorizontalPaddingForWidth(maxWidth.value)
+        // Wide (landscape tablet / iPad / desktop) pairs the spotlight with a live rail; phones stack.
+        val isWide = maxWidth >= 720.dp
         val tokens = MaterialTheme.nuvio
         val rowPadding = PaddingValues(horizontal = sectionPadding)
         Column(Modifier.fillMaxSize()) {
@@ -274,6 +284,42 @@ private fun SportsOverview(
                 bottom = nuvioSafeBottomPadding(tokens.spacing.screenBottom),
             ),
         ) {
+            heroFixture?.let { hero ->
+                item(key = "spotlight") {
+                    val heroLive = state.isLive(hero, nowMs)
+                    val heroScore = hero.id?.let { state.liveScores[it] }
+                    val findChannels = { onFixtureClick(hero) }
+                    val details = { hero.leagueId?.let { state.leagueById(it) }?.let(onOpenLeague) ?: onFixtureClick(hero) }
+                    if (isWide) {
+                        Row(
+                            Modifier.padding(horizontal = sectionPadding, vertical = NuvioTokens.Space.s4).height(232.dp),
+                            horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s12),
+                        ) {
+                            SportsSpotlightHero(
+                                fixture = hero, live = heroLive, liveScore = heroScore,
+                                onFindChannels = findChannels, onDetails = details,
+                                modifier = Modifier.weight(1.8f).fillMaxHeight(),
+                            )
+                            SportsLiveRail(
+                                fixtures = upcoming,
+                                isLive = { state.isLive(it, nowMs) },
+                                liveScoreFor = { fx -> fx.id?.let { state.liveScores[it] } },
+                                onClick = onFixtureClick,
+                                onViewAll = { onOpenFixtures("Live & Upcoming", upcoming) },
+                                modifier = Modifier.weight(1f).fillMaxHeight(),
+                            )
+                        }
+                    } else {
+                        Box(Modifier.padding(horizontal = sectionPadding, vertical = NuvioTokens.Space.s4)) {
+                            SportsSpotlightHero(
+                                fixture = hero, live = heroLive, liveScore = heroScore,
+                                onFindChannels = findChannels, onDetails = details,
+                                modifier = Modifier.height(SpotlightHeroHeight),
+                            )
+                        }
+                    }
+                }
+            }
             if (featured.isNotEmpty()) {
                 item(key = "featured") {
                     NuvioShelfSection(
@@ -801,9 +847,263 @@ private fun FeaturedBannerCard(event: RadarFeaturedEvent, matchCount: Int, onCli
 internal val MatchCardWidth = 280.dp
 private val MatchCardTeamsMinHeight = 64.dp
 private val MatchPillShape = RoundedCornerShape(percent = 50)
+internal val SpotlightHeroHeight = 196.dp
 
 private object AddLeagueTileMarker
 private object AddTeamTileMarker
+
+/**
+ * The Sports spotlight — a Home-style featured card for the top live/next fixture. A gradient ground
+ * (fixtures carry no backdrop image), the crest matchup with its live score, a live/kickoff pill, and a
+ * marigold primary action that opens the channels sheet. Full-width on phones; the hero half on wide.
+ */
+@Composable
+internal fun SportsSpotlightHero(
+    fixture: RadarFixture,
+    live: Boolean,
+    liveScore: RadarLiveScore?,
+    onFindChannels: () -> Unit,
+    onDetails: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val tokens = MaterialTheme.nuvio
+    val shape = RoundedCornerShape(NuvioTokens.Radius.xl)
+    Box(
+        modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .border(1.dp, tokens.colors.borderSubtle, shape)
+            .clickable(onClick = onFindChannels),
+    ) {
+        // Real event backdrop (TheSportsDB banner/thumb) under a legibility scrim; the brand gradient
+        // is the fallback until the backend ships artwork, so this stays safe when heroImage is null.
+        val heroImage = fixture.heroImage
+        if (heroImage != null) {
+            AsyncImage(
+                model = heroImage,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.matchParentSize(),
+            )
+            Box(
+                Modifier.matchParentSize().background(
+                    Brush.verticalGradient(
+                        listOf(Color.Black.copy(alpha = 0.30f), Color.Black.copy(alpha = 0.62f), Color.Black.copy(alpha = 0.88f)),
+                    ),
+                ),
+            )
+        } else {
+            Box(
+                Modifier.matchParentSize().background(
+                    Brush.linearGradient(
+                        0f to tokens.colors.accent.copy(alpha = 0.20f),
+                        0.5f to tokens.colors.surfaceElevated,
+                        1f to tokens.colors.surface,
+                    ),
+                ),
+            )
+        }
+        Column(Modifier.fillMaxSize().padding(NuvioTokens.Space.s16), verticalArrangement = Arrangement.SpaceBetween) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                if (live) {
+                    LiveBadge(progress = liveScore?.progress)
+                } else {
+                    val day = fixture.startEpochMs?.let { RadarTime.dayLabel(it) }
+                    StatusPill(
+                        text = fixture.startEpochMs?.let { radarWhenLabel(it) } ?: "Upcoming",
+                        color = if (day == "Today" || day == "Tomorrow") tokens.colors.accent else tokens.colors.textSecondary,
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                fixture.leagueBadge?.takeIf { it.isNotBlank() }?.let { badge ->
+                    AsyncImage(model = badge, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(NuvioTokens.Space.s6))
+                }
+                Text(
+                    fixture.roundLabel ?: fixture.league ?: "",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = tokens.colors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 180.dp),
+                )
+            }
+            Column {
+                HeroMatchup(fixture, liveScore)
+                Spacer(Modifier.height(NuvioTokens.Space.s12))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    NuvioPrimaryButton(text = "Find channels", onClick = onFindChannels, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(NuvioTokens.Space.s8))
+                    HeroGhostButton(text = "Details", onClick = onDetails)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HeroMatchup(fixture: RadarFixture, liveScore: RadarLiveScore?) {
+    val tokens = MaterialTheme.nuvio
+    val home = fixture.home?.takeIf { it.isNotBlank() }
+    val away = fixture.away?.takeIf { it.isNotBlank() }
+    if (home != null && away != null) {
+        val hs = (liveScore?.homeScore ?: fixture.homeScore)?.takeIf { it.isNotBlank() }
+        val as2 = (liveScore?.awayScore ?: fixture.awayScore)?.takeIf { it.isNotBlank() }
+        // Crest-above-name, centered, so long team names ("Tennessee Titans") wrap instead of truncating —
+        // robust at every width; the score sits between the two columns.
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            HeroTeam(home, fixture.homeBadge)
+            Text(
+                if (hs != null && as2 != null) "$hs – $as2" else "vs",
+                style = if (hs != null && as2 != null) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = if (hs != null && as2 != null) tokens.colors.textPrimary else tokens.colors.textMuted,
+                maxLines = 1,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = NuvioTokens.Space.s8),
+            )
+            HeroTeam(away, fixture.awayBadge)
+        }
+    } else {
+        Text(
+            fixture.displayTitle,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = tokens.colors.textPrimary,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun RowScope.HeroTeam(name: String, badge: String?) {
+    val tokens = MaterialTheme.nuvio
+    Column(
+        modifier = Modifier.weight(1f),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
+    ) {
+        TeamBadge(name = name, badge = badge, size = 40.dp)
+        Text(
+            name,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = tokens.colors.textPrimary,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Composable
+private fun HeroGhostButton(text: String, onClick: () -> Unit) {
+    val tokens = MaterialTheme.nuvio
+    val shape = RoundedCornerShape(NuvioTokens.Radius.lg)
+    Box(
+        Modifier
+            .clip(shape)
+            .background(tokens.colors.surfaceCard)
+            .border(1.dp, tokens.colors.borderSubtle, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s12),
+    ) {
+        Text(text, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = tokens.colors.textPrimary, maxLines = 1)
+    }
+}
+
+/**
+ * A compact "Live now" list that pairs beside the spotlight on wide (tablet/desktop) layouts — the
+ * width the phone doesn't have. Each row is one fixture: crest, "A v B", and its live minute or kickoff.
+ */
+@Composable
+private fun SportsLiveRail(
+    fixtures: List<RadarFixture>,
+    isLive: (RadarFixture) -> Boolean,
+    liveScoreFor: (RadarFixture) -> RadarLiveScore?,
+    onClick: (RadarFixture) -> Unit,
+    onViewAll: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val tokens = MaterialTheme.nuvio
+    val shape = RoundedCornerShape(NuvioTokens.Radius.xl)
+    val shown = fixtures.take(5)
+    val anyLive = shown.any(isLive)
+    Column(
+        modifier
+            .clip(shape)
+            .background(tokens.colors.surface)
+            .border(1.dp, tokens.colors.borderSubtle, shape)
+            .padding(NuvioTokens.Space.s14),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            if (anyLive) {
+                Box(Modifier.size(7.dp).clip(CircleShape).background(tokens.colors.danger))
+                Spacer(Modifier.width(NuvioTokens.Space.s6))
+            }
+            Text(
+                if (anyLive) "Live now" else "Up next",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = tokens.colors.textPrimary,
+            )
+            Spacer(Modifier.weight(1f))
+            Box(
+                Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(tokens.colors.surfaceElevated)
+                    .border(1.dp, tokens.colors.borderSubtle, CircleShape)
+                    .clickable(onClick = onViewAll),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.ChevronRight,
+                    contentDescription = "See all",
+                    tint = tokens.colors.textSecondary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        Spacer(Modifier.height(NuvioTokens.Space.s4))
+        shown.forEach { fx ->
+            val live = isLive(fx)
+            val home = fx.home?.takeIf { it.isNotBlank() }
+            val away = fx.away?.takeIf { it.isNotBlank() }
+            val title = if (home != null && away != null) "$home v $away" else fx.displayTitle
+            val status = when {
+                live -> liveScoreFor(fx)?.progress?.takeIf { it.isNotBlank() } ?: "LIVE"
+                fx.scoreLabel != null -> "FT"
+                fx.startEpochMs != null -> radarWhenLabel(fx.startEpochMs!!)
+                else -> "TBC"
+            }
+            Row(
+                Modifier.fillMaxWidth().clickable { onClick(fx) }.padding(vertical = NuvioTokens.Space.s6),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TeamBadge(name = home ?: fx.displayTitle, badge = fx.homeBadge)
+                Spacer(Modifier.width(NuvioTokens.Space.s8))
+                Text(
+                    title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = tokens.colors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(NuvioTokens.Space.s8))
+                Text(
+                    status,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = if (live) tokens.colors.danger else tokens.colors.textMuted,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
 
 /**
  * A fixture card in the home/IPTV shelf vocabulary: league line + status pill on top,
@@ -944,10 +1244,10 @@ private fun TeamRow(name: String, badge: String?, score: String?, dimScore: Bool
 
 /** Team crest with a monogram-circle fallback so badge-less teams never leave a hole. */
 @Composable
-private fun TeamBadge(name: String, badge: String?) {
+private fun TeamBadge(name: String, badge: String?, size: Dp = 28.dp) {
     val tokens = MaterialTheme.nuvio
     val failed = remember(badge) { mutableStateOf(false) }
-    Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+    Box(Modifier.size(size), contentAlignment = Alignment.Center) {
         if (!badge.isNullOrBlank() && !failed.value) {
             AsyncImage(
                 model = badge,
