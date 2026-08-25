@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -65,6 +66,7 @@ import androidx.compose.foundation.border
 import androidx.compose.ui.unit.Dp
 import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
+import com.nuvio.app.core.ui.NuvioInputField
 import com.nuvio.app.core.ui.NuvioModalBottomSheet
 import com.nuvio.app.core.ui.NuvioPrimaryButton
 import com.nuvio.app.core.ui.NuvioShelfSection
@@ -246,12 +248,22 @@ private fun SportsOverview(
         val tokens = MaterialTheme.nuvio
         val rowPadding = PaddingValues(horizontal = sectionPadding)
         Column(Modifier.fillMaxSize()) {
-        LeagueSearchField(
-            query = searchQuery,
-            onQueryChange = { searchQuery = it },
+        // Reuse the app's standard search field (same as the Search tab) so Sports doesn't look bespoke.
+        NuvioInputField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
             placeholder = "Search sports, leagues, teams",
-            // Clear the global profile avatar that floats over the top-right of every tab.
-            modifier = Modifier.padding(end = 56.dp),
+            // s16 screen gutter; +56 on the right clears the global profile avatar floating over every tab.
+            modifier = Modifier.padding(start = NuvioTokens.Space.s16, end = 56.dp, top = NuvioTokens.Space.s8, bottom = NuvioTokens.Space.s8),
+            trailingContent = if (searchQuery.isNotBlank()) {
+                {
+                    IconButton(onClick = { searchQuery = "" }) {
+                        Icon(Icons.Filled.Close, contentDescription = "Clear search", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            } else {
+                null
+            },
         )
         Box(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -1362,37 +1374,77 @@ internal fun MatchChannelsSheet(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                else -> LazyColumn {
-                    items(matches, key = { it.channel.contentId }) { match ->
-                        // Started/finished + archived channel -> catch-up Replay of the programme.
-                        val replay = if (fixtureStarted) RadarChannelMatcher.replayFor(match, fixture) else null
-                        ChannelMatchRow(
-                            match = match,
-                            onReplay = replay?.let { r ->
-                                {
-                                    // The LIVE channel resolves the stream; the replay bounds ride
-                                    // beside it and the Live TV screen begins the catch-up walk.
-                                    RadarChannelMatcher.ensurePlayable(match)
-                                    onDismiss()
-                                    onPlayReplay(r)
-                                }
-                            },
-                        ) {
-                            RadarChannelMatcher.ensurePlayable(match)
-                            onDismiss()
-                            onPlayChannel(match.channel.contentId)
+                else -> {
+                    // Two honest groups: channels we can prove are SHOWING this fixture (both teams,
+                    // the event, or a broadcaster listing) vs channels that only CARRY the competition
+                    // (a league keyword / one team) — a guess, not an answer. The "Carries" label only
+                    // appears when there IS a contrast to draw or when confirmed hits are absent.
+                    val confirmed = matches.filter { it.confidence == MatchConfidence.CONFIRMED }
+                    val carries = matches.filter { it.confidence == MatchConfidence.LEAGUE }
+                    val leagueLabel = league?.name?.takeIf { it.isNotBlank() }
+                        ?: fixture.league?.takeIf { it.isNotBlank() }
+                    LazyColumn {
+                        if (confirmed.isNotEmpty() && carries.isNotEmpty()) {
+                            item { MatchGroupLabel("Showing this match") }
                         }
-                    }
-                    if (matching) {
-                        item {
-                            Box(Modifier.fillMaxWidth().padding(NuvioTokens.Space.s8), contentAlignment = Alignment.Center) {
-                                CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                        channelMatchItems(confirmed, fixture, fixtureStarted, onDismiss, onPlayChannel, onPlayReplay)
+                        if (carries.isNotEmpty()) {
+                            item { MatchGroupLabel(leagueLabel?.let { "Carries $it" } ?: "Carries this competition") }
+                        }
+                        channelMatchItems(carries, fixture, fixtureStarted, onDismiss, onPlayChannel, onPlayReplay)
+                        if (matching) {
+                            item {
+                                Box(Modifier.fillMaxWidth().padding(NuvioTokens.Space.s8), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                                }
                             }
                         }
                     }
                 }
             }
             Spacer(Modifier.height(NuvioTokens.Space.s24))
+        }
+    }
+}
+
+/** A small section label inside the match sheet ("Showing this match" / "Carries <league>"). */
+@Composable
+private fun MatchGroupLabel(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = NuvioTokens.Space.s8, bottom = NuvioTokens.Space.s4),
+    )
+}
+
+/** Renders one confidence group of channel rows; shared by the CONFIRMED and LEAGUE sections. */
+private fun LazyListScope.channelMatchItems(
+    matches: List<RadarChannelMatcher.ChannelMatch>,
+    fixture: RadarFixture,
+    fixtureStarted: Boolean,
+    onDismiss: () -> Unit,
+    onPlayChannel: (String) -> Unit,
+    onPlayReplay: (SportsReplay) -> Unit,
+) {
+    items(matches, key = { it.channel.contentId }) { match ->
+        // Started/finished + archived channel -> catch-up Replay of the programme.
+        val replay = if (fixtureStarted) RadarChannelMatcher.replayFor(match, fixture) else null
+        ChannelMatchRow(
+            match = match,
+            onReplay = replay?.let { r ->
+                {
+                    // The LIVE channel resolves the stream; the replay bounds ride
+                    // beside it and the Live TV screen begins the catch-up walk.
+                    RadarChannelMatcher.ensurePlayable(match)
+                    onDismiss()
+                    onPlayReplay(r)
+                }
+            },
+        ) {
+            RadarChannelMatcher.ensurePlayable(match)
+            onDismiss()
+            onPlayChannel(match.channel.contentId)
         }
     }
 }

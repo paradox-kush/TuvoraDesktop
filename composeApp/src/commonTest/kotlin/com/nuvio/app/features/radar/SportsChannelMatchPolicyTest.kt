@@ -59,4 +59,46 @@ class SportsChannelMatchPolicyTest {
         assertEquals(70, prog("NFL coverage: Cardinals build-up"), "one team plus the league keyword is a strong programme hit")
         assertEquals(100, prog("Arizona Cardinals vs Dallas Cowboys"), "both teams is the strongest programme hit")
     }
+
+    // --- B2: confidence — CONFIRMED (this fixture is on) vs LEAGUE (channel only carries the competition) ---
+
+    private fun nameConf(text: String, generic: Boolean = false) =
+        SportsChannelMatchPolicy.scoreName(home, away, keywords, emptyList(), generic, matcher(text)).confidence
+
+    private fun progConf(text: String) =
+        SportsChannelMatchPolicy.scoreProgramme(home, away, keywords, emptyList(), matcher(text)).confidence
+
+    @Test
+    fun `both teams name hit is CONFIRMED while keyword-only and single-team are LEAGUE`() {
+        assertEquals(MatchConfidence.CONFIRMED, nameConf("NFL Network Arizona Cardinals vs Dallas Cowboys"), "both teams proves the fixture")
+        assertEquals(MatchConfidence.LEAGUE, nameConf("US: NFL RedZone HD"), "a league keyword only proves the competition")
+        assertEquals(MatchConfidence.LEAGUE, nameConf("Dallas Cowboys TV"), "a single team is not the fixture")
+        assertEquals(MatchConfidence.LEAGUE, nameConf("beIN Sports 1", generic = true), "a generic sports channel is a guess")
+    }
+
+    @Test
+    fun `an event-only name hit is CONFIRMED`() {
+        val event = listOf("monaco", "grand", "prix")
+        val c = SportsChannelMatchPolicy.scoreName(emptyList(), emptyList(), emptyList(), event, false, matcher("Monaco Grand Prix F1")).confidence
+        assertEquals(MatchConfidence.CONFIRMED, c, "the specific event title proves this event")
+    }
+
+    @Test
+    fun `both teams programme is CONFIRMED while one-sided and keyword-only are LEAGUE`() {
+        assertEquals(MatchConfidence.CONFIRMED, progConf("Arizona Cardinals vs Dallas Cowboys"), "both teams proves the fixture")
+        assertEquals(MatchConfidence.LEAGUE, progConf("NFL coverage: Cardinals build-up"), "one team plus keyword only carries the league")
+        assertEquals(MatchConfidence.LEAGUE, progConf("US: NFL RedZone"), "a keyword-only programme only carries the league")
+        assertEquals(MatchConfidence.LEAGUE, progConf("Dallas Cowboys pre-game"), "a one-team programme is not the fixture")
+    }
+
+    @Test
+    fun `the Scored score equals the legacy Int score for every tier`() {
+        for (text in listOf("Arizona Cardinals vs Dallas Cowboys", "US: NFL RedZone HD", "Dallas Cowboys TV", "US (MLB) St. Louis Cardinals")) {
+            assertEquals(
+                SportsChannelMatchPolicy.nameScore(home, away, keywords, emptyList(), false, matcher(text)),
+                SportsChannelMatchPolicy.scoreName(home, away, keywords, emptyList(), false, matcher(text)).score,
+                "scoreName.score must equal nameScore for '$text'",
+            )
+        }
+    }
 }
