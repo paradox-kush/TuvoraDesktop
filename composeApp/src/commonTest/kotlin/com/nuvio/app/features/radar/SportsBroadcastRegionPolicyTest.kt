@@ -67,7 +67,7 @@ class SportsBroadcastRegionPolicyTest {
     @Test
     fun `the home broadcaster ranks up and out-of-country sinks`() {
         assertEquals(10, SportsBroadcastRegionPolicy.listingScoreDelta("us", "us"), "home broadcaster gets a boost")
-        assertEquals(-30, SportsBroadcastRegionPolicy.listingScoreDelta("nl", "us"), "out-of-country feed is penalised")
+        assertEquals(-60, SportsBroadcastRegionPolicy.listingScoreDelta("nl", "us"), "out-of-country feed is penalised below home channels")
         assertEquals(0, SportsBroadcastRegionPolicy.listingScoreDelta("nl", null), "no home country -> no nudge")
     }
 

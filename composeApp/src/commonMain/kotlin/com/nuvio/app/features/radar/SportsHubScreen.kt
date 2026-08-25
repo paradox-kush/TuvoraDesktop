@@ -1675,22 +1675,22 @@ internal fun MatchChannelsSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 else -> {
-                    // Two honest groups: channels we can prove are SHOWING this fixture (both teams,
-                    // the event, or a broadcaster listing) vs channels that only CARRY the competition
-                    // (a league keyword / one team) — a guess, not an answer. The "Carries" label only
-                    // appears when there IS a contrast to draw or when confirmed hits are absent.
-                    val confirmed = matches.filter { it.confidence == MatchConfidence.CONFIRMED }
+                    // Three honest tiers by evidence strength: the channel's own GUIDE names the teams
+                    // (Showing) > a broadcaster listing or the channel name itself names the match
+                    // (Broadcasting) > a sport/league channel that only carries the competition (Carries).
+                    val showing = matches.filter { it.confidence == MatchConfidence.CONFIRMED && it.via == RadarChannelMatcher.MatchVia.EPG }
+                    val broadcasting = matches.filter { it.confidence == MatchConfidence.CONFIRMED && it.via != RadarChannelMatcher.MatchVia.EPG }
                     val carries = matches.filter { it.confidence == MatchConfidence.LEAGUE }
                     val leagueLabel = league?.name?.takeIf { it.isNotBlank() }
                         ?: fixture.league?.takeIf { it.isNotBlank() }
+                    // Only label the tiers when more than one is present — a lone tier needs no sub-header.
+                    val labeled = listOf(showing, broadcasting, carries).count { it.isNotEmpty() } >= 2
                     LazyColumn {
-                        if (confirmed.isNotEmpty() && carries.isNotEmpty()) {
-                            item { MatchGroupLabel("Showing this match") }
-                        }
-                        channelMatchItems(confirmed, fixture, fixtureStarted, onDismiss, onPlayChannel, onPlayReplay)
-                        if (carries.isNotEmpty()) {
-                            item { MatchGroupLabel(leagueLabel?.let { "Carries $it" } ?: "Carries this competition") }
-                        }
+                        if (labeled && showing.isNotEmpty()) item { MatchGroupLabel("Showing this match") }
+                        channelMatchItems(showing, fixture, fixtureStarted, onDismiss, onPlayChannel, onPlayReplay)
+                        if (labeled && broadcasting.isNotEmpty()) item { MatchGroupLabel("Broadcasting this match") }
+                        channelMatchItems(broadcasting, fixture, fixtureStarted, onDismiss, onPlayChannel, onPlayReplay)
+                        if (labeled && carries.isNotEmpty()) item { MatchGroupLabel(leagueLabel?.let { "Carries $it" } ?: "Carries this competition") }
                         channelMatchItems(carries, fixture, fixtureStarted, onDismiss, onPlayChannel, onPlayReplay)
                         if (matching) {
                             item {
@@ -1699,6 +1699,7 @@ internal fun MatchChannelsSheet(
                                 }
                             }
                         }
+                        item { MatchSourceNote() }
                     }
                 }
             }
@@ -1715,6 +1716,17 @@ private fun MatchGroupLabel(text: String) {
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = NuvioTokens.Space.s8, bottom = NuvioTokens.Space.s4),
+    )
+}
+
+/** Transparency footer: names the three signals the list is built from so the ordering is legible. */
+@Composable
+private fun MatchSourceNote() {
+    Text(
+        "Matched from your channels' EPG, channel names, and broadcaster listings.",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = NuvioTokens.Space.s12, bottom = NuvioTokens.Space.s4),
     )
 }
 

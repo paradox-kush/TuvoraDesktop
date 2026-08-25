@@ -41,6 +41,13 @@ class SportsChannelMatchPolicyTest {
     }
 
     @Test
+    fun `this game's team on a league channel outranks the wrong team's league channel`() {
+        // For Cardinals v Cowboys: "US NFL Dallas Cowboys" (this game's team) beats "US NFL Buffalo Bills".
+        assertEquals(30, name("US NFL Dallas Cowboys (HD)"), "a fixture team + league keyword ranks above keyword-only")
+        assertEquals(25, name("US NFL Buffalo Bills (HD)"), "a different team's league channel stays at keyword-only")
+    }
+
+    @Test
     fun `a same-sport single-team channel still matches`() {
         // No competing league marker, so the one-team tier still counts (e.g. a team channel).
         assertEquals(12, name("Dallas Cowboys TV"), "a one-team channel with no competing league still matches")
@@ -89,6 +96,31 @@ class SportsChannelMatchPolicyTest {
         assertEquals(MatchConfidence.LEAGUE, progConf("NFL coverage: Cardinals build-up"), "one team plus keyword only carries the league")
         assertEquals(MatchConfidence.LEAGUE, progConf("US: NFL RedZone"), "a keyword-only programme only carries the league")
         assertEquals(MatchConfidence.LEAGUE, progConf("Dallas Cowboys pre-game"), "a one-team programme is not the fixture")
+    }
+
+    // --- distinctive-token gating: a shared generic CLUB word must not fake a both-teams match ---
+
+    @Test
+    fun `two City clubs do not both-teams-match an unrelated City channel`() {
+        // Coventry City v Hull City share "city"; "New York City vs Seattle" must NOT score both-teams.
+        val cov = listOf("coventry", "city")
+        val hull = listOf("hull", "city")
+        val pl = listOf("premier league")
+        val nameNY = SportsChannelMatchPolicy.scoreName(cov, hull, pl, emptyList(), false, matcher("MLS: New York City vs Seattle"))
+        assertEquals(0, nameNY.score, "a shared 'city' must not fake a both-teams match")
+        // The real fixture's channel (distinctive tokens present) still matches both teams.
+        val real = SportsChannelMatchPolicy.scoreName(cov, hull, pl, emptyList(), false, matcher("Coventry City v Hull City"))
+        assertEquals(50, real.score, "the actual matchup still scores both-teams")
+        assertEquals(MatchConfidence.CONFIRMED, real.confidence)
+    }
+
+    @Test
+    fun `a sport word is NOT treated as generic so cricket channels still surface`() {
+        // "India Cricket" v "West Indies Cricket": "cricket" is a shared word but a legit sport channel.
+        val ind = listOf("india", "cricket")
+        val wi = listOf("west", "indies", "cricket")
+        val skyCricket = SportsChannelMatchPolicy.scoreName(ind, wi, emptyList(), emptyList(), false, matcher("UK: Sky Sports Cricket"))
+        assertEquals(50, skyCricket.score, "a dedicated cricket channel still surfaces via the sport word")
     }
 
     @Test
