@@ -109,7 +109,6 @@ import com.nuvio.app.core.deeplink.AppDeepLinkRepository
 import com.nuvio.app.core.network.NetworkCondition
 import com.nuvio.app.core.network.NetworkStatusRepository
 import com.nuvio.app.core.sync.AppForegroundMonitor
-import com.nuvio.app.core.sync.ProfileSettingsSync
 import com.nuvio.app.core.sync.RealtimeSyncConfig
 import com.nuvio.app.core.sync.RealtimeSyncInvalidationService
 import com.nuvio.app.core.sync.SyncManager
@@ -221,6 +220,7 @@ import com.nuvio.app.features.profiles.NuvioProfile
 import com.nuvio.app.features.profiles.ProfileEditScreen
 import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.profiles.ProfileSelectionScreen
+import com.nuvio.app.features.profiles.ProfileSwitchController
 import com.nuvio.app.features.profiles.ProfileSwitcherTab
 import com.nuvio.app.features.profiles.SidebarProfileSwitcherStack
 import com.nuvio.app.features.profiles.parseHexColor
@@ -243,9 +243,7 @@ import com.nuvio.app.features.collection.CollectionManagementScreen
 import com.nuvio.app.features.collection.CollectionEditorScreen
 import com.nuvio.app.features.collection.CollectionEditorRepository
 import com.nuvio.app.features.collection.CollectionRepository
-import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.collection.CollectionEditorPage
-import com.nuvio.app.features.collection.CollectionSyncService
 import com.nuvio.app.features.collection.disposeCollectionEditorPage
 import com.nuvio.app.features.collection.FolderDetailScreen
 import com.nuvio.app.features.collection.FolderDetailRepository
@@ -260,8 +258,6 @@ import com.nuvio.app.features.streams.StreamsRepository
 import com.nuvio.app.features.streams.StreamsScreen
 import com.nuvio.app.features.tmdb.TmdbService
 import com.nuvio.app.features.player.PlayerSettingsRepository
-import com.nuvio.app.features.trakt.TraktAuthRepository
-import com.nuvio.app.features.trakt.TraktSettingsRepository
 import com.nuvio.app.features.tracking.TrackingScrobbleAction
 import com.nuvio.app.features.tracking.TrackingScrobbleCoordinator
 import com.nuvio.app.features.tracking.TrackingScrobbleEvent
@@ -285,13 +281,11 @@ import com.nuvio.app.features.watchprogress.nextUpDismissKey
 import com.nuvio.app.features.watchprogress.toContinueWatchingItem
 import com.nuvio.app.features.watching.application.WatchingActions
 import com.nuvio.app.features.watching.application.WatchingState
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.modules.SerializersModule
 import kotlinx.serialization.modules.polymorphic
 import kotlinx.serialization.modules.subclass
@@ -481,29 +475,6 @@ private data class PendingProfileSwitch(
     val profile: NuvioProfile,
     val syncOnEnter: Boolean,
 )
-
-private suspend fun warmProfileBoundRepositories() {
-    withContext(Dispatchers.Default) {
-        AddonRepository.initialize()
-        CollectionRepository.initialize()
-        ContinueWatchingPreferencesRepository.ensureLoaded()
-        DownloadsRepository.ensureLoaded()
-        EpisodeReleaseNotificationsRepository.ensureLoaded()
-        HomeCatalogSettingsRepository.snapshot()
-        LibraryRepository.ensureLoaded()
-        P2pSettingsRepository.ensureLoaded()
-        PlayerSettingsRepository.ensureLoaded()
-        TraktAuthRepository.ensureLoaded()
-        TraktSettingsRepository.ensureLoaded()
-        WatchedRepository.ensureLoaded()
-        WatchProgressRepository.ensureLoaded()
-        CollectionSyncService.startObserving()
-        ProfileSettingsSync.startObserving()
-        // Warm the IPTV catalog indexes off the critical path so the first
-        // play/search doesn't pay the full-catalog download on demand.
-        com.nuvio.app.core.contracts.IptvCatalogAccess.catalog.warmUpMatchIndexes(startDelayMs = 10_000)
-    }
-}
 
 private object NativeAppGateRequests {
     val profileSelection = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
@@ -712,11 +683,7 @@ fun App(
         LaunchedEffect(pendingProfileSwitch) {
             val request = pendingProfileSwitch ?: return@LaunchedEffect
             runCatching {
-                ProfileRepository.switchToProfile(request.profile.profileIndex)
-                warmProfileBoundRepositories()
-                if (request.syncOnEnter) {
-                    SyncManager.pullAllForProfile(request.profile.profileIndex)
-                }
+                ProfileSwitchController.switch(request.profile.profileIndex, request.syncOnEnter)
             }.onSuccess {
                 pendingProfileSwitch = null
                 autoSkipProfileSelection = false
@@ -947,7 +914,7 @@ private fun MainAppContent(
 
         LaunchedEffect(ownsAppRuntime) {
             if (!ownsAppRuntime) return@LaunchedEffect
-            warmProfileBoundRepositories()
+            ProfileSwitchController.warmProfileBoundRepositories()
         }
         val currentRoute = navBackStack.lastOrNull() as? AppRoute
         // Crash-context breadcrumbs: the route/tab name is what "screen" means to a person —
@@ -1182,7 +1149,10 @@ private fun MainAppContent(
         )
     }
 
-    var profileSwitchLoading by remember { mutableStateOf(false) }
+    // Loading overlay is driven off the single-flight switch state so every switch site (native
+    // switcher, in-app sheet) shows/hides it consistently — no per-call-site boolean to get wrong.
+    val switchingProfile by ProfileSwitchController.switchingTo.collectAsStateWithLifecycle()
+    val profileSwitchLoading = switchingProfile != null
 
     LaunchedEffect(nativeProfileSwitcherController, ownsAppRuntime) {
         if (!ownsAppRuntime) return@LaunchedEffect
@@ -1190,15 +1160,8 @@ private fun MainAppContent(
             val profile = ProfileRepository.state.value.profiles
                 .firstOrNull { it.profileIndex == profileIndex }
                 ?: return@collectLatest
-            profileSwitchLoading = true
             activateTab(AppScreenTab.Home)
-            try {
-                ProfileRepository.switchToProfile(profile.profileIndex)
-                warmProfileBoundRepositories()
-                SyncManager.pullAllForProfile(profile.profileIndex)
-            } finally {
-                profileSwitchLoading = false
-            }
+            ProfileSwitchController.switch(profile.profileIndex, syncOnEnter = true)
         }
     }
 
@@ -2172,18 +2135,16 @@ private fun MainAppContent(
                         val navBarHazeState = rememberHazeState()
                         val navBarStyleSetting by remember { ThemeSettingsRepository.navBarStyle }.collectAsStateWithLifecycle()
                         val onProfileSelected: (NuvioProfile) -> Unit = { profile ->
-                            profileSwitchLoading = true
                             NativeTabBridge.publishTabBarVisible(false)
                             activateTab(AppScreenTab.Home)
+                            // The controller's tryLock rejects the 2nd+ rapid tap, so stacking
+                            // taps can no longer spin up concurrent switch/warm/pull pipelines.
                             coroutineScope.launch {
-                                try {
-                                    ProfileRepository.switchToProfile(profile.profileIndex)
-                                    warmProfileBoundRepositories()
-                                    SyncManager.pullAllForProfile(profile.profileIndex)
-                                    delay(300)
-                                } finally {
-                                    profileSwitchLoading = false
-                                }
+                                ProfileSwitchController.switch(profile.profileIndex, syncOnEnter = true)
+                                // Desktop-only overlay hold: switchingTo clears when switch() returns,
+                                // so this extra beat softens the reveal into Home (kept from the
+                                // pre-controller code, which held the local loading flag 300ms longer).
+                                delay(300)
                             }
                         }
 
