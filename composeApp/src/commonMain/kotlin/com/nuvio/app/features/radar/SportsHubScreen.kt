@@ -66,6 +66,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.foundation.border
 import androidx.compose.ui.unit.Dp
 import coil3.compose.AsyncImage
@@ -91,7 +94,14 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 private val sportsMatchLog = Logger.withTag("SportsChannelMatch")
+
+/** Fast score tick: only leagues/teams with a live-or-imminent fixture, so it transfers a live
+ *  subset (often nothing) rather than the whole followed set. */
 private const val SPORTS_LIVE_REFRESH_INTERVAL_MS = 2 * 60 * 1000L
+
+/** Slow full refresh: re-pull the entire followed set to discover newly-scheduled fixtures. The
+ *  heavy call now runs 4×/hour instead of every 2 minutes — the core of the egress fix. */
+private const val SPORTS_FULL_REFRESH_INTERVAL_MS = 15 * 60 * 1000L
 
 /**
  * Sports Centre tab: featured event banners, live & upcoming fixtures for followed leagues,
@@ -108,14 +118,27 @@ fun SportsHubScreen(
     onPlayReplay: (SportsReplay) -> Unit = {},
 ) {
     val state by RadarRepository.uiState.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) {
-        RadarRepository.ensureLoaded()
-        // This screen can stay composed while a match crosses kick-off. A one-shot load leaves
-        // pre-game cards blank until the user restarts or navigates far enough to recreate the
-        // destination, so keep the two-minute server livescore cache moving while Sports is open.
-        while (true) {
-            delay(SPORTS_LIVE_REFRESH_INTERVAL_MS)
-            RadarRepository.refreshFixtures(force = true)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(Unit) { RadarRepository.ensureLoaded() }
+    // This screen can stay composed while a match crosses kick-off, so keep refreshing while it is
+    // VISIBLE — but repeatOnLifecycle(RESUMED) stops the poll the moment Sports is backgrounded or
+    // navigated away from, and restarts a single loop on return. That kills background polling and
+    // the stacked, never-cancelled loops that made this the top egress source. The 2-minute tick
+    // refreshes only what is live ([RadarRepository.refreshLiveFixtures]); the heavy full refresh
+    // runs every 15 minutes just to discover newly-scheduled fixtures.
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            var sinceFullMs = 0L
+            while (true) {
+                delay(SPORTS_LIVE_REFRESH_INTERVAL_MS)
+                sinceFullMs += SPORTS_LIVE_REFRESH_INTERVAL_MS
+                if (sinceFullMs >= SPORTS_FULL_REFRESH_INTERVAL_MS) {
+                    sinceFullMs = 0L
+                    RadarRepository.refreshFixtures(force = true)
+                } else {
+                    RadarRepository.refreshLiveFixtures()
+                }
+            }
         }
     }
 
