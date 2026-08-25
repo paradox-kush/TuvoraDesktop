@@ -60,10 +60,12 @@ class LivePlaybackReconnector(private val reporter: LivePlaybackFreezeReporter) 
                 true
             }
 
-            // Out of attempts. Let the freeze stand so the normal error path can surface it
-            // rather than looping on a channel the provider is no longer serving.
+            // Out of attempts. Auto-report the terminal freeze (gave_up=true) so the fleet sees it
+            // without the viewer acting, then let the surface show its error rather than looping on a
+            // channel the provider is no longer serving.
             LivePlaybackRecoveryPolicy.Decision.GiveUp -> {
                 gaveUp = true
+                reporter.onRecoveryGaveUp(nowMs)
                 false
             }
 
