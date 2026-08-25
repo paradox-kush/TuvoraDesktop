@@ -8,12 +8,14 @@ import java.awt.Window
 import java.beans.PropertyChangeListener
 
 internal actual object AppForegroundMonitor {
-    actual fun events(): Flow<Unit> = callbackFlow {
+    actual fun events(): Flow<AppVisibility> = callbackFlow {
         val focusManager = KeyboardFocusManager.getCurrentKeyboardFocusManager()
         val listener = PropertyChangeListener { event ->
-            val appBecameActive = event.oldValue == null && event.newValue is Window
-            if (appBecameActive) {
-                trySend(Unit)
+            // Mirror the Android actual (ON_START/ON_STOP): the app gaining an active window is
+            // foreground; losing it (activeWindow -> null) is background.
+            when {
+                event.newValue is Window -> trySend(AppVisibility.Foreground)
+                event.oldValue is Window && event.newValue == null -> trySend(AppVisibility.Background)
             }
         }
 

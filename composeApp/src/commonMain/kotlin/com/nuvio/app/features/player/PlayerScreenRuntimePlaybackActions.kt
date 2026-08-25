@@ -43,7 +43,7 @@ internal val PlayerScreenRuntime.playbackSession: WatchProgressPlaybackSession
         providerAddonId = activeProviderAddonId,
         lastStreamTitle = activeStreamTitle,
         lastStreamSubtitle = activeStreamSubtitle,
-        pauseDescription = pauseDescription,
+        pauseDescription = activePauseDescription,
         lastSourceUrl = activeSourceUrl,
     )
 
@@ -84,6 +84,10 @@ private fun PlayerScreenRuntime.resetTrackSelectionState() {
     selectedSubtitleIndex = -1
     selectedAddonSubtitleId = null
     useCustomSubtitles = false
+    // Upstream's track-selection rework (folded in at the 10th sync): these must clear on every
+    // media change too, so the next stream re-scans text tracks and re-derives auto-selection.
+    isUserExplicitSubtitleSelection = false
+    hasScannedTextTracksOnce = false
 }
 
 internal fun PlayerScreenRuntime.currentPlaybackProgressPercent(

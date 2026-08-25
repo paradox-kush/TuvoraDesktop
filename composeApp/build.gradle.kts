@@ -1179,6 +1179,9 @@ kotlin {
                         extraOpts("-libraryPath", nuvioEngineSliceDirectory.absolutePath)
                     }
                 }
+                configureEach {
+                    extraOpts("-Xccall-mode", "direct")
+                }
             }
 
             if (iosDistribution == "full") {
