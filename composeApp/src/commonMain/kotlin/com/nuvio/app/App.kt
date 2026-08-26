@@ -109,6 +109,7 @@ import com.nuvio.app.core.deeplink.AppDeepLinkRepository
 import com.nuvio.app.core.network.NetworkCondition
 import com.nuvio.app.core.network.NetworkStatusRepository
 import com.nuvio.app.core.sync.AppForegroundMonitor
+import com.nuvio.app.core.sync.foregroundEvents
 import com.nuvio.app.core.sync.RealtimeSyncConfig
 import com.nuvio.app.core.sync.RealtimeSyncInvalidationService
 import com.nuvio.app.core.sync.SyncManager
@@ -1226,7 +1227,7 @@ private fun MainAppContent(
 
     LaunchedEffect(Unit) {
         if (!ownsAppRuntime) return@LaunchedEffect
-        AppForegroundMonitor.events().collect {
+        AppForegroundMonitor.events().foregroundEvents().collect {
             NetworkStatusRepository.requestForegroundRefresh()
             MemberAccessRepository.refreshIfStale()
         }
@@ -1405,7 +1406,7 @@ private fun MainAppContent(
 
         val activeProfileId = profileState.activeProfile?.profileIndex ?: return@LaunchedEffect
         SyncManager.pullAllForProfile(activeProfileId)
-        AppForegroundMonitor.events().collect {
+        AppForegroundMonitor.events().foregroundEvents().collect {
             SyncManager.requestForegroundPull(activeProfileId, force = true)
         }
     }
