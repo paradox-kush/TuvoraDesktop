@@ -1701,6 +1701,12 @@ private:
             setMpvOptionStringLocked(
                 "stream-lavf-o",
                 "reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=5");
+            // No youtube-dl/yt-dlp ships with the app, and mpv's ytdl_hook is FATAL without one:
+            // for an EXTENSIONLESS live URL (common in M3U playlists) the hook takes over the
+            // load, fails to spawn the missing binary, and ends the file instead of falling
+            // through to ffmpeg (device-reproduced on Android TV, 1.5.8). .ts URLs bypass the
+            // hook, which masked this on Xtream. Every URL goes straight to the ffmpeg demuxer.
+            setMpvOptionStringLocked("ytdl", "no");
             setMpvOptionStringLocked("vo", "gpu-next");
             if (nvidiaRtxSuperResolutionEnabled) {
                 setMpvOptionStringLocked("gpu-api", "d3d11");
