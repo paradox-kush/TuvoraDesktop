@@ -1707,6 +1707,11 @@ private:
             // through to ffmpeg (device-reproduced on Android TV, 1.5.8). .ts URLs bypass the
             // hook, which masked this on Xtream. Every URL goes straight to the ffmpeg demuxer.
             setMpvOptionStringLocked("ytdl", "no");
+            // NEVER let the core self-quit: without idle=yes a FAILED load (dead IPTV channel)
+            // empties the playlist and the core exits (event: shutdown) while the bridge still
+            // holds it — every later load is silently ignored (device-traced on Android TV,
+            // 2026-08-26). Canonical embedded-mpv setting.
+            setMpvOptionStringLocked("idle", "yes");
             setMpvOptionStringLocked("vo", "gpu-next");
             if (nvidiaRtxSuperResolutionEnabled) {
                 setMpvOptionStringLocked("gpu-api", "d3d11");

@@ -1486,6 +1486,11 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     // through to ffmpeg (device-reproduced on Android TV, 1.5.8). .ts URLs bypass the hook, which
     // masked this on Xtream. Every URL goes straight to the ffmpeg demuxer.
     setMpvOptionString(_mpv, "ytdl", "no");
+    // NEVER let the core self-quit: without idle=yes a FAILED load (dead IPTV channel) empties the
+    // playlist and the core exits (event: shutdown) while the bridge still holds it — every later
+    // load into that core is silently ignored (device-traced on Android TV, 2026-08-26; same
+    // libmpv behaviour here). Canonical embedded-mpv setting.
+    setMpvOptionString(_mpv, "idle", "yes");
     setMpvOptionString(_mpv, "vo", "libmpv");
     setMpvOptionString(_mpv, "ao", "avfoundation,coreaudio,");
     setMpvOptionString(_mpv, "audio-channels", "auto");
