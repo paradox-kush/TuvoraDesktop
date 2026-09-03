@@ -40,6 +40,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -158,6 +159,11 @@ fun LiveTvScreen(
 
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var channels by remember { mutableStateOf<List<LiveGuideChannel>>(emptyList()) }
+    val overlaySnapshot by com.nuvio.app.features.iptv.overlay.IptvOverlayRepository.uiState.collectAsState()
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        com.nuvio.app.features.iptv.overlay.IptvOverlayRepository.ensureLoaded()
+        com.nuvio.app.features.iptv.overlay.IptvOverlayRepository.pullFromServer()
+    }
     val programmes = remember { mutableStateMapOf<String, List<XtreamProgram>>() }
     val requestedProgrammes = remember { mutableSetOf<String>() }
 
@@ -368,7 +374,7 @@ fun LiveTvScreen(
     }
 
     // Guide channel column (once, from the launch channel's account).
-    LaunchedEffect(initialContentId) {
+    LaunchedEffect(initialContentId, overlaySnapshot) {
         channels = LiveTvData.guideChannels(initialContentId)
     }
 
@@ -731,6 +737,10 @@ fun LiveTvScreen(
                     programmesOf = { programmes[it] },
                     onNeedProgrammes = onNeedProgrammes,
                     onSelectChannel = ::switchTo,
+                    onLongPressChannel = { ch ->
+                        val acc = com.nuvio.app.features.iptv.XtreamItemRegistry.parseId(ch.contentId)?.accountId
+                        com.nuvio.app.features.iptv.overlay.IptvOverlayRepository.toggleChannelHidden(ch.entityId, acc)
+                    },
                     onProgrammeAction = ::onProgrammeAction,
                     onTravel = { guideAnchorMs = it },
                     modifier = Modifier.weight(1f).fillMaxWidth(),
