@@ -486,6 +486,12 @@ fun HomeScreen(
     val liveRecentsProvider = com.nuvio.app.core.contracts.LiveRecentsAccess.current()
     val liveRecentPreviews by liveRecentsProvider.previews.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { liveRecentsProvider.ensureLoaded() }
+    // Settings -> Layout -> "Show Live TV on Home" hides the live-channel recents row (VOD recents
+    // are never affected). Gate the list once here so every consumer below sees the effective set.
+    val effectiveLiveRecents = HomeRecentsVisibilityPolicy.visibleLiveRecents(
+        showLiveOnHome = homeSettingsUiState.showLiveOnHome,
+        liveRecents = liveRecentPreviews,
+    )
     // Long-pressing a Live TV card opens the same kind of remove sheet the Movies/Series cards have.
     var liveRecentActionTarget by remember { mutableStateOf<LiveRecentActionTarget?>(null) }
     val (continueWatchingItems, upcomingItems) = remember(
@@ -934,7 +940,7 @@ fun HomeScreen(
                         preferences = continueWatchingPreferences,
                         continueWatchingItems = continueWatchingItems,
                         upcomingItems = upcomingItems,
-                        liveRecents = liveRecentPreviews,
+                        liveRecents = effectiveLiveRecents,
                         dataSourceKey = effectiveWatchProgressSource,
                         sectionPadding = homeSectionPadding,
                         layout = continueWatchingLayout,
@@ -967,7 +973,7 @@ fun HomeScreen(
                         preferences = continueWatchingPreferences,
                         continueWatchingItems = continueWatchingItems,
                         upcomingItems = upcomingItems,
-                        liveRecents = liveRecentPreviews,
+                        liveRecents = effectiveLiveRecents,
                         dataSourceKey = effectiveWatchProgressSource,
                         sectionPadding = homeSectionPadding,
                         layout = continueWatchingLayout,
@@ -987,7 +993,7 @@ fun HomeScreen(
                 }
 
                 homeUiState.sections.isEmpty() && homeUiState.heroItems.isEmpty() &&
-                    (!continueWatchingPreferences.isVisible || (!hasContinueWatchingRows && liveRecentPreviews.isEmpty())) &&
+                    (!continueWatchingPreferences.isVisible || (!hasContinueWatchingRows && effectiveLiveRecents.isEmpty())) &&
                     !hasRenderableCollectionRows -> {
                     item {
                         if (networkStatusUiState.isOfflineLike) {
@@ -1015,7 +1021,7 @@ fun HomeScreen(
                         preferences = continueWatchingPreferences,
                         continueWatchingItems = continueWatchingItems,
                         upcomingItems = upcomingItems,
-                        liveRecents = liveRecentPreviews,
+                        liveRecents = effectiveLiveRecents,
                         dataSourceKey = effectiveWatchProgressSource,
                         sectionPadding = homeSectionPadding,
                         layout = continueWatchingLayout,
