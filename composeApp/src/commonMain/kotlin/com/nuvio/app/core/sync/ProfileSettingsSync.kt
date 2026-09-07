@@ -100,6 +100,8 @@ object ProfileSettingsSync {
     }
 
     suspend fun pull(profileId: Int): Boolean {
+        // Signed-out / lapsed session: don't fire the RPC as `anon` (→ 42501); nothing to pull.
+        if (!SyncSession.canSync()) return false
         ensureRepositoriesLoaded()
         return syncMutex.withLock {
             if (ProfileRepository.activeProfileId != profileId) {
