@@ -2254,6 +2254,7 @@
     <string name="compose_iptv_hub_favorites">Favorites</string>
     <string name="compose_iptv_hub_recent">Recent Channels</string>
     <string name="compose_iptv_hub_section_live">Live TV</string>
+    <string name="compose_livetv_pinned_channel">Pinned channel</string>
     <string name="compose_livetv_catchup_badge">CATCH-UP</string>
     <string name="compose_livetv_catchup_channel">This channel keeps a replay archive</string>
     <string name="compose_livetv_catchup_no_recording">This provider didn't have a recording of this programme</string>
