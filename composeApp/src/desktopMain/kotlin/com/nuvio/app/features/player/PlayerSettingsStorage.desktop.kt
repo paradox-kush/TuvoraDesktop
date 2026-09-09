@@ -325,7 +325,7 @@ internal actual object PlayerSettingsStorage {
     private fun loadStringSet(key: String): Set<String>? = store.getStringSet(scoped(key))
     private fun saveStringSet(key: String, values: Set<String>) = store.putStringSet(scoped(key), values)
 
-    actual fun exportToSyncPayload(): JsonObject = buildJsonObject {
+    actual fun exportToSyncPayload(): JsonObject = PlayerSyncLocalKeys.stripLocal(buildJsonObject {
         loadShowLoadingOverlay()?.let { put(showLoadingOverlayKey, encodeSyncBoolean(it)) }
         loadShowParentalGuide()?.let { put(showParentalGuideKey, encodeSyncBoolean(it)) }
         loadShowStreamInfo()?.let { put(showStreamInfoKey, encodeSyncBoolean(it)) }
@@ -400,10 +400,14 @@ internal actual object PlayerSettingsStorage {
         loadIosSaturation()?.let { put(iosSaturationKey, encodeSyncInt(it)) }
         loadIosGamma()?.let { put(iosGammaKey, encodeSyncInt(it)) }
         loadNvidiaRtxSuperResolutionEnabled()?.let { put(nvidiaRtxSuperResolutionEnabledKey, encodeSyncBoolean(it)) }
-    }
+    })
 
-    actual fun replaceFromSyncPayload(payload: JsonObject) {
-        store.removeAll(syncKeys.map(::scoped))
+    actual fun replaceFromSyncPayload(incoming: JsonObject) {
+        // Device-local playback keys (engine/decoder/renderer/hw/enhancement, incl. desktop RTX SR)
+        // are neither cleared nor applied (see PlayerSyncLocalKeys): a stale remote value must not
+        // overwrite the local choice, nor an omitted key wipe it.
+        val payload = PlayerSyncLocalKeys.stripLocal(incoming)
+        store.removeAll(PlayerSyncLocalKeys.clearableOnImport(syncKeys).map(::scoped))
         payload.decodeSyncBoolean(showLoadingOverlayKey)?.let(::saveShowLoadingOverlay)
         payload.decodeSyncBoolean(showParentalGuideKey)?.let(::saveShowParentalGuide)
         payload.decodeSyncBoolean(showStreamInfoKey)?.let(::saveShowStreamInfo)

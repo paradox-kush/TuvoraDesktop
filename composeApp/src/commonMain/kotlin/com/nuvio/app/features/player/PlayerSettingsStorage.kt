@@ -149,5 +149,5 @@ internal expect object PlayerSettingsStorage {
     fun loadNvidiaRtxSuperResolutionEnabled(): Boolean?
     fun saveNvidiaRtxSuperResolutionEnabled(enabled: Boolean)
     fun exportToSyncPayload(): JsonObject
-    fun replaceFromSyncPayload(payload: JsonObject)
+    fun replaceFromSyncPayload(incoming: JsonObject)
 }

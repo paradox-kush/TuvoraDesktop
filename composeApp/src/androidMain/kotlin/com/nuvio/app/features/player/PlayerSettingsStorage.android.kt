@@ -1157,7 +1157,7 @@ actual object PlayerSettingsStorage {
     }
 
 
-    actual fun exportToSyncPayload(): JsonObject = buildJsonObject {
+    actual fun exportToSyncPayload(): JsonObject = PlayerSyncLocalKeys.stripLocal(buildJsonObject {
         loadShowLoadingOverlay()?.let { put(showLoadingOverlayKey, encodeSyncBoolean(it)) }
         loadShowParentalGuide()?.let { put(showParentalGuideKey, encodeSyncBoolean(it)) }
         loadShowStreamInfo()?.let { put(showStreamInfoKey, encodeSyncBoolean(it)) }
@@ -1230,11 +1230,13 @@ actual object PlayerSettingsStorage {
         loadIosSaturation()?.let { put(iosSaturationKey, encodeSyncInt(it)) }
         loadIosGamma()?.let { put(iosGammaKey, encodeSyncInt(it)) }
         loadNvidiaRtxSuperResolutionEnabled()?.let { put(nvidiaRtxSuperResolutionEnabledKey, encodeSyncBoolean(it)) }
-    }
+    })
 
-    actual fun replaceFromSyncPayload(payload: JsonObject) {
+    actual fun replaceFromSyncPayload(incoming: JsonObject) {
+        // Device-local playback keys are neither cleared nor applied (see PlayerSyncLocalKeys).
+        val payload = PlayerSyncLocalKeys.stripLocal(incoming)
         preferences?.edit()?.apply {
-            syncKeys.forEach { remove(ProfileScopedKey.of(it)) }
+            PlayerSyncLocalKeys.clearableOnImport(syncKeys).forEach { remove(ProfileScopedKey.of(it)) }
         }?.apply()
 
         payload.decodeSyncBoolean(showLoadingOverlayKey)?.let(::saveShowLoadingOverlay)

@@ -950,7 +950,7 @@ actual object PlayerSettingsStorage {
         NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = ProfileScopedKey.of(nvidiaRtxSuperResolutionEnabledKey))
     }
 
-    actual fun exportToSyncPayload(): JsonObject = buildJsonObject {
+    actual fun exportToSyncPayload(): JsonObject = PlayerSyncLocalKeys.stripLocal(buildJsonObject {
         loadShowLoadingOverlay()?.let { put(showLoadingOverlayKey, encodeSyncBoolean(it)) }
         loadShowParentalGuide()?.let { put(showParentalGuideKey, encodeSyncBoolean(it)) }
         loadShowStreamInfo()?.let { put(showStreamInfoKey, encodeSyncBoolean(it)) }
@@ -1022,10 +1022,12 @@ actual object PlayerSettingsStorage {
         loadIosSaturation()?.let { put(iosSaturationKey, encodeSyncInt(it)) }
         loadIosGamma()?.let { put(iosGammaKey, encodeSyncInt(it)) }
         loadNvidiaRtxSuperResolutionEnabled()?.let { put(nvidiaRtxSuperResolutionEnabledKey, encodeSyncBoolean(it)) }
-    }
+    })
 
-    actual fun replaceFromSyncPayload(payload: JsonObject) {
-        syncKeys.forEach { key ->
+    actual fun replaceFromSyncPayload(incoming: JsonObject) {
+        // Device-local playback keys are neither cleared nor applied (see PlayerSyncLocalKeys).
+        val payload = PlayerSyncLocalKeys.stripLocal(incoming)
+        PlayerSyncLocalKeys.clearableOnImport(syncKeys).forEach { key ->
             NSUserDefaults.standardUserDefaults.removeObjectForKey(ProfileScopedKey.of(key))
         }
 
