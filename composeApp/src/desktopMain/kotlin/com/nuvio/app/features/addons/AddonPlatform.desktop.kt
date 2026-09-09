@@ -3,8 +3,12 @@ package com.nuvio.app.features.addons
 import com.nuvio.app.core.storage.DesktopStorage
 import com.nuvio.app.core.network.DesktopIPv4FirstDns
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import nuvio.composeapp.generated.resources.Res
@@ -293,24 +297,39 @@ actual suspend fun httpStreamLines(
     // (no Content-Encoding header), we sniff the gzip magic bytes and wrap manually.
     // dnsProvider (per-playlist DoH) is not wired on desktop — system resolver only.
     val request = builder.build()
-    desktopHttpClient.newCall(request).execute().use { response ->
-        if (!response.isSuccessful) {
-            error("Request failed with HTTP ${response.code}")
+    // Cancellation must stop the actual blocking read (a synchronous okio read ignores coroutine
+    // cancellation): wire it to Call.cancel() on the cancelling transition, then ensureActive() maps
+    // the resulting read failure to CancellationException. See the Android twin for the rationale.
+    val call = desktopHttpClient.newCall(request)
+    @OptIn(InternalCoroutinesApi::class)
+    val cancelHook = coroutineContext.job.invokeOnCompletion(onCancelling = true, invokeImmediately = true) { cause ->
+        if (cause != null) call.cancel()
+    }
+    try {
+        call.execute().use { response ->
+            if (!response.isSuccessful) {
+                error("Request failed with HTTP ${response.code}")
+            }
+            val body = response.body ?: return@use
+            val rawSource = body.source()
+            val encoding = response.header("Content-Encoding")?.lowercase()
+            val looksGzipped = encoding == null && runCatching {
+                rawSource.request(2)
+                rawSource.buffer.size >= 2 &&
+                    rawSource.buffer[0] == 0x1f.toByte() && rawSource.buffer[1] == 0x8b.toByte()
+            }.getOrDefault(false)
+            val source: okio.BufferedSource = if (looksGzipped) {
+                GzipSource(rawSource).buffer()
+            } else {
+                rawSource
+            }
+            streamBoundedLines(source, onLine)
         }
-        val body = response.body ?: return@use
-        val rawSource = body.source()
-        val encoding = response.header("Content-Encoding")?.lowercase()
-        val looksGzipped = encoding == null && runCatching {
-            rawSource.request(2)
-            rawSource.buffer.size >= 2 &&
-                rawSource.buffer[0] == 0x1f.toByte() && rawSource.buffer[1] == 0x8b.toByte()
-        }.getOrDefault(false)
-        val source: okio.BufferedSource = if (looksGzipped) {
-            GzipSource(rawSource).buffer()
-        } else {
-            rawSource
-        }
-        streamBoundedLines(source, onLine)
+    } catch (t: Throwable) {
+        coroutineContext.ensureActive() // a cancel-induced read failure becomes CancellationException
+        throw t
+    } finally {
+        cancelHook.dispose()
     }
 }
 
