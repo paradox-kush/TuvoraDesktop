@@ -183,10 +183,12 @@ internal fun TrackingProviderCards(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(if (isTablet) 16.dp else 12.dp),
     ) {
-        TraktProviderCard(
-            uiState = traktUiState,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        if (traktUiState.credentialsConfigured) {
+            TraktProviderCard(
+                uiState = traktUiState,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         SimklProviderCard(
             uiState = simklUiState,
             isSyncing = syncState.isLoading,

@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.nuvio
+import com.nuvio.app.features.trakt.TraktAuthRepository
 import com.nuvio.app.isDesktop
 import com.nuvio.app.isIos
 import nuvio.composeapp.generated.resources.*
@@ -92,6 +93,8 @@ internal fun settingsSearchEntries(
     switchProfileAvailable: Boolean,
     checkForUpdatesAvailable: Boolean,
 ): List<SettingsSearchEntry> {
+    // Trakt is unsupported in builds shipped without Trakt credentials; its search entries hide.
+    val traktCredentialsConfigured = TraktAuthRepository.hasRequiredCredentials()
     val accountCategory = stringResource(SettingsCategory.Account.labelRes)
     val generalCategory = stringResource(SettingsCategory.General.labelRes)
     val aboutCategory = stringResource(SettingsCategory.About.labelRes)
@@ -932,16 +935,18 @@ internal fun settingsSearchEntries(
         )
     }
 
-    addRow(
-        page = SettingsPage.TraktAuthentication,
-        key = "trakt-authentication",
-        title = stringResource(Res.string.trakt_library_source_trakt),
-        description = stringResource(Res.string.settings_trakt_intro_description),
-        pageLabel = trackingPage,
-        section = stringResource(Res.string.settings_tracking_services),
-        category = accountCategory,
-        icon = Icons.Rounded.Link,
-    )
+    if (isTraktIntegrationEntryVisible("trakt-authentication", traktCredentialsConfigured)) {
+        addRow(
+            page = SettingsPage.TraktAuthentication,
+            key = "trakt-authentication",
+            title = stringResource(Res.string.trakt_library_source_trakt),
+            description = stringResource(Res.string.settings_trakt_intro_description),
+            pageLabel = trackingPage,
+            section = stringResource(Res.string.settings_tracking_services),
+            category = accountCategory,
+            icon = Icons.Rounded.Link,
+        )
+    }
     addRow(
         page = SettingsPage.TraktAuthentication,
         key = "simkl-authentication",
@@ -958,7 +963,9 @@ internal fun settingsSearchEntries(
         PlaybackSearchRow("trakt-continue-watching-window", stringResource(Res.string.trakt_continue_watching_window), stringResource(Res.string.trakt_continue_watching_subtitle)),
         PlaybackSearchRow("trakt-comments", stringResource(Res.string.settings_trakt_comments), stringResource(Res.string.settings_trakt_comments_description)),
         PlaybackSearchRow("trakt-more-like-this-source", stringResource(Res.string.trakt_more_like_this_source_title), stringResource(Res.string.trakt_more_like_this_source_subtitle)),
-    ).forEach { row ->
+    ).filter { row ->
+        isTraktIntegrationEntryVisible(row.key, traktCredentialsConfigured)
+    }.forEach { row ->
         addRow(
             page = SettingsPage.TraktAuthentication,
             key = row.key,
@@ -1220,3 +1227,25 @@ private fun settingsSearchResults(
 private fun SettingsSearchEntry.resultDescription(): String {
     return description.ifBlank { contextLabel }
 }
+
+/**
+ * Search keys for the Trakt *integration* (the connect card page entry + its sub-setting rows).
+ * These hide when the build has no Trakt credentials. NOT included: "trakt-attribution" (a licenses
+ * row) and "mdb-trakt" (an MDBList rating-provider row) — those are unrelated to Trakt integration
+ * and always show.
+ */
+internal val traktIntegrationSearchKeys: Set<String> = setOf(
+    "trakt-authentication",
+    "trakt-library-source",
+    "trakt-watch-progress",
+    "trakt-continue-watching-window",
+    "trakt-comments",
+    "trakt-more-like-this-source",
+)
+
+/**
+ * Pure visibility predicate for a settings-search entry. A Trakt-integration entry is shown only
+ * when Trakt credentials are configured; every other entry is always visible.
+ */
+internal fun isTraktIntegrationEntryVisible(key: String, traktCredentialsConfigured: Boolean): Boolean =
+    if (key in traktIntegrationSearchKeys) traktCredentialsConfigured else true
