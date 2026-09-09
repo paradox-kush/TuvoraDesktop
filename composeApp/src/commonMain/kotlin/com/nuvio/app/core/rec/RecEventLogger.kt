@@ -247,20 +247,30 @@ object RecEventLogger {
 
     private fun persistQueue(records: List<RecEventRecord>) {
         runCatching {
-            RecEventStorage.saveQueue(
-                records.takeIf { it.isNotEmpty() }
-                    ?.joinToString(QUEUE_SEPARATOR) { json.encodeToString(it) }
-            )
+            // Bound the WRITE too: never persist more than the newest MAX_QUEUED_EVENTS records, drop
+            // an over-length record, and keep the blob within the cap — so the app itself can never
+            // create the oversized file the restore path defends against.
+            val lines = records.map { json.encodeToString(it) }
+            val bounded = RecEventQueueRestorePolicy.boundLines(lines, MAX_QUEUED_EVENTS)
+            RecEventStorage.saveQueue(bounded.takeIf { it.isNotEmpty() }?.joinToString(QUEUE_SEPARATOR))
         }
     }
 
     private fun restoreQueue() {
-        val contents = RecEventStorage.loadQueue()?.takeIf { it.isNotBlank() } ?: return
-        val restored = contents.split(QUEUE_SEPARATOR)
-            .filter { it.isNotBlank() }
-            .mapNotNull { line ->
-                runCatching { json.decodeFromString<RecEventRecord>(line) }.getOrNull()
-            }
+        // Bound the restore BEFORE decoding: a corrupt/externally-grown blob is rejected wholesale,
+        // over-length lines are dropped, and only the newest MAX_QUEUED_EVENTS survive. The desktop
+        // store reads a file, so loadQueue() additionally guards the file length before reading it in.
+        val bounded = RecEventQueueRestorePolicy.select(
+            RecEventStorage.loadQueue(), QUEUE_SEPARATOR, MAX_QUEUED_EVENTS,
+        )
+        if (bounded.oversized) {
+            log.w { "Rec queue exceeded ${RecEventQueueRestorePolicy.MAX_QUEUE_CHARS} chars; discarding corrupt queue" }
+            RecEventStorage.saveQueue(null)
+            return
+        }
+        val restored = bounded.lines.mapNotNull { line ->
+            runCatching { json.decodeFromString<RecEventRecord>(line) }.getOrNull()
+        }
         if (restored.isEmpty()) {
             RecEventStorage.saveQueue(null)
             return

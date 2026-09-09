@@ -49,6 +49,10 @@ fun main(args: Array<String>) {
     // Resolve the app-wide memory tier once (desktop is always HIGH — bounded by -Xmx1g and the
     // Skiko GPU cache cap), before anything sizes a cache from it.
     MemoryPortAccess.current().setBaseTier(MemoryTierPolicy.desktopTier())
+    // Desktop has no headless worker entry, so every process start is a UI launch: take the decision
+    // AND open the UI-launch attempt together (markUiLaunchStarted decides first). In safe mode the
+    // resolver warm-up withholds its heavy builds. The desktop store is self-resolving (no init).
+    com.nuvio.app.core.journal.StartupJournal.markUiLaunchStarted()
     DesktopReliabilityReporter.start()
     applyDesktopRendererPreference()
     SentryInitializer.start()
