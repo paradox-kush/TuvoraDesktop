@@ -45,4 +45,10 @@ internal actual object XtreamAccountStorage {
     actual fun saveHubSelectionJson(profileId: Int, json: String) {
         store.putString("xtream_hub_selection_$profileId", json)
     }
+
+    actual fun loadPlaylistSyncStateJson(profileId: Int): String? = store.getString("xtream_sync_state_$profileId")
+
+    actual fun savePlaylistSyncStateJson(profileId: Int, json: String) {
+        store.putString("xtream_sync_state_$profileId", json)
+    }
 }
