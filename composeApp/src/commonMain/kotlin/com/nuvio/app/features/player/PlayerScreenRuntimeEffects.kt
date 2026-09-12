@@ -78,7 +78,9 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         lockedOverlayVisible = false
         credentialRefreshJob?.cancel()
         credentialRefreshJob = null
-        credentialRefreshAttemptedSourceUrl = null
+        // NOTE: do NOT reset the credential-refresh counter here. This effect fires on the refresh's
+        // OWN source swap (activeSourceUrl changes to the fresh link); resetting here is what let a
+        // short-TTL Stalker link re-mint forever. Re-armed only on a new videoId or healthy playback.
         initialLoadCompleted = false
         lastProgressPersistEpochMs = 0L
         previousIsPlaying = false
@@ -99,6 +101,13 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         PlayerStreamsRepository.clearEpisodeStreams()
         SubtitleRepository.clear()
         WatchProgressRepository.ensureLoaded()
+    }
+
+    // Re-arm the credential-refresh counter on a genuinely new stream (channel/content change), keyed
+    // on videoId (NOT the source URL), so it does not fire on the refresh's own re-mint swap.
+    LaunchedEffect(activeVideoId, activeSeasonNumber, activeEpisodeNumber) {
+        credentialRefreshAttempts = 0
+        credentialRefreshBaselinePositionMs = 0L
     }
 
     LaunchedEffect(
@@ -704,17 +713,38 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
     val matchedSourceId = activeProviderAddonId?.takeIf { streamProvider.isMatchSourceId(it) }
     val isIptvSource = matchedSourceId != null ||
         streamProvider.isHandledId(activeVideoId)
+    val isEligible = isIptvSource || failedUrl.hasLikelyExpiringPlaybackCredentials()
     iptvRefreshLog.i {
         "gate: iptv=$isIptvSource matchedSrc=$matchedSourceId addonId=$activeProviderAddonId " +
             "videoId=$activeVideoId expiringCreds=${failedUrl.hasLikelyExpiringPlaybackCredentials()} " +
-            "jobActive=${credentialRefreshJob?.isActive} alreadyTried=${credentialRefreshAttemptedSourceUrl == failedUrl}"
+            "jobActive=${credentialRefreshJob?.isActive} attempts=$credentialRefreshAttempts"
     }
-    if (!isIptvSource && !failedUrl.hasLikelyExpiringPlaybackCredentials()) return false
-    if (credentialRefreshJob?.isActive == true) return true
-    if (credentialRefreshAttemptedSourceUrl == failedUrl) return false
+    // Bounded, URL-INDEPENDENT gate (PlayerCredentialRefreshPolicy): a Stalker create_link mints a new
+    // unique short-TTL URL every time, so a URL-keyed guard never matched and the refresh looped
+    // forever. Cap the consecutive re-mints; the counter re-arms only on a new channel/content or
+    // sustained healthy playback (never on the refresh's own swap).
+    when (
+        PlayerCredentialRefreshPolicy.decide(
+            isEligible = isEligible,
+            refreshInFlight = credentialRefreshJob?.isActive == true,
+            consecutiveRefreshes = credentialRefreshAttempts,
+        )
+    ) {
+        PlayerCredentialRefreshPolicy.Decision.NOT_ELIGIBLE -> return false
+        PlayerCredentialRefreshPolicy.Decision.IN_FLIGHT -> return true
+        PlayerCredentialRefreshPolicy.Decision.EXHAUSTED -> {
+            iptvRefreshLog.w {
+                "credential-refresh cap reached ($credentialRefreshAttempts) — surfacing the error " +
+                    "instead of re-minting (breaks the Stalker live re-mint loop)"
+            }
+            return false
+        }
+        PlayerCredentialRefreshPolicy.Decision.ATTEMPT -> {}
+    }
 
     val currentVideoId = activeVideoId ?: return false
-    credentialRefreshAttemptedSourceUrl = failedUrl
+    credentialRefreshAttempts++
+    credentialRefreshBaselinePositionMs = playbackSnapshot.positionMs.coerceAtLeast(0L)
     removeFailedStreamFromCache()
 
     val savedPositionMs = playbackSnapshot.positionMs.coerceAtLeast(0L)
