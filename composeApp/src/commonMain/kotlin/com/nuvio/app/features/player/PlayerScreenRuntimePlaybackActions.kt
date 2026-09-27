@@ -417,3 +417,17 @@ internal fun PlayerScreenRuntime.persistPlaybackProgressTick() {
         syncRemote = false,
     )
 }
+
+/**
+ * "Start from beginning" on a resume the provider is slow to serve (ResumeLoadPolicy): drop the
+ * saved position and reopen the same source at 0:00. Progress saved from here on replaces the old
+ * resume point, which is what the viewer just asked for.
+ */
+internal fun PlayerScreenRuntime.startOverFromBeginning() {
+    activeInitialPositionMs = 0L
+    activeInitialProgressFraction = null
+    initialSeekApplied = true
+    initialLoadCompleted = false
+    startOverOffered = false
+    startOverGeneration += 1
+}

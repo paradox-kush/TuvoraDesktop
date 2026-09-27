@@ -1,5 +1,6 @@
 package com.nuvio.app.features.player
 
+import com.nuvio.app.core.ui.NuvioPrimaryButton
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -64,6 +65,8 @@ internal fun OpeningOverlay(
     modifier: Modifier = Modifier,
     message: String? = null,
     progress: Float? = null,
+    startOverLabel: String? = null,
+    onStartOver: (() -> Unit)? = null,
 ) {
     val contentAlpha by animateFloatAsState(
         targetValue = 1f,
@@ -230,6 +233,15 @@ internal fun OpeningOverlay(
                                 )
                             }
                         }
+                    }
+                    if (onStartOver != null && startOverLabel != null) {
+                        // A slow resume never leaves the viewer without a way out (ResumeLoadPolicy).
+                        Spacer(modifier = Modifier.height(12.dp))
+                        NuvioPrimaryButton(
+                            text = startOverLabel,
+                            modifier = Modifier.width(240.dp),
+                            onClick = onStartOver,
+                        )
                     }
                     if (showHorizontalProgress) {
                         Spacer(modifier = Modifier.height(10.dp))

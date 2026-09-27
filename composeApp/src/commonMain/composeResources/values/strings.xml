@@ -1705,6 +1705,9 @@
     <string name="playback_show_loading_status">Show loading status</string>
     <string name="playback_show_loading_status_sub">Display step-by-step progress while the player is initializing.</string>
     <string name="player_loading_preparing">Preparing stream…</string>
+    <string name="player_loading_resuming">Resuming at %1$s…</string>
+    <string name="player_loading_resuming_slow">Resuming at %1$s — the provider is slow to jump there</string>
+    <string name="player_start_from_beginning">Start from beginning</string>
     <string name="player_loading_subtitles">Fetching subtitles…</string>
     <string name="player_loading_subtitles_from">Fetching subtitles from %1$d addons…</string>
     <string name="player_loading_subtitles_progress">Fetching subtitles… (%1$d / %2$d)</string>

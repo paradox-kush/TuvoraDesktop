@@ -11,6 +11,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.runtime.mutableStateOf
@@ -507,6 +508,8 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         if (renderPlayerSurface) {
             val surfaceSource = currentPlayerSurfaceSource
             val sourceAvailable = surfaceSource != null
+            // startOverGeneration: "Start from beginning" re-mounts the surface to reopen at 0:00.
+            key(startOverGeneration) {
             PlatformPlayerSurface(
                 sourceUrl = surfaceSource?.sourceUrl.orEmpty(),
                 sourceAvailable = sourceAvailable,
@@ -598,6 +601,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                     }
                 },
             )
+            }
         }
 
         AnimatedVisibility(
@@ -1709,6 +1713,7 @@ private fun BoxScope.RenderPlaybackOverlays(
     suppressOpeningOverlay: Boolean,
 ) {
     runtime.run {
+        val resumeUi = resumeLoadingUi()
         PlayerPlaybackOverlays(
             playerControlsLocked = playerControlsLocked,
             useLegacyLayout = isDesktop || playerSettingsUiState.useLegacyPlayerLayout,
@@ -1727,7 +1732,9 @@ private fun BoxScope.RenderPlaybackOverlays(
             logo = logo,
             title = title,
             onBackWithProgress = { requestBack() },
-            openingLoadingMessage = if (playerSettingsUiState.showPlayerLoadingStatus) {
+            startOverLabel = resumeUi.startOverLabel,
+            onStartOver = resumeUi.onStartOver,
+            openingLoadingMessage = resumeUi.message ?: if (playerSettingsUiState.showPlayerLoadingStatus) {
                 p2pInitialLoadingMessage ?: playerLoadingStatusMessage(
                     showStatus = true,
                     controllerReady = playerController != null,

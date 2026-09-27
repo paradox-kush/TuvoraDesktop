@@ -165,6 +165,9 @@ internal class PlayerScreenRuntime(
     var activePauseDescription by mutableStateOf(pauseDescription)
     var activeVideoId by mutableStateOf(videoId)
     var activeInitialPositionMs by mutableStateOf(initialPositionMs)
+    // Bumped by "Start from beginning": re-mounts the player surface so the file reopens at 0:00.
+    var startOverGeneration by mutableStateOf(0)
+    var startOverOffered by mutableStateOf(false)
     var activeInitialProgressFraction by mutableStateOf(initialProgressFraction)
     var shouldPlay by mutableStateOf(true)
     var resizeMode by mutableStateOf(playerSettingsUiState.resizeMode.supportedOnCurrentPlatform())
