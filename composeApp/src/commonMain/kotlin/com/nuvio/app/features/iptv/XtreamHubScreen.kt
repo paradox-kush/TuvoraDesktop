@@ -153,7 +153,8 @@ fun XtreamHubScreen(
     val account = state.accounts.firstOrNull { it.id == state.selectedAccountId }
     val enabledSections = XtreamHubSection.entries.filter { account?.typeEnabled(it.contentKey) != false }
     val visibleCategories = if (account == null) state.categories else {
-        state.categories.filter { account.allowsCategory(state.section.contentKey, it.id) }
+        // A custom group (F02) is the viewer's own row, not a provider category, so selections never hide it.
+        state.categories.filter { XtreamHubRepository.isCustomGroupRow(it.id) || account.allowsCategory(state.section.contentKey, it.id) }
     }
     // A category only collapses once it's confirmed empty; unloaded ones stay (as shimmer rows).
     // Filtering ahead of the LazyColumn keeps the listGap arrangement from stacking gaps for
@@ -212,7 +213,9 @@ fun XtreamHubScreen(
                     onPosterClick = onTileClick,
                     onPosterLongClick = onTileLongClick,
                     loadFromRepository = !openCategory.id.startsWith(SPECIAL_CATEGORY_PREFIX),
-                    onHideGroup = if (account != null && !openCategory.id.startsWith(SPECIAL_CATEGORY_PREFIX)) {
+                    onHideGroup = if (account != null && !openCategory.id.startsWith(SPECIAL_CATEGORY_PREFIX) &&
+                        !XtreamHubRepository.isCustomGroupRow(openCategory.id)
+                    ) {
                         {
                             XtreamHubRepository.hideCategory(openCategory.id)?.let { name ->
                                 NuvioToastController.show(

@@ -135,6 +135,8 @@ object XtreamHubRepository {
         scope.launch {
             com.nuvio.app.features.iptv.overlay.IptvOverlayRepository.uiState.collect {
                 overlaySnapshot = it
+                // Group membership or a channel hide may have changed: re-resolve groups when next shown.
+                synchronized(categoryLock) { groupItems.clear() }
                 val st = _uiState.value
                 val acc = st.selectedAccountId ?: return@collect
                 showSection(acc, st.section)
@@ -238,16 +240,67 @@ object XtreamHubRepository {
      */
     private fun applyCategoryOverlay(accountId: String, contentType: String, cats: List<XtreamHubCategory>): List<XtreamHubCategory> {
         val overlay = overlaySnapshot.categories
-        if (overlay.isEmpty()) return cats
+        // F02: custom groups are rows of channels, listed above the provider categories of Live TV.
+        // (No editor makes movie or series groups.)
+        val groups = if (contentType == CONTENT_TYPE_LIVE) {
+            com.nuvio.app.features.iptv.overlay.IptvCustomGroupPolicy.groupsFor(accountId, contentType, overlaySnapshot.groups)
+        } else {
+            emptyList()
+        }
+        if (overlay.isEmpty() && groups.isEmpty()) return cats
         val tagged = cats.mapIndexed { i, c ->
             com.nuvio.app.features.iptv.overlay.IptvCategoryOverlayPolicy.TaggedCategory(
                 com.nuvio.app.features.iptv.identity.IptvIdentity.categoryKey(accountId, contentType, c.name), i, c.id, c.name,
             )
         }
-        val displayed = com.nuvio.app.features.iptv.overlay.IptvCategoryOverlayPolicy.displayed(tagged, overlay, emptyList())
+        val displayed = com.nuvio.app.features.iptv.overlay.IptvCategoryOverlayPolicy.displayed(tagged, overlay, groups)
         val byId = cats.associateBy { it.id }
-        return displayed.mapNotNull { d -> byId[d.id]?.copy(name = d.name) }
+        return displayed.mapNotNull { d ->
+            if (d.custom) {
+                val rowId = com.nuvio.app.features.iptv.overlay.IptvCustomGroupPolicy.rowId(d.id)
+                val items = groupItems[accountId to rowId]
+                XtreamHubCategory(rowId, d.name, items = items.orEmpty(), loaded = items != null, hasMore = false)
+            } else {
+                byId[d.id]?.copy(name = d.name)
+            }
+        }
     }
+
+    /** accountId to group row id -> the group's resolved channels; dropped whenever the overlay changes. */
+    private val groupItems = mutableMapOf<Pair<String, String>, List<MetaPreview>>()
+    private val groupLoads = mutableSetOf<Pair<String, String>>()
+    /** The lineup keyed by entity id, rebuilt only when the account's channel list object changes. */
+    private var entityIndex: Triple<String, List<XtreamChannel>, Map<String, XtreamChannel>>? = null
+
+    /** F02: resolve a custom group's members against the playlist's lineup, then repaint the section. */
+    private fun loadGroupRow(accountId: String, rowId: String) {
+        val key = accountId to rowId
+        val claimed = synchronized(categoryLock) { key !in groupItems && groupLoads.add(key) }
+        if (!claimed) return
+        scope.launch {
+            try {
+                val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == accountId } ?: return@launch
+                val groupId = com.nuvio.app.features.iptv.overlay.IptvCustomGroupPolicy.groupIdOf(rowId) ?: return@launch
+                val group = overlaySnapshot.groups.firstOrNull { it.id == groupId } ?: return@launch
+                val channels = XtreamSearchIndex.liveChannelsFor(account)
+                val index = entityIndex?.takeIf { it.first == accountId && it.second === channels }?.third
+                    ?: channels.associateBy {
+                        com.nuvio.app.features.iptv.identity.IptvIdentity.entityId(account.id, it.name, it.epgChannelId)
+                    }.also { entityIndex = Triple(accountId, channels, it) }
+                val members = com.nuvio.app.features.iptv.overlay.IptvCustomGroupPolicy.members(group, index, overlaySnapshot.channels)
+                members.forEach { XtreamItemRegistry.registerChannel(account.id, it) }
+                synchronized(categoryLock) { groupItems[key] = members.map { it.toMetaPreview(account.id) }.distinctBy { it.id } }
+                val st = _uiState.value
+                if (st.selectedAccountId == accountId) showSection(accountId, st.section)
+            } finally {
+                synchronized(categoryLock) { groupLoads.remove(key) }
+            }
+        }
+    }
+
+    /** True for a custom group's row (it is managed on the website, not hidden from here). */
+    fun isCustomGroupRow(categoryId: String): Boolean =
+        com.nuvio.app.features.iptv.overlay.IptvCustomGroupPolicy.groupIdOf(categoryId) != null
 
     /**
      * BUG #2: the browse hub's LIVE window must DROP hidden channels and APPLY renames per the
@@ -358,6 +411,10 @@ object XtreamHubRepository {
         val state = _uiState.value
         val accountId = state.selectedAccountId ?: return
         val section = state.section
+        if (isCustomGroupRow(categoryId)) {
+            loadGroupRow(accountId, categoryId)
+            return
+        }
         val category = cachedCategories(accountId, section)?.firstOrNull { it.id == categoryId } ?: return
         if (category.loaded) return
         val key = CategoryKey(accountId, section, categoryId)
@@ -737,7 +794,8 @@ object XtreamHubRepository {
     }
 
     fun resetForProfile() {
-        synchronized(categoryLock) { cache.clear(); loadedOrder.clear() }
+        synchronized(categoryLock) { cache.clear(); loadedOrder.clear(); groupItems.clear() }
+        entityIndex = null
         lastPrefetchMark = null
         epgFetched.clear()
         _epg.value = emptyMap()
