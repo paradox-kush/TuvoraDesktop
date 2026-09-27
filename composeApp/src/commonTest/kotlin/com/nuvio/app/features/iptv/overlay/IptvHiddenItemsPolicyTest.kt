@@ -85,4 +85,29 @@ class IptvHiddenItemsPolicyTest {
         )
         assertEquals(1, items.size)
     }
+
+    // F01: search leaves out what the viewer hid (a channel, or every channel of a hidden group).
+    @Test
+    fun search_hits_drop_hidden_channels_and_channels_of_hidden_groups() {
+        data class Hit(val name: String, val cat: String?)
+        val bbc = IptvIdentity.entityId(pl, "BBC One", null)
+        val hits = listOf(Hit("BBC One", "1"), Hit("BBC News", "2"), Hit("BBC Two", "3"), Hit("BBC Alba", null))
+        val shown = IptvHiddenItemsPolicy.visibleHits(
+            hits,
+            hiddenCategoryIds = setOf("2"),
+            channelOverlay = mapOf(bbc to ChannelOverlay(hidden = true)),
+            categoryOf = { it.cat },
+            entityOf = { IptvIdentity.entityId(pl, it.name, null) },
+        )
+        assertEquals(listOf("BBC Two", "BBC Alba"), shown.map { it.name })
+    }
+
+    @Test
+    fun search_hits_are_untouched_when_nothing_is_hidden() {
+        val hits = listOf("a", "b")
+        var hashed = 0
+        val shown = IptvHiddenItemsPolicy.visibleHits(hits, emptySet(), mapOf("x" to ChannelOverlay(pinned = true)), { null }, { hashed++; it })
+        assertEquals(hits, shown)
+        assertEquals(0, hashed, "no identity is computed when no channel is hidden")
+    }
 }

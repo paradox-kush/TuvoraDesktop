@@ -5,10 +5,15 @@ import com.nuvio.app.features.home.HomeCatalogSection
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.iptv.content.IptvContentDb
 import com.nuvio.app.features.iptv.content.IptvContentKind
+import com.nuvio.app.features.iptv.identity.IptvIdentity
 import com.nuvio.app.features.iptv.match.IptvSourceCategoryPolicy
 import com.nuvio.app.features.iptv.match.MatchKind
 import com.nuvio.app.features.iptv.match.XtreamMatchIndex
 import com.nuvio.app.features.iptv.match.XtreamTmdbResolver
+import com.nuvio.app.features.iptv.overlay.CategoryOverlay
+import com.nuvio.app.features.iptv.overlay.IptvHiddenItems
+import com.nuvio.app.features.iptv.overlay.IptvHiddenItemsPolicy
+import com.nuvio.app.features.iptv.overlay.IptvOverlayRepository
 import com.nuvio.app.features.iptv.stalker.StalkerClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -29,6 +34,8 @@ object XtreamSearchIndex {
 
     private val channelCache = mutableMapOf<String, List<XtreamChannel>>()
     private val channelJobs = mutableMapOf<String, Deferred<List<XtreamChannel>>>()
+    /** "accountId|type" -> category names, read only when the overlay hides some category (F01). */
+    private val categoryNameCache = mutableMapOf<String, List<IptvHiddenItemsPolicy.NamedCategory>>()
     private val mutex = Mutex()
     private val bgScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -42,6 +49,8 @@ object XtreamSearchIndex {
         XtreamRepository.ensureLoaded()
         val accounts = XtreamRepository.uiState.value.accounts.filter { it.enabled }
         if (accounts.isEmpty()) return emptyList()
+        IptvOverlayRepository.ensureLoaded()
+        val overlay = IptvOverlayRepository.uiState.value
 
         val channels = mutableListOf<MetaPreview>()
         val series = mutableListOf<MetaPreview>()
@@ -49,10 +58,18 @@ object XtreamSearchIndex {
         for (account in accounts) {
             // B19: each hit honours the playlist's in-app settings — content-type toggles and the
             // per-type category include list — filtered BEFORE the per-type cap (every row carries
-            // its categoryId: live, match-index, Stalker and M3U alike). Category hides made on the
-            // website (the overlay) are a browse personalisation and deliberately do not apply here.
+            // its categoryId: live, match-index, Stalker and M3U alike). F01: what the viewer hid (a
+            // channel, or a whole group, on any device or the website) is left out too.
             if (account.searchIncludesType(CONTENT_TYPE_LIVE)) {
-                offeredHits(account, CONTENT_TYPE_LIVE, ensureChannels(account).filter { it.name.contains(q, ignoreCase = true) }) { it.categoryId }
+                val matched = IptvChannelSearchPolicy.search(ensureChannels(account), q) { it.name }
+                val visible = IptvHiddenItemsPolicy.visibleHits(
+                    matched,
+                    hiddenCategoryIds(account, CONTENT_TYPE_LIVE, overlay.categories),
+                    overlay.channels,
+                    categoryOf = { it.categoryId },
+                    entityOf = { IptvIdentity.entityId(account.id, it.name, it.epgChannelId) },
+                )
+                offeredHits(account, CONTENT_TYPE_LIVE, visible) { it.categoryId }
                     .forEach {
                         XtreamItemRegistry.registerChannel(account.id, it); channels += it.toMetaPreview(account.id)
                     }
@@ -83,7 +100,8 @@ object XtreamSearchIndex {
                         )
                     }
                 }
-                offeredHits(account, CONTENT_TYPE_MOVIES, hits) { it.categoryId }.forEach { movie ->
+                val shownMovies = withoutHiddenGroups(account, CONTENT_TYPE_MOVIES, overlay.categories, hits) { it.categoryId }
+                offeredHits(account, CONTENT_TYPE_MOVIES, shownMovies) { it.categoryId }.forEach { movie ->
                     XtreamItemRegistry.registerMovie(account.id, movie)
                     movies += movie.toMetaPreview(account.id)
                 }
@@ -111,7 +129,8 @@ object XtreamSearchIndex {
                         )
                     }
                 }
-                offeredHits(account, CONTENT_TYPE_SERIES, hits) { it.categoryId }.forEach { seriesItem ->
+                val shownSeries = withoutHiddenGroups(account, CONTENT_TYPE_SERIES, overlay.categories, hits) { it.categoryId }
+                offeredHits(account, CONTENT_TYPE_SERIES, shownSeries) { it.categoryId }.forEach { seriesItem ->
                     XtreamItemRegistry.registerSeries(account.id, seriesItem)
                     series += seriesItem.toMetaPreview(account.id)
                 }
@@ -122,6 +141,31 @@ object XtreamSearchIndex {
             section("xtream_movies", "IPTV Movies", "movie", movies),
             section("xtream_series", "IPTV Series", "series", series),
         )
+    }
+
+    /** F01: hits whose group the viewer hid are left out of search. */
+    private suspend fun <T> withoutHiddenGroups(
+        account: XtreamAccount,
+        type: String,
+        overlay: Map<String, CategoryOverlay>,
+        hits: List<T>,
+        categoryOf: (T) -> String?,
+    ): List<T> {
+        if (hits.isEmpty()) return hits
+        val hidden = hiddenCategoryIds(account, type, overlay)
+        if (hidden.isEmpty()) return hits
+        return hits.filter { val c = categoryOf(it); c == null || c !in hidden }
+    }
+
+    /** Category ids of [type] the overlay hides for [account]; names are fetched once per session. */
+    private suspend fun hiddenCategoryIds(account: XtreamAccount, type: String, overlay: Map<String, CategoryOverlay>): Set<String> {
+        if (overlay.values.none { it.hidden }) return emptySet()
+        val key = "${account.id}|$type"
+        val names = mutex.withLock { categoryNameCache[key] }
+            ?: IptvHiddenItems.categoryNames(account, type).also { fetched ->
+                if (fetched.isNotEmpty()) mutex.withLock { categoryNameCache[key] = fetched }
+            }
+        return IptvHiddenItemsPolicy.hiddenCategoryIds(account.id, type, names, overlay)
     }
 
     /** Hits a playlist may show for [type]: category-filtered first, then capped (B19). */
@@ -180,6 +224,7 @@ object XtreamSearchIndex {
     fun resetForProfile() {
         channelCache.clear()
         channelJobs.clear()
+        categoryNameCache.clear()
     }
 
     /**
@@ -191,6 +236,7 @@ object XtreamSearchIndex {
         mutex.withLock {
             channelCache.remove(accountId)
             channelJobs.remove(accountId)
+            categoryNameCache.keys.removeAll { it.startsWith("$accountId|") }
         }
     }
 }

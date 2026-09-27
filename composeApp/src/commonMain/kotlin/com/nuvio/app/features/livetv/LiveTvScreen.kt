@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Pause
@@ -159,6 +160,12 @@ fun LiveTvScreen(
 
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var channels by remember { mutableStateOf<List<LiveGuideChannel>>(emptyList()) }
+    // F01: the guide's channel search. It narrows only what the grid lists; zapping keeps the full lineup.
+    var guideQuery by remember { mutableStateOf("") }
+    val shownChannels = remember(channels, guideQuery) {
+        if (guideQuery.isBlank()) channels
+        else com.nuvio.app.features.iptv.IptvChannelSearchPolicy.search(channels, guideQuery) { it.name }
+    }
     val overlaySnapshot by com.nuvio.app.features.iptv.overlay.IptvOverlayRepository.uiState.collectAsState()
     androidx.compose.runtime.LaunchedEffect(Unit) {
         com.nuvio.app.features.iptv.overlay.IptvOverlayRepository.ensureLoaded()
@@ -725,8 +732,19 @@ fun LiveTvScreen(
                     CatchUpNoticeBar(notice = notice, colors = colors, onDismiss = { catchUpNotice = null })
                 }
                 NowBar(logo = currentLogo, title = currentTitle, nowNext = nowNext, nowMs = nowMs, colors = colors)
-                LiveGuideGrid(
-                    channels = channels,
+                GuideSearchField(
+                    query = guideQuery,
+                    onQueryChange = { guideQuery = it },
+                    modifier = Modifier.padding(horizontal = NuvioTokens.Space.s12, vertical = NuvioTokens.Space.s6),
+                )
+                if (guideQuery.isNotBlank() && shownChannels.isEmpty()) {
+                    Text(
+                        text = "No channels match \u201C${guideQuery.trim()}\u201D",
+                        color = colors.textSecondary,
+                        modifier = Modifier.weight(1f).fillMaxWidth().padding(NuvioTokens.Space.s12),
+                    )
+                } else LiveGuideGrid(
+                    channels = shownChannels,
                     currentContentId = currentContentId,
                     nowMs = nowMs,
                     windowStartMs = guideAnchorMs,
@@ -784,6 +802,27 @@ internal fun handleLiveTvPlayerControlsAction(
         true
     }
     else -> false
+}
+
+/** F01: the guide's channel search box (the shared input field, with a clear button once typed in). */
+@Composable
+private fun GuideSearchField(query: String, onQueryChange: (String) -> Unit, modifier: Modifier = Modifier) {
+    com.nuvio.app.core.ui.NuvioInputField(
+        value = query,
+        onValueChange = onQueryChange,
+        placeholder = "Search channels",
+        modifier = modifier,
+        trailingContent = if (query.isEmpty()) null else {
+            {
+                androidx.compose.material3.IconButton(onClick = { onQueryChange("") }) {
+                    Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Filled.Close,
+                        contentDescription = "Clear search",
+                    )
+                }
+            }
+        },
+    )
 }
 
 /** now + next titles for the current channel, for the docked now-bar. */
