@@ -187,9 +187,15 @@ internal fun TabletStreamsLayout(
                             .padding(16.dp),
                     ) {
                         if ((resumePositionMs != null && resumePositionMs > 0L) || (resumeProgressFraction != null && resumeProgressFraction > 0f)) {
+                            val resumeStream = remember(uiState.filteredGroups, debridEnabled) {
+                                ResumeStreamPick.firstPlayable(uiState.filteredGroups) { it.isSelectableForPlayback(debridEnabled) }
+                            }
                             ResumeBanner(
                                 positionMs = resumePositionMs,
                                 progressFraction = resumeProgressFraction,
+                                onResume = resumeStream?.let { stream ->
+                                    { onStreamSelected(stream, resumePositionMs, resumeProgressFraction) }
+                                },
                                 modifier = Modifier.padding(bottom = 8.dp),
                             )
                         }

@@ -40,6 +40,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SearchOff
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
@@ -559,9 +560,15 @@ private fun MobileStreamsLayout(
 
                 Column(modifier = Modifier.fillMaxSize()) {
                     if ((resumePositionMs != null && resumePositionMs > 0L) || (resumeProgressFraction != null && resumeProgressFraction > 0f)) {
+                        val resumeStream = remember(uiState.filteredGroups, debridEnabled) {
+                            ResumeStreamPick.firstPlayable(uiState.filteredGroups) { it.isSelectableForPlayback(debridEnabled) }
+                        }
                         ResumeBanner(
                             positionMs = resumePositionMs,
                             progressFraction = resumeProgressFraction,
+                            onResume = resumeStream?.let { stream ->
+                                { onStreamSelected(stream, resumePositionMs, resumeProgressFraction) }
+                            },
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                         )
                     }
@@ -592,6 +599,7 @@ private fun MobileStreamsLayout(
 internal fun ResumeBanner(
     positionMs: Long?,
     progressFraction: Float? = null,
+    onResume: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val resumeText = when {
@@ -606,16 +614,36 @@ internal fun ResumeBanner(
         else -> null
     } ?: return
 
-    Box(
+    if (onResume == null) {
+        // Nothing playable yet: a plain caption. The old grey pill read as a disabled button (B59a).
+        Text(
+            text = resumeText,
+            modifier = modifier.padding(horizontal = 2.dp, vertical = 6.dp),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.SemiBold,
+        )
+        return
+    }
+    Row(
         modifier = modifier
             .clip(RoundedCornerShape(18.dp))
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .background(MaterialTheme.colorScheme.primary)
+            .clickable(onClick = onResume)
+            .padding(start = 10.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
+        Icon(
+            imageVector = Icons.Rounded.PlayArrow,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(modifier = Modifier.width(6.dp))
         Text(
             text = resumeText,
             style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = MaterialTheme.colorScheme.onPrimary,
             fontWeight = FontWeight.SemiBold,
         )
     }
@@ -1030,8 +1058,9 @@ private fun buildStreamSectionRenderModels(groups: List<AddonStreamGroup>): List
         .map { keyedGroup ->
             val group = keyedGroup.value
             val sectionKey = keyedGroup.lazyKey.toString()
-            val streamsBySource = group.streams.groupBy(::streamSourceName)
-            val sortedSources = streamsBySource.keys.sortedBy { it.lowercase() }
+            val orderedSources = group.streamsBySourceInDisplayOrder()
+            val streamsBySource = orderedSources.toMap()
+            val sortedSources = orderedSources.map { it.first }
 
             StreamSectionRenderModel(
                 sectionKey = sectionKey,
@@ -1140,9 +1169,6 @@ internal fun streamSectionRenderKey(group: AddonStreamGroup): String = buildStri
     append("stream_section")
     appendLazyKeyPart(group.addonId.takeIf { it.isNotBlank() } ?: group.addonName)
 }
-
-private fun streamSourceName(stream: StreamItem): String =
-    stream.sourceName?.takeIf { it.isNotBlank() } ?: stream.addonName
 
 private fun streamSourceRenderKey(
     sectionKey: String,

@@ -53,6 +53,8 @@ object XmltvClient {
 
     private val fetchLock = Mutex()
     private val fetching = mutableSetOf<String>()
+    /** Playlist id → when its last whole-guide fetch failed (in-memory, like TV's). */
+    private val lastFailedMs = mutableMapOf<String, Long>()
 
     /**
      * Ensures a fresh-enough EPG for [acc] is stored, fetching + parsing the guide when none exists or
@@ -64,11 +66,17 @@ object XmltvClient {
         if (!force && meta != null && !isStale(meta.builtAtMs)) return meta.programmeCount > 0
         val source = resolveSource(acc) ?: return (meta?.programmeCount ?: 0) > 0
         val shouldRun = fetchLock.withLock {
-            if (acc.id in fetching) false else { fetching.add(acc.id); true }
+            val backedOff = !force && !XmltvFailureBackoff.allows(lastFailedMs[acc.id], TraktPlatformClock.nowEpochMs())
+            if (backedOff || acc.id in fetching) false else { fetching.add(acc.id); true }
         }
         if (!shouldRun) return (IptvContentDb.epgMeta(acc.id)?.programmeCount ?: 0) > 0
         return try {
-            refresh(acc, source).getOrDefault(0) > 0
+            val result = refresh(acc, source)
+            fetchLock.withLock {
+                if (result.isFailure) lastFailedMs[acc.id] = TraktPlatformClock.nowEpochMs()
+                else lastFailedMs.remove(acc.id)
+            }
+            result.getOrDefault(0) > 0
         } finally {
             fetchLock.withLock { fetching.remove(acc.id) }
         }
@@ -272,3 +280,15 @@ internal fun selectNowNext(rows: List<EpgProgrammeRow>, nowMs: Long): List<Xtrea
             nowPlaying = index == 0 && r.startMs <= nowMs && nowMs < r.endMs,
         )
     }
+
+/**
+ * Whether a whole-guide fetch may run again after a failure. A failed ingest writes no meta row, so
+ * without this every hub tile's [XmltvClient.ensureEpg] re-downloaded the whole (often 50-100 MB)
+ * guide after one timeout or HTTP error. TV has always had the same 1h backoff.
+ */
+internal object XmltvFailureBackoff {
+    const val WINDOW_MS: Long = 60L * 60 * 1000
+
+    fun allows(lastFailedMs: Long?, nowMs: Long): Boolean =
+        lastFailedMs == null || nowMs - lastFailedMs >= WINDOW_MS
+}
