@@ -15,4 +15,15 @@ internal actual object AuthStorage {
     actual fun clearAnonymousUserId() {
         store.remove("anonymous_user_id")
     }
+
+    actual fun loadValue(key: String): String? =
+        store.getString(key)
+
+    actual fun saveValue(key: String, value: String) {
+        store.putString(key, value)
+    }
+
+    actual fun removeValue(key: String) {
+        store.remove(key)
+    }
 }
