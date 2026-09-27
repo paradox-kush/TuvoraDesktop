@@ -141,6 +141,10 @@ jobs:
 
   linux:
     name: Linux x64 DEB
+    # Disabled 2026-09-27: our fork has no Linux player yet (upstream shipped one in #295 on
+    # 2026-08-24; port pending, B13). Attaching this .deb shipped a media app that can't play.
+    # Re-enable (drop this `if` and re-add `linux` to the release job's needs) when the port lands.
+    if: false
     needs: version
     runs-on: ubuntu-24.04
     steps:
@@ -344,7 +348,7 @@ jobs:
 
   release:
     name: Publish GitHub release
-    needs: [version, macos, linux, windows]
+    needs: [version, macos, windows]
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -382,7 +386,6 @@ jobs:
           \`\`\`" \
             dist/Tuvora-macOS-arm64-${VERSION}.dmg \
             dist/Tuvora-macOS-x86_64-${VERSION}.dmg \
-            dist/Tuvora-Linux-x64-${VERSION}.deb \
             dist/Tuvora-Windows-x64-${VERSION}.msi
 
       # Community announcements — no-ops until the DISCORD_/TELEGRAM_ secrets exist.
@@ -398,7 +401,7 @@ jobs:
           MSG=$(printf '%s\n' \
             "Tuvora Desktop ${VERSION} is out! 🎉" \
             "" \
-            "⬇️ macOS / Windows / Linux: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}" \
+            "⬇️ macOS / Windows: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}" \
             "📖 Guides: https://tuvora.co/guides")
           if [ -n "$DISCORD_WEBHOOK_URL" ]; then
             jq -n --arg c "$MSG" '{content: $c}' | \
