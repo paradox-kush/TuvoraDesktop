@@ -78,6 +78,48 @@ class PlayerNextEpisodeStreamSelectionTest {
         )
     }
 
+    // Fork: the tiered picker only takes a confident continuation while providers are still
+    // answering; the any-fallback tier waits for the delay (or for every provider to answer).
+    @Test
+    fun `before the delay an unrelated stream is not taken while providers are still answering`() {
+        val unrelated = stream("Fast", "fast", "other")
+        val coordinator = NextEpisodeStreamSelectionCoordinator(
+            selectAfterDelay = { streams -> streams.firstOrNull() },
+            selectPreferred = { streams -> streams.firstOrNull { it.behaviorHints.bingeGroup == "current" } },
+        )
+        val partialState = StreamsUiState(
+            groups = listOf(
+                AddonStreamGroup("Fast", "fast", listOf(unrelated)),
+                AddonStreamGroup("Current", "current", emptyList(), isLoading = true),
+            ),
+            isAnyLoading = true,
+        )
+
+        assertEquals(NextEpisodeStreamSelectionDecision.Waiting, coordinator.onStreamsChanged(partialState))
+        assertEquals(
+            NextEpisodeStreamSelectionDecision.Selected(unrelated),
+            coordinator.onSelectionDelayElapsed(partialState),
+        )
+    }
+
+    @Test
+    fun `a group still loading counts as loading even when the aggregate flag has cleared`() {
+        val unrelated = stream("Fast", "fast", "other")
+        val coordinator = NextEpisodeStreamSelectionCoordinator(
+            selectAfterDelay = { streams -> streams.firstOrNull { it.behaviorHints.bingeGroup == "current" } },
+            selectPreferred = { streams -> streams.firstOrNull { it.behaviorHints.bingeGroup == "current" } },
+        )
+        val state = StreamsUiState(
+            groups = listOf(
+                AddonStreamGroup("Fast", "fast", listOf(unrelated)),
+                AddonStreamGroup("Current", "current", emptyList(), isLoading = true),
+            ),
+            isAnyLoading = false,
+        )
+
+        assertEquals(NextEpisodeStreamSelectionDecision.Waiting, coordinator.onStreamsChanged(state))
+    }
+
     private fun stream(addonName: String, addonId: String, bingeGroup: String): StreamItem = StreamItem(
         name = addonName,
         url = "https://example.com/$addonId.mp4",
