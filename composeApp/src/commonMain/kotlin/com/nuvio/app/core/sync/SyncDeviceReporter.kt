@@ -40,7 +40,7 @@ object SyncDeviceReporter {
                 SupabaseProvider.client.postgrest.rpc("report_device", buildJsonObject {
                     put("p_client_id", clientId)
                     put("p_device_name", syncDeviceName())
-                    put("p_platform", "mobile")
+                    put("p_platform", syncDevicePlatform())
                 })
                 log.d { "reported device name" }
             }.onFailure { e ->
@@ -63,3 +63,11 @@ object SyncDeviceReporter {
  * phone, so it's the hardware model; iOS has UIDevice.name.
  */
 internal expect fun syncDeviceName(): String
+
+/**
+ * The platform this build reports to report_device: "desktop" for the Desktop app, "mobile" for
+ * the phone/tablet targets this repo still compiles. The server derives the platform from the
+ * client-id prefix, which the Desktop app inherited from mobile (`nuvio-mobile-`), and accepts a
+ * "desktop" report as the one override of a 'mobile' prefix (migration 20260927020000).
+ */
+internal expect fun syncDevicePlatform(): String
