@@ -128,4 +128,30 @@ class IptvOverlayStoreTest {
         assertEquals("Local", IptvOverlayStore.snapshot(1).channels["fp:v1:y"]?.rename)
         assertEquals(1, IptvOverlayStore.rowsForPush(1).size) // still owed to the server
     }
+
+    // F02: a group hidden on a device must reach the website and the other devices. Only channel rows
+    // were pushed, so a device category edit stayed dirty on that device forever.
+    @Test
+    fun `a device category hide is pushed with its content type and an ack clears it`() = runBlocking {
+        IptvOverlayStore.setCategory(1, "pl", "movies", "c:v1:horror", CategoryOverlay(hidden = true), 100)
+        val pending = IptvOverlayStore.rowsForPush(1)
+        val row = pending.single()
+        assertEquals("category", row.kind)
+        assertEquals("c:v1:horror", row.okey)
+        assertEquals("pl", row.playlistId)
+        assertTrue("\"content_type\":\"movies\"" in row.valueJson, row.valueJson)
+        assertTrue("\"hidden\":true" in row.valueJson, row.valueJson)
+        IptvOverlayStore.markChannelsPushed(1, pending)
+        assertTrue(IptvOverlayStore.rowsForPush(1).isEmpty())
+    }
+
+    @Test
+    fun `unhiding a device category is pushed as a delete`() = runBlocking {
+        IptvOverlayStore.setCategory(1, "pl", "live", "c:v1:uk", CategoryOverlay(hidden = true), 100)
+        IptvOverlayStore.markChannelsPushed(1, IptvOverlayStore.rowsForPush(1))
+        IptvOverlayStore.setCategory(1, "pl", "live", "c:v1:uk", CategoryOverlay(), 200)
+        val row = IptvOverlayStore.rowsForPush(1).single()
+        assertEquals("category", row.kind)
+        assertTrue(row.deleted)
+    }
 }

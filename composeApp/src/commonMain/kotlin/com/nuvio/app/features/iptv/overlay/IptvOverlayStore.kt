@@ -159,11 +159,27 @@ internal object IptvOverlayStore {
                 out.add(OverlayPushRow("channel", st.getText(0), if (st.isNull(1)) null else st.getText(1), v, st.getLong(6), st.getLong(7) != 0L))
             }
         }
+        // Category edits made on this device (F02 "Hide group"): same delta, in the website's value
+        // shape, which carries the content type the server's category row needs.
+        c.prepare("SELECT category_key, playlist_id, content_type, hidden, pinned, position, rename, updated_at, deleted FROM category_overlay WHERE profile_id = ? AND dirty = 1").use { st ->
+            st.bindLong(1, profileId.toLong())
+            while (st.step()) {
+                val v = buildString {
+                    append("{\"content_type\":").append(jsonStr(st.getText(2)))
+                    append(",\"hidden\":").append(st.getLong(3) != 0L)
+                    append(",\"pinned\":").append(st.getLong(4) != 0L)
+                    if (!st.isNull(5)) append(",\"position\":").append(st.getLong(5))
+                    if (!st.isNull(6)) append(",\"rename\":").append(jsonStr(st.getText(6)))
+                    append("}")
+                }
+                out.add(OverlayPushRow("category", st.getText(0), st.getText(1), v, st.getLong(7), st.getLong(8) != 0L))
+            }
+        }
         out
     }
 
     /**
-     * Clear the dirty flag for exactly the channel rows the server just acked — matched by entity_id
+     * Clear the dirty flag for exactly the channel and category rows the server just acked — matched by entity_id
      * AND the pushed updated_at, so a row edited again *during* the push (newer updated_at) stays
      * dirty and is re-sent next time instead of being silently dropped.
      */
@@ -173,6 +189,14 @@ internal object IptvOverlayStore {
         c.prepare("UPDATE channel_overlay SET dirty = 0 WHERE profile_id = ? AND entity_id = ? AND updated_at = ? AND dirty = 1").use { st ->
             for (r in rows) {
                 if (r.kind != "channel") continue
+                st.reset()
+                st.bindLong(1, profileId.toLong()); st.bindText(2, r.okey); st.bindLong(3, r.updatedAt)
+                st.step()
+            }
+        }
+        c.prepare("UPDATE category_overlay SET dirty = 0 WHERE profile_id = ? AND category_key = ? AND updated_at = ? AND dirty = 1").use { st ->
+            for (r in rows) {
+                if (r.kind != "category") continue
                 st.reset()
                 st.bindLong(1, profileId.toLong()); st.bindText(2, r.okey); st.bindLong(3, r.updatedAt)
                 st.step()

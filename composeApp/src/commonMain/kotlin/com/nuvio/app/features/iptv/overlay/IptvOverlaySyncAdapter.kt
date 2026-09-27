@@ -86,7 +86,7 @@ internal object IptvOverlaySyncAdapter {
         return changed
     }
 
-    /** Push this device's overlay rows (currently channel edits) to the server. */
+    /** Push this device's overlay rows (channel and category edits) to the server. */
     suspend fun push(profileId: Int) {
         if (!SyncSession.canSync()) return   // signed-out/anon: keep the edit local, don't 42501 the server
         val rows = IptvOverlayStore.rowsForPush(profileId)
