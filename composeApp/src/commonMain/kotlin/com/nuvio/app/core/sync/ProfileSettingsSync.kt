@@ -54,7 +54,12 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonTransformingSerializer
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
@@ -137,7 +142,7 @@ object ProfileSettingsSync {
                 isApplyingRemoteBlob = true
                 try {
                     val remoteBlob = runCatching {
-                        json.decodeFromJsonElement(MobileProfileSettingsBlob.serializer(), remoteJson)
+                        decodeMobileProfileSettingsBlob(remoteJson)
                     }.getOrElse { error ->
                         log.e(error) { "pull(profileId=$profileId) — failed to decode remote settings blob" }
                         return@withLock false
@@ -384,14 +389,26 @@ object ProfileSettingsSync {
 
 }
 
+private val profileSettingsBlobJson = Json {
+    ignoreUnknownKeys = true
+    encodeDefaults = true
+}
+
+/**
+ * Decodes a remote `settings_json` for this blob (the `desktop` platform row on Desktop). Internal so
+ * the decode is testable.
+ */
+internal fun decodeMobileProfileSettingsBlob(remoteJson: JsonObject): MobileProfileSettingsBlob =
+    profileSettingsBlobJson.decodeFromJsonElement(MobileProfileSettingsBlob.serializer(), remoteJson)
+
 @Serializable
-private data class MobileProfileSettingsBlob(
+internal data class MobileProfileSettingsBlob(
     val version: Int = 3,
     val features: MobileProfileSettingsFeatures = MobileProfileSettingsFeatures(),
 )
 
 @Serializable
-private data class MobileProfileSettingsFeatures(
+internal data class MobileProfileSettingsFeatures(
     @SerialName("theme_settings") val themeSettings: JsonObject = JsonObject(emptyMap()),
     @SerialName("poster_card_style_settings_payload") val posterCardStyleSettingsPayload: String = "",
     @SerialName("card_depth_style_settings_payload") val cardDepthStyleSettingsPayload: String = "",
@@ -409,9 +426,27 @@ private data class MobileProfileSettingsFeatures(
 )
 
 @Serializable
-private data class NotificationsSettingsPayload(
-    @SerialName("episode_release_alerts_enabled") val episodeReleaseAlertsEnabled: Boolean = false,
+internal data class NotificationsSettingsPayload(
+    @SerialName("episode_release_alerts_enabled")
+    @Serializable(with = LenientSettingBooleanSerializer::class)
+    val episodeReleaseAlertsEnabled: Boolean = false,
 )
+
+/**
+ * A synced Boolean that decodes both the flat value this blob has always written and the website's
+ * `{"type":"boolean","value":x}` envelope. tuvora.co wrote that envelope for the Notifications toggle
+ * (B03-D3) and rows carrying it are already in prod; a strict decode failed the WHOLE settings pull,
+ * so no setting from the web or another device applied on that profile. Encodes flat, as before.
+ * An unreadable value decodes to false (this field's default) instead of failing the blob.
+ */
+internal object LenientSettingBooleanSerializer :
+    JsonTransformingSerializer<Boolean>(Boolean.serializer()) {
+    override fun transformDeserialize(element: JsonElement): JsonElement {
+        val unwrapped = if (element is JsonObject) element["value"] else element
+        val flag = (unwrapped as? JsonPrimitive)?.booleanOrNull ?: false
+        return JsonPrimitive(flag)
+    }
+}
 
 @Serializable
 private data class SettingsBlobResponse(
