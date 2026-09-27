@@ -66,6 +66,7 @@ actual fun PlatformPlayerSurface(
     onControllerReady: (PlayerEngineController) -> Unit,
     onSnapshot: (PlayerPlaybackSnapshot) -> Unit,
     onError: (String?) -> Unit,
+    sourceAvailable: Boolean,
 ) {
     sanitizePlaybackResponseHeaders(sourceResponseHeaders)
     val latestOnControllerReady = rememberUpdatedState(onControllerReady)
@@ -199,6 +200,10 @@ actual fun PlatformPlayerSurface(
                 if (trackId != null) {
                     bridge.selectAudioTrack(trackId)
                 }
+            }
+
+            override fun applyAudioLanguagePreferences(languages: List<String>) {
+                bridge.applyAudioLanguagePreferences(languages)
             }
 
             override fun selectSubtitleTrack(index: Int) {

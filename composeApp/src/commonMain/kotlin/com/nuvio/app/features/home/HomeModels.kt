@@ -24,6 +24,8 @@ data class MetaPreview(
      * same snapshot that drives hide/rename, so the hub can draw a visible pin marker on the card.
      */
     val pinned: Boolean = false,
+    val rawPosterUrl: String? = null,
+    val landscapePoster: String? = null,
 )
 
 fun MetaPreview.stableKey(): String = "$type:$id"
@@ -54,6 +56,19 @@ data class HomeUiState(
     val sections: List<HomeCatalogSection> = emptyList(),
     val errorMessage: String? = null,
 )
+
+internal fun shouldShowInitialHomeLoading(
+    hasRenderableHomeRows: Boolean,
+    addonManifestsLoading: Boolean,
+    homeCatalogLoading: Boolean,
+): Boolean = !hasRenderableHomeRows && (addonManifestsLoading || homeCatalogLoading)
+
+internal fun shouldShowHomeHeroSlot(
+    heroEnabled: Boolean,
+    hasHeroItems: Boolean,
+    isResolvingHeroSources: Boolean,
+    hasRenderableHomeRows: Boolean,
+): Boolean = heroEnabled && (hasHeroItems || isResolvingHeroSources || hasRenderableHomeRows)
 
 internal data class CatalogRequest(
     val addon: ManagedAddon,

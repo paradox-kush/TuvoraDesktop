@@ -19,6 +19,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.decodeFromJsonElement
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.collections_import_error_collection_blank_id
 import nuvio.composeapp.generated.resources.collections_import_error_collection_blank_title
@@ -58,7 +59,7 @@ object CollectionRepository {
         runCatching {
             val parsed = json.parseToJsonElement(payload)
             rawCollectionsJson = parsed
-            val decoded = json.decodeFromString<List<Collection>>(payload)
+            val decoded = json.decodeFromJsonElement<List<Collection>>(parsed)
             val normalized = normalizeCollections(decoded, source = "local storage")
             _collections.value = CollectionMobileSettingsRepository.applyToCollections(normalized)
             if (normalized.size != decoded.size) {

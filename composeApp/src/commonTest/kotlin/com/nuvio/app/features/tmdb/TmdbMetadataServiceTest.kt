@@ -6,6 +6,9 @@ import com.nuvio.app.features.details.MetaPerson
 import com.nuvio.app.features.details.MetaVideo
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class TmdbMetadataServiceTest {
     @Test
@@ -118,7 +121,7 @@ class TmdbMetadataServiceTest {
     }
 
     @Test
-    fun `applyEnrichment replaces episode release only when enabled`() {
+    fun `applyEnrichment does not replace episode release dates from TMDB`() {
         val addonRelease = "2023-12-31T19:00:00Z"
         val base = MetaDetails(
             id = "tt1234567",
@@ -144,25 +147,18 @@ class TmdbMetadataServiceTest {
             ),
         )
 
-        val disabled = TmdbMetadataService.applyEnrichment(
+        val result = TmdbMetadataService.applyEnrichment(
             meta = base,
             enrichment = null,
             episodeMap = episodes,
             settings = TmdbSettings(enabled = true),
         )
-        val enabled = TmdbMetadataService.applyEnrichment(
-            meta = base,
-            enrichment = null,
-            episodeMap = episodes,
-            settings = TmdbSettings(enabled = true, useReleaseDates = true),
-        )
 
-        assertEquals(addonRelease, disabled.videos.first().released)
-        assertEquals("2024-01-01", enabled.videos.first().released)
+        assertEquals(addonRelease, result.videos.first().released)
     }
 
     @Test
-    fun `applyEnrichment replaces top level release dates only when enabled`() {
+    fun `applyEnrichment does not replace top level release dates from TMDB`() {
         val base = MetaDetails(
             id = "tt1234567",
             type = "series",
@@ -192,23 +188,15 @@ class TmdbMetadataServiceTest {
             networks = emptyList(),
         )
 
-        val disabled = TmdbMetadataService.applyEnrichment(
+        val result = TmdbMetadataService.applyEnrichment(
             meta = base,
             enrichment = enrichment,
             episodeMap = emptyMap(),
             settings = TmdbSettings(enabled = true),
         )
-        val enabled = TmdbMetadataService.applyEnrichment(
-            meta = base,
-            enrichment = enrichment,
-            episodeMap = emptyMap(),
-            settings = TmdbSettings(enabled = true, useReleaseDates = true),
-        )
 
-        assertEquals(base.releaseInfo, disabled.releaseInfo)
-        assertEquals(base.lastAirDate, disabled.lastAirDate)
-        assertEquals("2024-01-01", enabled.releaseInfo)
-        assertEquals("2024-12-31", enabled.lastAirDate)
+        assertEquals(base.releaseInfo, result.releaseInfo)
+        assertEquals(base.lastAirDate, result.lastAirDate)
     }
 
     @Test
@@ -268,5 +256,170 @@ class TmdbMetadataServiceTest {
         assertEquals(base.director, result.director)
         assertEquals(base.cast, result.cast)
         assertEquals(base.productionCompanies, result.productionCompanies)
+    }
+
+    @Test
+    fun `containsCjkOrHangul detects Japanese Chinese and Korean scripts`() {
+        assertTrue(containsCjkOrHangul("田中敦子"))
+        assertTrue(containsCjkOrHangul("成龙"))
+        assertTrue(containsCjkOrHangul("김수현"))
+        assertFalse(containsCjkOrHangul("Atsuko Tanaka"))
+        assertFalse(containsCjkOrHangul("Scarlett Johansson"))
+    }
+
+    @Test
+    fun `resolvePersonName falls back Japanese names to Romaji for non-Japanese locales`() {
+        assertEquals(
+            "Atsuko Tanaka",
+            resolvePersonName("田中敦子", "Atsuko Tanaka", null, "tr-TR"),
+        )
+        assertEquals(
+            "Atsuko Tanaka",
+            resolvePersonName("田中敦子", "田中敦子", "Atsuko Tanaka", "de-DE"),
+        )
+    }
+
+    @Test
+    fun `resolvePersonName keeps Japanese names when user language is Japanese`() {
+        assertEquals(
+            "田中敦子",
+            resolvePersonName("田中敦子", "Atsuko Tanaka", "Atsuko Tanaka", "ja-JP"),
+        )
+    }
+
+    @Test
+    fun `resolvePersonName falls back Hangul names to Latin for non-Korean locales`() {
+        assertEquals(
+            "Kim Soo-hyun",
+            resolvePersonName("김수현", "Kim Soo-hyun", null, "de-DE"),
+        )
+        assertEquals(
+            "Kim Soo-hyun",
+            resolvePersonName("김수현", "김수현", "Kim Soo-hyun", "fr-FR"),
+        )
+    }
+
+    @Test
+    fun `resolvePersonName keeps Hangul when user language is Korean`() {
+        assertEquals(
+            "김수현",
+            resolvePersonName("김수현", "Kim Soo-hyun", "Kim Soo-hyun", "ko-KR"),
+        )
+    }
+
+    @Test
+    fun `resolvePersonName falls back Chinese hanzi to stage name for non-Chinese locales`() {
+        assertEquals(
+            "Jackie Chan",
+            resolvePersonName("成龙", "Jackie Chan", null, "es-ES"),
+        )
+        assertEquals(
+            "Jackie Chan",
+            resolvePersonName("成龙", "成龙", "Jackie Chan", "en-US"),
+        )
+    }
+
+    @Test
+    fun `resolvePersonName keeps hanzi when user language is Chinese`() {
+        assertEquals(
+            "成龙",
+            resolvePersonName("成龙", "Jackie Chan", "Jackie Chan", "zh-CN"),
+        )
+    }
+
+    @Test
+    fun `resolvePersonName leaves already-Latin names unchanged`() {
+        assertEquals(
+            "Scarlett Johansson",
+            resolvePersonName("Scarlett Johansson", "Scarlett Johansson", null, "tr-TR"),
+        )
+        assertEquals(
+            "Tom Hanks",
+            resolvePersonName("Tom Hanks", "Tom Hanks", null, "ja-JP"),
+        )
+    }
+
+    @Test
+    fun `resolvePersonName handles null and blank inputs`() {
+        assertEquals("Takuya Kimura", resolvePersonName(null, "Takuya Kimura", null, "tr-TR"))
+        assertEquals("Scarlett Johansson", resolvePersonName("Scarlett Johansson", null, null, "tr-TR"))
+        assertNull(resolvePersonName(null, null, null, "tr-TR"))
+        assertEquals(
+            "Takuya Kimura",
+            resolvePersonName("  木村拓哉  ", "Takuya Kimura", null, "fr-FR"),
+        )
+    }
+
+    @Test
+    fun `resolvePersonName falls back CJK filmography titles to English`() {
+        assertEquals(
+            "Ghost in the Shell: Stand Alone Complex",
+            resolvePersonName(
+                "攻殻機動隊 STAND ALONE COMPLEX",
+                "攻殻機動隊 STAND ALONE COMPLEX",
+                "Ghost in the Shell: Stand Alone Complex",
+                "pl-PL",
+            ),
+        )
+        assertEquals(
+            "Make My Day",
+            resolvePersonName("Make My Day", "Make My Day", null, "pl-PL"),
+        )
+    }
+
+    @Test
+    fun `resolvePersonName keeps CJK filmography titles for Japanese locale`() {
+        assertEquals(
+            "攻殻機動隊 STAND ALONE COMPLEX",
+            resolvePersonName(
+                "攻殻機動隊 STAND ALONE COMPLEX",
+                "攻殻機動隊 STAND ALONE COMPLEX",
+                "Ghost in the Shell: Stand Alone Complex",
+                "ja-JP",
+            ),
+        )
+    }
+
+    @Test
+    fun `network browse falls back CJK titles to English`() {
+        val localizedResults = listOf(
+            TmdbDiscoverResult(
+                id = 57775,
+                name = "ちびまる子ちゃん",
+                originalName = "ちびまる子ちゃん",
+                posterPath = "/maruko.jpg",
+                firstAirDate = "1990-01-07",
+            ),
+            TmdbDiscoverResult(
+                id = 37854,
+                name = "One Piece",
+                originalName = "ワンピース",
+                posterPath = "/op.jpg",
+                firstAirDate = "1999-10-20",
+            ),
+        )
+        val englishResults = listOf(
+            TmdbDiscoverResult(
+                id = 57775,
+                name = "Chibi Maruko-chan",
+                originalName = "ちびまる子ちゃん",
+                posterPath = "/maruko.jpg",
+            ),
+        )
+
+        assertTrue(discoverResultsContainCjkTitles(localizedResults))
+        val englishTitlesById = englishDiscoverTitlesById(englishResults)
+
+        val titles = localizedResults.associate { result ->
+            result.id to resolvePersonName(
+                localizedName = result.title ?: result.name,
+                originalName = result.originalTitle ?: result.originalName,
+                fallbackEnglishName = englishTitlesById[result.id],
+                preferredLanguage = "tr-TR",
+            )
+        }
+
+        assertEquals("Chibi Maruko-chan", titles[57775])
+        assertEquals("One Piece", titles[37854])
     }
 }

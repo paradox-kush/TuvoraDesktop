@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -23,25 +24,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import coil3.compose.AsyncImage
 import com.nuvio.app.core.format.formatReleaseDateForDisplay
+import coil3.compose.AsyncImage
+import com.nuvio.app.core.ui.NuvioAsyncImage
 import com.nuvio.app.core.ui.NuvioCardDepthSurface
 import com.nuvio.app.core.ui.NuvioPosterWatchedOverlay
+import com.nuvio.app.core.ui.SkeletonPoster
+import com.nuvio.app.core.ui.desktopPosterHoverScale
 import com.nuvio.app.core.ui.nuvioCardDepth
 import com.nuvio.app.core.ui.posterCardClickable
 import com.nuvio.app.core.ui.rememberPosterCardStyleUiState
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.home.PosterShape
 import com.nuvio.app.features.watching.application.WatchingState
+import com.nuvio.app.isDesktop
 
 internal fun posterGridColumnCountForWidth(screenWidth: Dp): Int =
-    when {
-        screenWidth >= 1400.dp -> 7
-        screenWidth >= 1200.dp -> 6
-        screenWidth >= 1000.dp -> 5
-        screenWidth >= 840.dp -> 4
-        else -> 3
-    }
+    com.nuvio.app.core.ui.posterGridColumnCountForWidth(screenWidth)
 
 @Composable
 internal fun PosterGridRow(
@@ -93,12 +92,10 @@ internal fun PosterGridSkeletonRow(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         repeat(columns) {
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .aspectRatio(0.68f)
-                    .clip(RoundedCornerShape(posterCardStyle.cornerRadiusDp.dp))
-                    .background(MaterialTheme.colorScheme.surface),
+            SkeletonPoster(
+                modifier = Modifier.weight(1f),
+                cornerRadius = posterCardStyle.cornerRadiusDp.dp,
+                showLabels = !posterCardStyle.hideLabelsEnabled,
             )
         }
     }
@@ -124,6 +121,7 @@ private fun PosterGridTile(
     ) {
         Column(
             modifier = Modifier
+                .desktopPosterHoverScale()
                 .fillMaxWidth()
                 .then(it),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -143,15 +141,39 @@ private fun PosterGridTile(
                         onLongClick = onLongClick,
                         zoomImageUrl = item.poster,
                         zoomCornerRadius = cornerRadiusDp.dp,
+                        hoverScaleEnabled = false,
                     ),
             ) {
                 if (item.poster != null) {
-                    AsyncImage(
-                        model = item.poster,
-                        contentDescription = item.name,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop,
-                    )
+                    val platformContext = coil3.compose.LocalPlatformContext.current
+                    val hasFallback = !item.rawPosterUrl.isNullOrBlank() && item.rawPosterUrl != item.poster
+                    val imageModel = remember(item.poster, item.rawPosterUrl, platformContext) {
+                        if (hasFallback) {
+                            coil3.request.ImageRequest.Builder(platformContext)
+                                .data(item.poster)
+                                .memoryCacheKeyExtras(
+                                    mapOf(com.nuvio.app.core.poster.CustomPosterFallbackInterceptor.FALLBACK_URL_KEY to item.rawPosterUrl!!)
+                                )
+                                .build()
+                        } else {
+                            item.poster
+                        }
+                    }
+                    if (isDesktop) {
+                        NuvioAsyncImage(
+                            model = imageModel,
+                            contentDescription = item.name,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop,
+                        )
+                    } else {
+                        AsyncImage(
+                            model = imageModel,
+                            contentDescription = item.name,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop,
+                        )
+                    }
                 }
                 NuvioPosterWatchedOverlay(isWatched = isWatched)
             }
@@ -184,5 +206,5 @@ private fun PosterShape.posterGridAspectRatio(): Float =
     when (this) {
         PosterShape.Poster -> 0.68f
         PosterShape.Square -> 1f
-        PosterShape.Landscape -> 1.2f
+        PosterShape.Landscape -> 1.78f
     }

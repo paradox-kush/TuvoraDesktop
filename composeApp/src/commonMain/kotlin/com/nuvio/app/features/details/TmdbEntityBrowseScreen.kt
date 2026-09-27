@@ -47,13 +47,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nuvio.app.isDesktop
 import com.nuvio.app.core.ui.NuvioAsyncImage as AsyncImage
+import com.nuvio.app.core.ui.NuvioBackButton
 import com.nuvio.app.core.ui.NuvioDesktopVerticalScrollbar
+import com.nuvio.app.core.ui.desktopPageHorizontalPaddingForWidth
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
 import com.nuvio.app.core.ui.landscapePosterHeightForWidth
 import com.nuvio.app.core.ui.landscapePosterWidth
 import com.nuvio.app.core.ui.rememberPosterCardStyleUiState
+import com.nuvio.app.features.home.components.HomeSkeletonRow
+import com.nuvio.app.core.ui.skeleton
 import com.nuvio.app.features.details.components.DetailPosterRailSection
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.tmdb.TmdbEntityBrowseData
@@ -61,6 +66,7 @@ import com.nuvio.app.features.tmdb.TmdbEntityKind
 import com.nuvio.app.features.tmdb.TmdbEntityMediaType
 import com.nuvio.app.features.tmdb.TmdbEntityRailType
 import com.nuvio.app.features.tmdb.TmdbMetadataService
+import com.nuvio.app.core.poster.withCustomPosterUrls
 import com.nuvio.app.features.watched.WatchedRepository
 import com.nuvio.app.navigation.LocalUseNativeNavigation
 
@@ -102,7 +108,11 @@ fun TmdbEntityBrowseScreen(
             fallbackName = entityName,
         )
         uiState = if (data != null) {
-            EntityBrowseUiState.Success(data)
+            val pattern = com.nuvio.app.core.poster.CustomPosterUrlRepository.let { repo ->
+                repo.ensureLoaded()
+                repo.patternForScreen(com.nuvio.app.core.poster.CustomPosterScreen.DETAILS)
+            }
+            EntityBrowseUiState.Success(data.withCustomPosterUrls(pattern))
         } else {
             EntityBrowseUiState.Error(loadFailedMessage)
         }
@@ -130,18 +140,36 @@ fun TmdbEntityBrowseScreen(
         }
 
         if (!LocalUseNativeNavigation.current) {
-            IconButton(
-                onClick = onBack,
-                modifier = Modifier
-                    .windowInsetsPadding(WindowInsets.statusBars)
-                    .padding(start = 4.dp, top = 4.dp)
-                    .align(Alignment.TopStart),
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = stringResource(Res.string.action_back),
-                    tint = MaterialTheme.colorScheme.onSurface,
-                )
+            if (isDesktop) {
+                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                    NuvioBackButton(
+                        onClick = onBack,
+                        modifier = Modifier
+                            .padding(
+                                start = desktopPageHorizontalPaddingForWidth(maxWidth.value),
+                                top = 32.dp,
+                            )
+                            .align(Alignment.TopStart),
+                        containerColor = Color.Transparent,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        buttonSize = 48.dp,
+                        iconSize = 24.dp,
+                    )
+                }
+            } else {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .padding(start = 4.dp, top = 4.dp)
+                        .align(Alignment.TopStart),
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                        contentDescription = stringResource(Res.string.action_back),
+                        tint = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
             }
         }
     }
@@ -344,7 +372,12 @@ private fun EntityIdentitySidebar(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(scrollState)
-                .padding(start = 40.dp, end = 36.dp, top = 40.dp, bottom = 42.dp),
+                .padding(
+                    start = 40.dp,
+                    end = 36.dp,
+                    top = if (isDesktop) 72.dp else 40.dp,
+                    bottom = 42.dp,
+                ),
             verticalArrangement = Arrangement.spacedBy(22.dp),
         ) {
             Text(
@@ -612,23 +645,11 @@ private fun EntityHeroSection(
 
 @Composable
 private fun EntityBrowseSkeleton() {
-    val posterCardStyle = rememberPosterCardStyleUiState()
-    val isLandscapeShelfMode = posterCardStyle.catalogLandscapeModeEnabled
-    val skeletonPosterWidth = if (isLandscapeShelfMode) {
-        landscapePosterWidth(posterCardStyle.widthDp)
-    } else {
-        posterCardStyle.widthDp.dp
-    }
-    val skeletonPosterHeight = if (isLandscapeShelfMode) {
-        landscapePosterHeightForWidth(skeletonPosterWidth)
-    } else {
-        posterCardStyle.heightDp.dp
-    }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .verticalScroll(rememberScrollState())
             .windowInsetsPadding(WindowInsets.statusBars)
             .padding(top = 56.dp),
     ) {
@@ -637,57 +658,31 @@ private fun EntityBrowseSkeleton() {
                 modifier = Modifier
                     .width(120.dp)
                     .height(14.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                    .skeleton(RoundedCornerShape(4.dp)),
             )
             Spacer(modifier = Modifier.height(12.dp))
             Box(
                 modifier = Modifier
                     .width(200.dp)
                     .height(28.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                    .skeleton(RoundedCornerShape(6.dp)),
             )
             Spacer(modifier = Modifier.height(10.dp))
             Box(
                 modifier = Modifier
                     .width(140.dp)
                     .height(14.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+                    .skeleton(RoundedCornerShape(4.dp)),
             )
         }
 
         Spacer(modifier = Modifier.height(28.dp))
 
         repeat(3) {
-            Column(modifier = Modifier.padding(bottom = 20.dp)) {
-                Box(
-                    modifier = Modifier
-                        .padding(horizontal = 20.dp)
-                        .width(160.dp)
-                        .height(16.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    repeat(4) {
-                        Box(
-                            modifier = Modifier
-                                .width(skeletonPosterWidth)
-                                .height(skeletonPosterHeight)
-                                .clip(RoundedCornerShape(posterCardStyle.cornerRadiusDp.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
-                        )
-                    }
-                }
-            }
+            HomeSkeletonRow(
+                modifier = Modifier.padding(bottom = 20.dp),
+                horizontalPadding = 20.dp,
+            )
         }
     }
 }

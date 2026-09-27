@@ -7,6 +7,10 @@ interface PlayerEngineController {
     fun play()
     fun pause()
     fun seekTo(positionMs: Long)
+    fun trySeekTo(positionMs: Long): Boolean {
+        seekTo(positionMs)
+        return true
+    }
     fun seekBy(offsetMs: Long)
     fun retry()
 
@@ -33,6 +37,7 @@ interface PlayerEngineController {
      * thread when playback starts.
      */
     fun getStreamInfo(): PlayerStreamInfo = PlayerStreamInfo()
+    fun applyAudioLanguagePreferences(languages: List<String>)
     fun selectAudioTrack(index: Int)
     fun selectSubtitleTrack(index: Int)
     fun setSubtitleUri(url: String)
@@ -51,6 +56,14 @@ interface PlayerEngineController {
     fun configureIosVideoOutput(settings: PlayerSettingsUiState) {}
     fun updateNowPlayingMetadata(info: PlayerNowPlayingInfo) {}
     fun clearNowPlayingInfo() {}
+
+    /** Optional barrier for platforms that must release native resources before their route is removed. */
+    fun releaseBeforeNavigation(
+        onReleased: () -> Unit,
+        onReleaseFailed: (String) -> Unit = {},
+    ) {
+        onReleased()
+    }
 }
 
 enum class PlayerControlsAction {
@@ -66,6 +79,7 @@ enum class PlayerControlsAction {
     KeyboardSeekForward,
     KeyboardVolumeDown,
     KeyboardVolumeUp,
+    PictureInPicture,
     ResizeMode,
     Speed,
     Subtitles,
@@ -85,6 +99,7 @@ data class PlayerControlsState(
     val episodeText: String = "",
     val streamTitle: String = "",
     val providerName: String = "",
+    val pauseOverlayEnabled: Boolean = true,
     val pauseOverlayWatchingLabel: String = "You're watching",
     val pauseOverlayLogo: String? = null,
     val pauseOverlayEpisodeInfo: String = "",
@@ -101,11 +116,17 @@ data class PlayerControlsState(
     val playLabel: String = "Play",
     val pauseLabel: String = "Pause",
     val closeLabel: String = "Close player",
+    val mutedLabel: String = "",
+    val volumeLevelLabelFormat: String = "",
     val lockLabel: String = "Lock player controls",
     val unlockLabel: String = "Unlock player controls",
     val submitIntroLabel: String = "Submit Intro",
     val videoSettingsLabel: String = "Video settings",
     val tapToUnlockLabel: String = "Tap to unlock",
+    val pipLabel: String = "",
+    val pipPlaceholderTitle: String = "",
+    val pipRestoreLabel: String = "",
+    val pipWindowTitle: String = "",
     val playbackErrorTitle: String = "Playback error",
     val playbackErrorMessage: String = "",
     val playbackErrorActionLabel: String = "Go back",
@@ -133,6 +154,7 @@ data class PlayerControlsState(
     val p2pConsentBody: String = "",
     val p2pConsentEnableLabel: String = "Enable P2P",
     val p2pConsentCancelLabel: String = "Cancel",
+    val speedPanelTitle: String = "Playback Speed",
     val audioTracksPanelTitle: String = "Audio Tracks",
     val noAudioTracksLabel: String = "No audio tracks available",
     val subtitlesPanelTitle: String = "Subtitles",
@@ -163,6 +185,7 @@ data class PlayerControlsState(
     val onLabel: String = "On",
     val offLabel: String = "Off",
     val themeAccentColor: String = "#2f6fed",
+    val themeAccentGradientColors: List<String> = emptyList(),
     val themeAccentStrongColor: String = "#3c7bff",
     val themeOnAccentColor: String = "#ffffff",
     val themeFocusColor: String = "#9ecaff",
@@ -252,6 +275,10 @@ data class PlayerControlsState(
     val subtitleAutoSyncIsLoading: Boolean = false,
     val subtitleAutoSyncErrorMessage: String = "",
     val closeModalsToken: Long = 0L,
+    val submitIntroContentKey: String = "",
+    val submitIntroSuccessToken: Long = 0L,
+    val notificationMessage: String = "",
+    val notificationToken: Long = 0L,
 )
 
 data class PlayerControlFilterItem(
@@ -402,4 +429,5 @@ expect fun PlatformPlayerSurface(
     onControllerReady: (PlayerEngineController) -> Unit,
     onSnapshot: (PlayerPlaybackSnapshot) -> Unit,
     onError: (String?) -> Unit,
+    sourceAvailable: Boolean = true,
 )

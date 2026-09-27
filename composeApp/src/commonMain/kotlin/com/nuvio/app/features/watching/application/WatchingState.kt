@@ -12,6 +12,7 @@ import com.nuvio.app.features.watching.domain.WatchingCompletedEpisode
 import com.nuvio.app.features.watching.domain.WatchingContentRef
 import com.nuvio.app.features.watching.domain.WatchingProgressRecord
 import com.nuvio.app.features.watching.domain.WatchingWatchedRecord
+import com.nuvio.app.features.watching.domain.isSeriesLikeWatchingContentType
 import com.nuvio.app.features.watching.domain.latestCompletedSeriesEpisode
 
 object WatchingState {
@@ -22,7 +23,8 @@ object WatchingState {
     ): Boolean {
         val posterKeys = watchedItemKeys(type = item.type, id = item.id)
         if (posterKeys.any(watchedKeys::contains)) return true
-        return item.type.isSeriesLikePosterType() && posterKeys.any(fullyWatchedSeriesKeys::contains)
+        return item.type.isSeriesLikeWatchingContentType(includeAnime = true) &&
+            posterKeys.any(fullyWatchedSeriesKeys::contains)
     }
 
     fun isEpisodeWatched(
@@ -77,15 +79,20 @@ object WatchingState {
                 add(WatchingContentRef(type = item.type, id = item.id))
             }
         }
-        val progressRecords = progressEntries
+        val progressRecordsByContent = progressEntries
+            .asSequence()
             .filter { entry -> entry.shouldUseAsCompletedSeedForContinueWatching() }
             .map(WatchProgressEntry::toDomainProgressRecord)
-        val watchedRecords = watchedItems.map(WatchedItem::toDomainWatchedRecord)
+            .groupBy(WatchingProgressRecord::content)
+        val watchedRecordsByContent = watchedItems
+            .asSequence()
+            .map(WatchedItem::toDomainWatchedRecord)
+            .groupBy(WatchingWatchedRecord::content)
         return contentRefs.mapNotNull { content ->
             latestCompletedSeriesEpisode(
                 content = content,
-                progressRecords = progressRecords,
-                watchedRecords = watchedRecords,
+                progressRecords = progressRecordsByContent[content].orEmpty(),
+                watchedRecords = watchedRecordsByContent[content].orEmpty(),
                 preferFurthestEpisode = preferFurthestEpisode,
             )?.let { completed -> content to completed }
         }.toMap()
@@ -97,9 +104,6 @@ object WatchingState {
         latestCompletedBySeries: Map<WatchingContentRef, WatchingCompletedEpisode>,
     ): List<WatchProgressEntry> = progressEntries.continueWatchingEntries()
 }
-
-private fun String.isSeriesLikePosterType(): Boolean =
-    trim().lowercase() in setOf("series", "show", "tv", "tvshow", "anime")
 
 private fun WatchProgressEntry.toDomainProgressRecord(): WatchingProgressRecord =
     normalizedCompletion().let { entry ->

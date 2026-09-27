@@ -53,7 +53,7 @@ internal object LocalAccountDataCleaner {
         WatchedRepository.clearLocalState()
         com.nuvio.app.core.contracts.LocalStateCleanerRegistry.all.forEach { it.clearLocalState() }
         LibraryRepository.runAccountStorageWipe {
-            PlatformLocalAccountDataCleaner.wipe()
+            wipePlatformStorage()
         }
 
         ProfileRepository.clearInMemory()
@@ -89,6 +89,14 @@ internal object LocalAccountDataCleaner {
         PlayerLaunchStore.clear()
         StreamLaunchStore.clear()
         StreamContextStore.clear()
+    }
+
+    internal fun wipePlatformStorage(wipeStorage: () -> Unit = PlatformLocalAccountDataCleaner::wipe) {
+        try {
+            wipeStorage()
+        } finally {
+            ContinueWatchingEnrichmentCache.clearLocalState()
+        }
     }
 }
 

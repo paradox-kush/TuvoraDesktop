@@ -29,10 +29,13 @@ private fun SimklSyncSnapshot.withListMutations(
         val media = mutation.responseMedia.mergeMissing(requestMedia)
         val index = updated.indexOfMatchingMedia(media)
         val existing = updated.getOrNull(index)
-        val mediaType = existing?.mediaType ?: mutation.request.kind.toSimklMediaType()
+        val mediaType = existing?.mediaType
+            ?: mutation.resolvedMediaType
+            ?: mutation.request.kind.toSimklMediaType()
         val mergedMedia = media.mergeMissing(existing?.media)
         val entry = (existing ?: SimklLibraryEntry()).copy(
             mediaType = mediaType,
+            animeType = mutation.animeType ?: existing?.animeType,
             localPosterUrl = existing?.localPosterUrl
                 ?: mutation.request.posterUrl?.trim()?.takeIf(String::isNotBlank),
             addedToWatchlistAt = existing?.addedToWatchlistAt ?: committedAt,
@@ -92,6 +95,8 @@ private fun SimklSyncSnapshot.withResolvedHistoryStatus(
         mediaType = mediaType,
         status = mutation.status ?: existing.status,
         animeType = mutation.animeType ?: existing.animeType,
+        localPosterUrl = existing.localPosterUrl
+            ?: mutation.request.media.posterUrl?.trim()?.takeIf(String::isNotBlank),
         show = media.takeIf { mediaType != SimklMediaType.MOVIES },
         movie = media.takeIf { mediaType == SimklMediaType.MOVIES },
     )

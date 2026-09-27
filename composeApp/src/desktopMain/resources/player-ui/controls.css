@@ -253,6 +253,7 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   opacity: 0;
   transform: translate3d(-50%, -12px, 0) scale(.98);
   pointer-events: none;
@@ -262,6 +263,17 @@ button:disabled {
     opacity 260ms var(--ease-out),
     transform 280ms var(--ease-out);
   will-change: opacity, transform;
+}
+
+.player-toast-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  fill: currentColor;
+}
+
+.player-toast-icon[hidden] {
+  display: none !important;
 }
 
 .player-toast-text {
@@ -496,7 +508,7 @@ button:disabled {
   width: 3px;
   height: 0;
   border-radius: 1px;
-  background: var(--theme-accent);
+  background: var(--theme-accent-gradient-vertical, var(--theme-accent));
   transform: scaleY(0);
   transform-origin: top;
   transition: transform 400ms var(--ease-out);
@@ -696,7 +708,7 @@ button:disabled {
 .skip-progress-fill {
   width: 0%;
   height: 100%;
-  background: var(--theme-timeline-fill);
+  background: var(--theme-accent-gradient, var(--theme-timeline-fill));
 }
 
 .next-episode-card {
@@ -820,6 +832,51 @@ button:disabled {
   color: inherit;
 }
 
+@media (min-width: 768px) {
+  .next-episode-card {
+    width: min(clamp(380px, 30vw, 460px), calc(100vw - (var(--hp) * 2)));
+    padding: clamp(11px, .8vw, 14px);
+    border-radius: 18px;
+  }
+
+  .next-episode-thumb {
+    width: clamp(108px, 8vw, 132px);
+    height: auto;
+    aspect-ratio: 16 / 9;
+    border-radius: 11px;
+  }
+
+  .next-episode-copy {
+    padding-left: clamp(11px, .8vw, 14px);
+  }
+
+  .next-episode-header {
+    font-size: clamp(12px, .85vw, 14px);
+  }
+
+  .next-episode-title {
+    margin-top: 3px;
+    font-size: clamp(15px, 1vw, 17px);
+  }
+
+  .next-episode-status {
+    margin-top: 3px;
+    font-size: clamp(12px, .85vw, 14px);
+  }
+
+  .next-episode-action {
+    gap: 4px;
+    margin-left: 8px;
+    padding: 7px 11px;
+    font-size: clamp(13px, .9vw, 15px);
+  }
+
+  .next-episode-action svg {
+    width: 17px;
+    height: 17px;
+  }
+}
+
 .header-actions {
   display: flex;
   gap: 10px;
@@ -896,6 +953,172 @@ button:disabled {
   width: var(--header-icon);
   height: var(--header-icon);
 }
+
+/* PiP keeps only playback, captions/audio, volume, restore action, and pause overlay. */
+.player.pip-mode .header-button:not(#pipButton):not(#pipLockButton),
+.player.pip-mode .metadata,
+.player.pip-mode [data-command="resize"],
+.player.pip-mode [data-command="speed"],
+.player.pip-mode [data-command="sources"],
+.player.pip-mode [data-command="episodes"],
+.player.pip-mode .next-episode-card,
+.player.pip-mode .skip-prompt,
+.player.pip-mode .parental-guide,
+.player.pip-mode .opening-overlay {
+  display: none !important;
+}
+
+.player.pip-mode .header {
+  padding: 10px;
+}
+
+.player.pip-mode .header-actions {
+  margin-left: auto;
+}
+
+.player.pip-mode .action-row {
+  gap: 8px;
+}
+
+.player.pip-mode .action {
+  padding: 8px;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  justify-content: center;
+}
+
+.player.pip-mode .action span {
+  display: none;
+}
+
+.player.pip-mode .playback-status {
+  gap: 8px;
+}
+
+.player.pip-mode .volume-slider {
+  width: 76px;
+}
+
+/* PiP lock button: hidden outside pip-mode, visible inside it. */
+.pip-lock-button {
+  display: none !important;
+}
+
+.player.pip-mode .pip-lock-button {
+  display: grid !important;
+  place-items: center;
+}
+
+/* PiP pause metadata overlay (idle watching screen) */
+.player.pip-mode .pause-metadata-content {
+  padding: 14px 14px 60px 14px;
+}
+
+.player.pip-mode .pause-kicker {
+  font-size: 11px;
+}
+
+.player.pip-mode .pause-logo {
+  width: min(160px, 50vw);
+  height: 36px;
+  margin-top: 4px;
+}
+
+.player.pip-mode .pause-title {
+  font-size: 15px;
+  margin-top: 4px;
+  -webkit-line-clamp: 1;
+}
+
+.player.pip-mode .pause-episode-info,
+.player.pip-mode .pause-episode-title {
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.player.pip-mode .pause-description {
+  display: none !important;
+}
+
+/* When pip is locked, hide all chrome and gradients to protect against accidental clicks */
+.player.pip-locked .content,
+.player.pip-locked .top-gradient,
+.player.pip-locked .bottom-gradient {
+  display: none !important;
+}
+
+.pip-lock-overlay {
+  display: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 100;
+  background: transparent;
+  border: none;
+  cursor: grab;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.pip-lock-badge {
+  display: none;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 101;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  margin: -26px 0 0 -26px;
+  border-radius: 50%;
+  background: rgba(18, 19, 24, 0.82);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transform: scale(0.88);
+  transition: opacity 180ms ease, transform 180ms ease, background 150ms ease;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.pip-lock-badge svg {
+  width: 26px;
+  height: 26px;
+  fill: currentColor;
+}
+
+.player.pip-locked .pip-lock-overlay {
+  display: flex;
+}
+
+.player.pip-locked .pip-lock-overlay:active {
+  cursor: grabbing;
+}
+
+.player.pip-locked .pip-lock-badge {
+  display: flex;
+}
+
+/* Hovering the locked PiP window reveals the unlock padlock. Drag still works on the overlay. */
+.player.pip-locked:hover .pip-lock-badge,
+.player.pip-locked .pip-lock-badge:focus {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.player.pip-locked .pip-lock-badge:hover,
+.player.pip-locked .pip-lock-badge:focus {
+  background: rgba(30, 32, 42, 0.95);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
 
 .center-controls {
   position: absolute;
@@ -1361,7 +1584,7 @@ button:disabled {
   width: 0%;
   height: 100%;
   border-radius: inherit;
-  background: var(--theme-timeline-fill);
+  background: var(--theme-accent-gradient, var(--theme-timeline-fill));
   transition: width 900ms cubic-bezier(.4, 0, .2, 1);
 }
 
@@ -1429,7 +1652,9 @@ button:disabled {
   height: 10px;
   border-radius: 999px;
   background:
-    linear-gradient(to right, var(--theme-timeline-fill) 0 var(--progress, 0%), var(--theme-timeline-track) var(--progress, 0%) 100%);
+    var(--theme-accent-gradient, linear-gradient(var(--theme-timeline-fill), var(--theme-timeline-fill)))
+      left center / var(--progress, 0%) 100% no-repeat,
+    var(--theme-timeline-track);
 }
 
 .scrub::-webkit-slider-thumb {
@@ -1475,7 +1700,7 @@ button:disabled {
 }
 
 .volume-control {
-  --volume: 100%;
+  --volume-position: 50%;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1536,9 +1761,16 @@ button:disabled {
   background:
     linear-gradient(
       to right,
-      var(--theme-accent) 0 var(--volume),
-      rgba(255, 255, 255, .26) var(--volume) 100%
-    );
+      transparent 0 50%,
+      rgba(224, 189, 85, 0) 50%,
+      rgba(224, 189, 85, .18) 60%,
+      rgba(224, 189, 85, .46) 70%,
+      rgba(255, 173, 50, .78) 84%,
+      #ff4d4d 100%
+    ),
+    var(--theme-accent-gradient, linear-gradient(var(--theme-accent), var(--theme-accent)))
+      left center / var(--volume-position) 100% no-repeat,
+    rgba(255, 255, 255, .26);
 }
 
 .volume-slider::-webkit-slider-thumb {
@@ -1548,7 +1780,7 @@ button:disabled {
   margin-top: -8px;
   border: 0;
   border-radius: 999px;
-  background: var(--theme-accent);
+  background: #fff;
   box-shadow: none;
 }
 
@@ -2070,7 +2302,7 @@ button:disabled {
 .subtitle-rails {
   display: grid;
   grid-template-columns: 200px 300px;
-  align-items: start;
+  align-items: stretch;
   gap: 14px;
   max-width: 100%;
   overflow-x: auto;
@@ -2088,6 +2320,7 @@ button:disabled {
 
 .subtitle-rail {
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -3273,4 +3506,5 @@ svg {
   display: block;
   fill: currentColor;
   stroke: none;
+  pointer-events: none;
 }

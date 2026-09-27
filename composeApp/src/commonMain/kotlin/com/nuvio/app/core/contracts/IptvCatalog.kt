@@ -1,5 +1,6 @@
 package com.nuvio.app.core.contracts
 
+import kotlinx.coroutines.flow.StateFlow
 import androidx.compose.runtime.staticCompositionLocalOf
 
 /**
@@ -23,6 +24,13 @@ interface IptvCatalog {
 
     /** Refresh playlists whose auto-refresh interval is due (iOS foreground path). */
     suspend fun refreshDuePlaylists()
+
+    /**
+     * Stremio content types ("movie", "series") the enabled IPTV accounts can supply streams for
+     * through the IPTV source lane — upstream-aligned play availability reads this instead of naming
+     * the fork's IPTV store.
+     */
+    val servedStreamTypes: StateFlow<Set<String>>
 }
 
 /** Compose provision (root-provided in FeatureWiring). */
@@ -40,4 +48,7 @@ object IptvCatalogAccess {
     val catalog: IptvCatalog
         get() = instance ?: error("IptvCatalog not registered — see FeatureWiring.registerFeatureContributions")
     fun register(catalog: IptvCatalog) { instance = catalog }
+
+    /** The registered catalog, or null before registration (tests, previews). */
+    val catalogOrNull: IptvCatalog? get() = instance
 }

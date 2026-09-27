@@ -196,7 +196,7 @@ internal object XtreamMetaSource : MetaSourceProvider {
 
     private suspend fun enrichXtreamMeta(meta: MetaDetails, tmdbId: Int): MetaDetails {
         val settings = TmdbSettingsRepository.snapshot()
-        if (!settings.enabled || !settings.hasApiKey) return meta
+        if (!settings.enabled) return meta
         return runCatching { TmdbMetadataService.enrichMeta(meta, "tmdb:$tmdbId", settings) }
             .onFailure { log.w { "Xtream TMDB enrichment failed for tmdb:$tmdbId: ${it.message}" } }
             .getOrDefault(meta)

@@ -4,6 +4,8 @@ import android.app.Application
 import android.app.ActivityManager
 import android.content.ComponentCallbacks2
 import android.content.Context
+import coil3.ImageLoader
+import coil3.SingletonImageLoader
 import com.nuvio.app.core.analytics.PostHogPrivacy
 import com.nuvio.app.core.contracts.MemoryPortAccess
 import com.nuvio.app.core.contracts.MemoryTier
@@ -20,7 +22,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
-class NuvioApplication : Application() {
+/**
+ * Implements [SingletonImageLoader.Factory] (upstream) so Coil's singleton — with the custom-poster
+ * fallback interceptor and the fork's IPv4-first fetcher and memory-tier cap — exists before the first
+ * image request; the composable factory in App.kt is skipped on Android (platformProvidesImageLoader).
+ */
+class NuvioApplication : Application(), SingletonImageLoader.Factory {
+
+    override fun newImageLoader(context: Context): ImageLoader = buildAppImageLoader(context)
+
 
     private val analyticsConsentScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 

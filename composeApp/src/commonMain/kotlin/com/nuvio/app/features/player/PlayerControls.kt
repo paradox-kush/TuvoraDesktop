@@ -1,14 +1,16 @@
 package com.nuvio.app.features.player
 
+import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -26,41 +28,53 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.OpenInNew
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.Replay10
-import androidx.compose.material.icons.rounded.SkipNext
-import androidx.compose.material.icons.rounded.Speed
-import androidx.compose.material.icons.rounded.SwapHoriz
-import androidx.compose.material.icons.rounded.VideoLibrary
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.SliderState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.LayoutDirection
 import com.nuvio.app.core.ui.AppIconResource
 import com.nuvio.app.core.ui.NuvioBackButton
+import com.nuvio.app.core.ui.themePalette
+import com.nuvio.app.core.ui.accentBrush
 import com.nuvio.app.core.ui.appIconPainter
+import com.nuvio.app.core.ui.gradientMask
 import com.nuvio.app.core.ui.nuvioTypeScale
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
@@ -78,7 +92,19 @@ internal fun PlayerControlsShell(
     metrics: PlayerLayoutMetrics,
     resizeMode: PlayerResizeMode,
     isLocked: Boolean,
+    useLegacyLayout: Boolean = false,
+    showRemainingTime: Boolean = false,
+    onRuntimeClick: () -> Unit = {},
+    releaseInfo: String? = null,
+    hideDetails: Boolean = false,
+    onNextEpisodeClick: (() -> Unit)? = null,
+    onInteraction: () -> Unit = {},
+    // Fork: live streams have no finite timeline (LIVE badge instead of a scrubber) and the
+    // stream-info panel (codec/bitrate facts) animates in the header's action slot.
     isLive: Boolean = false,
+    streamInfoLines: List<StreamInfoLine> = emptyList(),
+    showStreamInfo: Boolean = false,
+    onStreamInfoAnimationComplete: () -> Unit = {},
     showPlaybackControls: Boolean = true,
     onLockToggle: () -> Unit,
     onBack: () -> Unit,
@@ -92,21 +118,24 @@ internal fun PlayerControlsShell(
     onVideoSettingsClick: (() -> Unit)? = null,
     onSourcesClick: (() -> Unit)? = null,
     onEpisodesClick: (() -> Unit)? = null,
-    onNextEpisodeClick: (() -> Unit)? = null,
     onOpenInExternalPlayer: (() -> Unit)? = null,
     onSubmitIntroClick: (() -> Unit)? = null,
     parentalWarnings: List<ParentalWarning> = emptyList(),
     showParentalGuide: Boolean = false,
     onParentalGuideAnimationComplete: () -> Unit = {},
-    streamInfoLines: List<StreamInfoLine> = emptyList(),
-    showStreamInfo: Boolean = false,
-    onStreamInfoAnimationComplete: () -> Unit = {},
     onScrubChange: (Long) -> Unit,
     onScrubFinished: (Long) -> Unit,
     horizontalSafePadding: androidx.compose.ui.unit.Dp,
     modifier: Modifier = Modifier,
 ) {
-    Box(modifier = modifier.fillMaxSize()) {
+    val density = LocalDensity.current
+    var timelineHeight by remember { mutableStateOf(0.dp) }
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val centerControlHeight = metrics.playIconSize + maxOf(metrics.playButtonPadding, metrics.sideButtonPadding) * 2
+        val centerBottomPadding = if (useLegacyLayout) metrics.centerLift else maxOf(
+            metrics.centerLift,
+            timelineHeight * 2 + centerControlHeight + 16.dp - maxHeight,
+        )
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -125,13 +154,13 @@ internal fun PlayerControlsShell(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(220.dp)
+                .height(if (useLegacyLayout) 220.dp else 260.dp)
                 .align(Alignment.BottomCenter)
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
                             Color.Transparent,
-                            Color.Black.copy(alpha = 0.7f),
+                            Color.Black.copy(alpha = if (useLegacyLayout) 0.7f else 0.8f),
                         ),
                     ),
                 ),
@@ -142,53 +171,97 @@ internal fun PlayerControlsShell(
                 .fillMaxSize()
                 .padding(horizontal = horizontalSafePadding),
         ) {
-            PlayerHeader(
-                title = title,
-                streamTitle = streamTitle,
-                providerName = providerName,
-                seasonNumber = seasonNumber,
-                episodeNumber = episodeNumber,
-                episodeTitle = episodeTitle,
-                metrics = metrics,
-                isLocked = isLocked,
-                showActions = showPlaybackControls,
-                onSubmitIntroClick = onSubmitIntroClick,
-                parentalWarnings = parentalWarnings,
-                showParentalGuide = showParentalGuide,
-                onParentalGuideAnimationComplete = onParentalGuideAnimationComplete,
-                streamInfoLines = streamInfoLines,
-                showStreamInfo = showStreamInfo,
-                onStreamInfoAnimationComplete = onStreamInfoAnimationComplete,
-                onLockToggle = onLockToggle,
-                onVideoSettingsClick = onVideoSettingsClick,
-                onOpenInExternalPlayer = onOpenInExternalPlayer,
-                onBack = onBack,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.safeContent.only(WindowInsetsSides.Top))
-                    .padding(
-                        start = metrics.horizontalPadding,
-                        end = metrics.horizontalPadding,
-                        top = metrics.verticalPadding / 4,
-                    ),
-            )
-
-            if (showPlaybackControls) {
-                CenterControls(
-                    snapshot = playbackSnapshot,
+            if (useLegacyLayout) {
+                PlayerHeader(
+                    title = title,
+                    streamTitle = streamTitle,
+                    providerName = providerName,
+                    seasonNumber = seasonNumber,
+                    episodeNumber = episodeNumber,
+                    episodeTitle = episodeTitle,
                     metrics = metrics,
-                    onSeekBack = onSeekBack,
-                    onSeekForward = onSeekForward,
-                    onTogglePlayback = onTogglePlayback,
+                    isLocked = isLocked,
+                    showActions = showPlaybackControls,
+                    onSubmitIntroClick = onSubmitIntroClick,
+                    parentalWarnings = parentalWarnings,
+                    showParentalGuide = showParentalGuide,
+                    onParentalGuideAnimationComplete = onParentalGuideAnimationComplete,
+                    streamInfoLines = streamInfoLines,
+                    showStreamInfo = showStreamInfo,
+                    onStreamInfoAnimationComplete = onStreamInfoAnimationComplete,
+                    onLockToggle = onLockToggle,
+                    onVideoSettingsClick = onVideoSettingsClick,
+                    onOpenInExternalPlayer = onOpenInExternalPlayer,
+                    onBack = onBack,
                     modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(bottom = metrics.centerLift),
+                        .align(Alignment.TopStart)
+                        .fillMaxWidth()
+                        .windowInsetsPadding(WindowInsets.safeContent.only(WindowInsetsSides.Top))
+                        .padding(
+                            start = metrics.horizontalPadding,
+                            end = metrics.horizontalPadding,
+                            top = metrics.verticalPadding / 4,
+                        ),
+                )
+            } else {
+                if (showPlaybackControls) {
+                    PlayerToolbar(
+                        isLocked = isLocked,
+                        onLockToggle = onLockToggle,
+                        onBack = onBack,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .windowInsetsPadding(WindowInsets.safeContent.only(WindowInsetsSides.Top))
+                            .padding(horizontal = metrics.horizontalPadding, vertical = metrics.verticalPadding / 4),
+                    )
+                }
+                ParentalGuideOverlay(
+                    warnings = parentalWarnings,
+                    isVisible = showParentalGuide,
+                    onAnimationComplete = onParentalGuideAnimationComplete,
+                    contentPadding = PaddingValues(horizontal = metrics.horizontalPadding, vertical = metrics.verticalPadding),
+                    modifier = Modifier.align(Alignment.TopStart),
+                )
+                // Fork: stream-info panel, trailing edge (the parental guide takes the leading one).
+                StreamInfoOverlay(
+                    lines = streamInfoLines,
+                    isVisible = showStreamInfo,
+                    onAnimationComplete = onStreamInfoAnimationComplete,
+                    contentPadding = PaddingValues(horizontal = metrics.horizontalPadding, vertical = metrics.verticalPadding),
+                    modifier = Modifier.align(Alignment.TopEnd),
                 )
             }
 
             if (showPlaybackControls) {
+                CompositionLocalProvider(
+                    LocalLayoutDirection provides if (useLegacyLayout) LocalLayoutDirection.current else LayoutDirection.Ltr,
+                ) {
+                    CenterControls(
+                        snapshot = playbackSnapshot,
+                        metrics = metrics,
+                        onSeekBack = {
+                            if (!useLegacyLayout) onInteraction()
+                            onSeekBack()
+                        },
+                        onSeekForward = {
+                            if (!useLegacyLayout) onInteraction()
+                            onSeekForward()
+                        },
+                        onTogglePlayback = {
+                            if (!useLegacyLayout) onInteraction()
+                            onTogglePlayback()
+                        },
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(bottom = centerBottomPadding),
+                    )
+                }
+            }
+
+            if (showPlaybackControls && useLegacyLayout) {
                 ProgressControls(
+                    isLive = isLive,
+                    onNextEpisodeClick = onNextEpisodeClick,
                     playbackSnapshot = playbackSnapshot,
                     displayedPositionMs = displayedPositionMs,
                     metrics = metrics,
@@ -201,14 +274,68 @@ internal fun PlayerControlsShell(
                     onAudioClick = onAudioClick,
                     onSourcesClick = onSourcesClick,
                     onEpisodesClick = onEpisodesClick,
-                    onNextEpisodeClick = onNextEpisodeClick,
-                    isLive = isLive,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                         .padding(horizontal = metrics.horizontalPadding)
                         .padding(bottom = metrics.sliderBottomOffset),
                 )
+            }
+            if (showPlaybackControls && !useLegacyLayout) {
+                Column(
+                    modifier = Modifier
+                        .onSizeChanged { size -> timelineHeight = with(density) { size.height.toDp() } }
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .windowInsetsPadding(playerTimelineBottomInsets(metrics))
+                        .padding(horizontal = metrics.horizontalPadding),
+                ) {
+                    if (!hideDetails) {
+                        PlayerTimelineDetails(
+                            title = title,
+                            seasonNumber = seasonNumber,
+                            episodeNumber = episodeNumber,
+                            episodeTitle = episodeTitle,
+                            releaseInfo = releaseInfo,
+                            streamTitle = streamTitle,
+                            providerName = providerName,
+                            isPlaying = playbackSnapshot.isPlaying,
+                            metrics = metrics,
+                        )
+                    }
+                    if (isLive) {
+                        LiveBadgeRow(metrics = metrics)
+                    } else {
+                        PlayerTimeline(
+                            snapshot = playbackSnapshot,
+                            displayedPositionMs = displayedPositionMs,
+                            onScrubChange = onScrubChange,
+                            onScrubFinished = {
+                                onInteraction()
+                                onScrubFinished(it)
+                            },
+                        )
+                    }
+                    PlayerControlActions(
+                        playbackSnapshot = playbackSnapshot,
+                        displayedPositionMs = displayedPositionMs,
+                        showRemainingTime = showRemainingTime,
+                        onRuntimeClick = onRuntimeClick,
+                        metrics = metrics,
+                        resizeMode = resizeMode,
+                        onSubtitleClick = onSubtitleClick,
+                        onAudioClick = onAudioClick,
+                        onSourcesClick = onSourcesClick,
+                        onEpisodesClick = onEpisodesClick,
+                        onNextEpisodeClick = onNextEpisodeClick,
+                        onSpeedClick = onSpeedClick,
+                        onResizeModeClick = onResizeModeClick,
+                        onVideoSettingsClick = onVideoSettingsClick,
+                        onOpenInExternalPlayer = onOpenInExternalPlayer,
+                        onSubmitIntroClick = onSubmitIntroClick,
+                        onInteraction = onInteraction,
+                    )
+                }
             }
         }
     }
@@ -339,7 +466,7 @@ private fun PlayerHeader(
                     }
                     if (onOpenInExternalPlayer != null) {
                         PlayerHeaderIconButton(
-                            icon = Icons.AutoMirrored.Rounded.OpenInNew,
+                            icon = Icons.Filled.SwapHoriz,
                             contentDescription = stringResource(Res.string.streams_open_external_player),
                             buttonSize = metrics.headerIconSize + 16.dp,
                             iconSize = metrics.headerIconSize,
@@ -376,7 +503,7 @@ private fun PlayerHeader(
                     )
                 }
             }
-            // Same slot as the action buttons, which fade out while this is on screen —
+            // Fork: same slot as the action buttons, which fade out while this is on screen —
             // the mirror of the parental guide occupying the leading edge.
             StreamInfoOverlay(
                 lines = streamInfoLines,
@@ -390,7 +517,7 @@ private fun PlayerHeader(
 }
 
 @Composable
-private fun PlayerHeaderIconButton(
+internal fun PlayerHeaderIconButton(
     icon: ImageVector,
     contentDescription: String,
     buttonSize: androidx.compose.ui.unit.Dp,
@@ -473,7 +600,7 @@ private fun SideControlButton(
 }
 
 @Composable
-private fun PlayPauseControlButton(
+internal fun PlayPauseControlButton(
     isPlaying: Boolean,
     isBuffering: Boolean,
     metrics: PlayerLayoutMetrics,
@@ -512,6 +639,8 @@ private fun PlayPauseControlButton(
 
 @Composable
 private fun ProgressControls(
+    isLive: Boolean,
+    onNextEpisodeClick: (() -> Unit)?,
     playbackSnapshot: PlayerPlaybackSnapshot,
     displayedPositionMs: Long,
     metrics: PlayerLayoutMetrics,
@@ -524,50 +653,26 @@ private fun ProgressControls(
     onAudioClick: () -> Unit,
     onSourcesClick: (() -> Unit)? = null,
     onEpisodesClick: (() -> Unit)? = null,
-    onNextEpisodeClick: (() -> Unit)? = null,
-    isLive: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    val durationMs = playbackSnapshot.durationMs.coerceAtLeast(1L)
     val aspectRatioPainter = appIconPainter(AppIconResource.PlayerAspectRatio)
     val subtitlesPainter = appIconPainter(AppIconResource.PlayerSubtitles)
     val audioPainter = appIconPainter(AppIconResource.PlayerAudioFilled)
+    val sourcePainter = appIconPainter(AppIconResource.PlayerSource)
+    val episodesPainter = appIconPainter(AppIconResource.PlayerEpisodes)
 
     Column(modifier = modifier) {
         if (isLive) {
-            // Live has no finite timeline — show a LIVE badge instead of a scrubber (TV parity).
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp)
-                    .padding(top = 4.dp, bottom = 8.dp),
-                horizontalArrangement = Arrangement.Start,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                LiveBadge(fontSize = metrics.timeSize)
-            }
+            // Fork: live has no finite timeline — a LIVE badge instead of a scrubber (TV parity).
+            LiveBadgeRow(metrics = metrics)
         } else {
-            Slider(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(metrics.sliderTouchHeight)
-                    .graphicsLayer(scaleY = metrics.sliderScaleY),
-                value = displayedPositionMs.coerceIn(0L, durationMs).toFloat(),
-                onValueChange = { value -> onScrubChange(value.toLong()) },
-                onValueChangeFinished = { onScrubFinished(displayedPositionMs.coerceIn(0L, durationMs)) },
-                valueRange = 0f..durationMs.toFloat(),
+            PlayerSeekBar(
+                durationMs = playbackSnapshot.durationMs,
+                displayedPositionMs = displayedPositionMs,
+                metrics = metrics,
+                onScrubChange = onScrubChange,
+                onScrubFinished = onScrubFinished,
             )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp)
-                    .padding(top = 4.dp, bottom = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TimePill(text = formatPlaybackTime(displayedPositionMs), fontSize = metrics.timeSize)
-                TimePill(text = formatPlaybackTime(durationMs), fontSize = metrics.timeSize)
-            }
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -583,6 +688,7 @@ private fun ProgressControls(
                 ),
             ) {
                 Row(
+                    // Fork: the pill row scrolls on narrow phones once Next is added.
                     modifier = Modifier
                         .horizontalScroll(rememberScrollState())
                         .padding(horizontal = 4.dp, vertical = 2.dp),
@@ -596,7 +702,7 @@ private fun ProgressControls(
                     )
                     PlayerActionPillButton(
                         label = formatPlaybackSpeedLabel(playbackSnapshot.playbackSpeed),
-                        icon = Icons.Rounded.Speed,
+                        icon = Icons.Filled.Speed,
                         onClick = onSpeedClick,
                     )
                     PlayerActionPillButton(
@@ -612,14 +718,14 @@ private fun ProgressControls(
                     if (onSourcesClick != null) {
                         PlayerActionPillButton(
                             label = stringResource(Res.string.compose_player_sources),
-                            icon = Icons.Rounded.SwapHoriz,
+                            painter = sourcePainter,
                             onClick = onSourcesClick,
                         )
                     }
                     if (onEpisodesClick != null) {
                         PlayerActionPillButton(
                             label = stringResource(Res.string.compose_player_episodes),
-                            icon = Icons.Rounded.VideoLibrary,
+                            painter = episodesPainter,
                             onClick = onEpisodesClick,
                         )
                     }
@@ -637,12 +743,80 @@ private fun ProgressControls(
 }
 
 @Composable
+internal fun PlayerSeekBar(
+    durationMs: Long,
+    displayedPositionMs: Long,
+    metrics: PlayerLayoutMetrics,
+    onScrubChange: (Long) -> Unit,
+    onScrubFinished: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val seekDurationMs = durationMs.coerceAtLeast(1L)
+    val seekDescription = stringResource(Res.string.player_seek_position)
+    Column(modifier = modifier) {
+        Slider(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(metrics.sliderTouchHeight)
+                .graphicsLayer(scaleY = metrics.sliderScaleY)
+                .semantics { contentDescription = seekDescription },
+            value = displayedPositionMs.coerceIn(0L, seekDurationMs).toFloat(),
+            onValueChange = { value -> onScrubChange(value.toLong()) },
+            onValueChangeFinished = { onScrubFinished(displayedPositionMs.coerceIn(0L, seekDurationMs)) },
+            enabled = durationMs > 0L,
+            valueRange = 0f..seekDurationMs.toFloat(),
+            track = { sliderState -> PlayerProgressTrack(sliderState) },
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp)
+                .padding(top = 4.dp, bottom = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TimePill(text = formatPlaybackTime(displayedPositionMs), fontSize = metrics.timeSize)
+            TimePill(text = formatPlaybackTime(durationMs), fontSize = metrics.timeSize)
+        }
+    }
+}
+
+@Composable
+private fun PlayerProgressTrack(sliderState: SliderState) {
+    val palette = MaterialTheme.themePalette
+    val inactiveTrackColors = SliderDefaults.colors(
+        activeTrackColor = Color.Transparent,
+        disabledActiveTrackColor = Color.Transparent,
+    )
+    val activeTrackColors = SliderDefaults.colors(
+        activeTrackColor = Color.White,
+        inactiveTrackColor = Color.Transparent,
+        disabledActiveTrackColor = Color.White,
+        disabledInactiveTrackColor = Color.Transparent,
+    )
+
+    Box {
+        SliderDefaults.Track(
+            sliderState = sliderState,
+            colors = inactiveTrackColors,
+        )
+        SliderDefaults.Track(
+            sliderState = sliderState,
+            modifier = Modifier.gradientMask(palette.accentBrush()),
+            colors = activeTrackColors,
+        )
+    }
+}
+
+@Composable
 internal fun LockedPlayerOverlay(
     playbackSnapshot: PlayerPlaybackSnapshot,
     displayedPositionMs: Long,
     metrics: PlayerLayoutMetrics,
     horizontalSafePadding: androidx.compose.ui.unit.Dp,
     onUnlock: () -> Unit,
+    useLegacyLayout: Boolean = false,
+    showRemainingTime: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val durationMs = playbackSnapshot.durationMs.coerceAtLeast(1L)
@@ -708,21 +882,12 @@ internal fun LockedPlayerOverlay(
                 .padding(horizontal = horizontalSafePadding + metrics.horizontalPadding)
                 .padding(bottom = metrics.sliderBottomOffset),
         ) {
-            // Live streams report no finite duration (engine zeroes it) — show a LIVE badge
-            // instead of a bounded scrubber. The locked overlay only appears mid-playback, so
-            // a VOD always has a real duration here; durationMs<=0 reliably means live.
+            // Fork: live streams report no finite duration (engine zeroes it) — show a LIVE badge
+            // instead of a bounded scrubber. The locked overlay only appears mid-playback, so a
+            // VOD always has a real duration here; durationMs<=0 reliably means live.
             if (playbackSnapshot.durationMs <= 0L) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp)
-                        .padding(top = 4.dp),
-                    horizontalArrangement = Arrangement.Start,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    LiveBadge(fontSize = metrics.timeSize)
-                }
-            } else {
+                LiveBadgeRow(metrics = metrics)
+            } else if (useLegacyLayout) {
                 Slider(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -746,39 +911,22 @@ internal fun LockedPlayerOverlay(
                     TimePill(text = formatPlaybackTime(displayedPositionMs), fontSize = metrics.timeSize)
                     TimePill(text = formatPlaybackTime(durationMs), fontSize = metrics.timeSize)
                 }
+            } else {
+                PlayerTimeline(
+                    snapshot = playbackSnapshot,
+                    displayedPositionMs = displayedPositionMs,
+                    onScrubChange = {},
+                    onScrubFinished = {},
+                    enabled = false,
+                )
+                Text(
+                    text = formatPlaybackRuntime(displayedPositionMs, playbackSnapshot.durationMs, showRemainingTime),
+                    style = MaterialTheme.nuvioTypeScale.bodyMd.copy(fontSize = (metrics.timeSize.value + 2).sp),
+                    color = Color.White.copy(alpha = 0.9f),
+                    modifier = Modifier.align(Alignment.End),
+                )
             }
         }
-    }
-}
-
-@Composable
-private fun LiveBadge(
-    fontSize: androidx.compose.ui.unit.TextUnit,
-) {
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color.Black.copy(alpha = 0.5f))
-            .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(Color(0xFFE53935)),
-        )
-        Text(
-            text = "LIVE",
-            style = MaterialTheme.nuvioTypeScale.labelSm.copy(
-                fontSize = fontSize,
-                lineHeight = fontSize * 1.25f,
-                fontWeight = FontWeight.SemiBold,
-            ),
-            color = Color.White,
-        )
     }
 }
 
@@ -843,6 +991,51 @@ private fun PlayerActionPillButton(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             softWrap = false,
+        )
+    }
+}
+
+/** Fork: the LIVE badge row that stands in for the scrubber on live streams. */
+@Composable
+private fun LiveBadgeRow(metrics: PlayerLayoutMetrics) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp)
+            .padding(top = 4.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.Start,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        LiveBadge(fontSize = metrics.timeSize)
+    }
+}
+@Composable
+private fun LiveBadge(
+    fontSize: androidx.compose.ui.unit.TextUnit,
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.Black.copy(alpha = 0.5f))
+            .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(Color(0xFFE53935)),
+        )
+        Text(
+            text = "LIVE",
+            style = MaterialTheme.nuvioTypeScale.labelSm.copy(
+                fontSize = fontSize,
+                lineHeight = fontSize * 1.25f,
+                fontWeight = FontWeight.SemiBold,
+            ),
+            color = Color.White,
         )
     }
 }

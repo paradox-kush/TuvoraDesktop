@@ -19,5 +19,6 @@ actual object AppFeaturePolicy {
     actual val imdbRatingLogoEnabled: Boolean = false
     actual val mediaPlaybackForegroundServiceEnabled: Boolean = false
     actual val debugBackendSwitcherEnabled: Boolean = AppBuildConfig.IS_DEBUG_BUILD
+    actual val downloadForegroundServiceEnabled: Boolean = false
     actual val customServerConnectionsEnabled: Boolean = false
 }

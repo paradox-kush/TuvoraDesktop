@@ -2,9 +2,11 @@ package com.nuvio.app.features.home.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.MutatePriority
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.stopScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -30,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -55,14 +59,18 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.isDesktop
 import com.nuvio.app.core.ui.FullscreenActionButton
+import com.nuvio.app.core.ui.DesktopBackdropVerticalBias
 import com.nuvio.app.core.ui.NuvioDesktopImageScaling
 import com.nuvio.app.core.ui.NuvioAsyncImage as AsyncImage
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.isFullscreenActionSupported
 import com.nuvio.app.core.format.formatReleaseDateForDisplay
 import com.nuvio.app.core.ui.heroStretchHeight
+import com.nuvio.app.core.ui.ScreenActivityEffect
 import com.nuvio.app.core.ui.heroStretchZoom
+import com.nuvio.app.core.ui.ultrawideViewportProgress
 import com.nuvio.app.features.home.MetaPreview
+import com.nuvio.app.features.tmdb.originalTmdbImageUrl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -85,16 +93,24 @@ private const val HERO_AUTO_SCROLL_INTERVAL_MS = 8_000L
 private const val MOBILE_HERO_VIEWPORT_RATIO = 0.82f
 private const val MOBILE_HERO_MIN_HEIGHT_DP = 360f
 private const val MOBILE_HERO_MAX_HEIGHT_DP = 760f
+private const val ULTRAWIDE_HERO_VIEWPORT_HEIGHT_RATIO = 1f
+private const val DESKTOP_HERO_ULTRAWIDE_HORIZONTAL_PADDING_DP = 120f
+private const val DESKTOP_HERO_ULTRAWIDE_BOTTOM_PADDING_DP = 192f
+private const val DESKTOP_HERO_TOP_FADE_HEIGHT_DP = 160f
+private const val DESKTOP_HERO_BOTTOM_FADE_HEIGHT_DP = 300f
 
 internal data class HomeHeroLayout(
     val isTablet: Boolean,
     val heroHeight: Dp,
     val contentMaxWidth: Dp,
+    val contentContainerMaxWidth: Dp,
     val contentWidthFraction: Float,
     val contentHorizontalPadding: Dp,
     val contentVerticalPadding: Dp,
+    val topFadeHeight: Dp,
     val bottomFadeHeight: Dp,
     val logoWidthFraction: Float,
+    val backgroundMotionStrength: Float,
 )
 
 @Composable
@@ -110,22 +126,41 @@ fun HomeHeroSection(
 ) {
     if (items.isEmpty()) return
 
-    val pagerState = rememberPagerState(pageCount = { items.size })
+    val pagerState = key(items.size) {
+        rememberPagerState(
+            initialPage = if (items.size > 1) {
+                val middle = Int.MAX_VALUE / 2
+                middle - middle % items.size
+            } else {
+                0
+            },
+            pageCount = { if (items.size > 1) Int.MAX_VALUE else items.size },
+        )
+    }
     val coroutineScope = rememberCoroutineScope()
     var pagerDragActive by remember { mutableStateOf(false) }
-    val autoScrollPage = pagerState.currentPage
+    val autoScrollPage = pagerState.settledPage
 
-    LaunchedEffect(autoScrollPage, items.size) {
-        if (items.size <= 1) return@LaunchedEffect
+    LaunchedEffect(pagerState) {
+        pagerState.scrollToPage(pagerState.currentPage)
+    }
+
+    ScreenActivityEffect(pagerState) { active ->
+        if (!active) {
+            pagerState.stopScroll(MutatePriority.PreventUserInput)
+            pagerState.scrollToPage(pagerState.currentPage)
+        }
+    }
+
+    ScreenActivityEffect(autoScrollPage, items.size) { active ->
+        if (!active || items.size <= 1) return@ScreenActivityEffect
         delay(HERO_AUTO_SCROLL_INTERVAL_MS)
         while (pagerState.isScrollInProgress) {
             delay(100L)
         }
 
-        val nextPage = (pagerState.currentPage + 1) % items.size
-        coroutineScope.launch {
-            pagerState.animateScrollToPage(nextPage)
-        }
+        val nextPage = pagerState.currentPage + 1
+        pagerState.animateScrollToPage(nextPage)
     }
 
     BoxWithConstraints(
@@ -179,7 +214,10 @@ fun HomeHeroSection(
                     heroHeightPx = heroHeightPx,
                     stretchPx = stretchPx,
                     includePagerNeighbors = pagerDragActive,
-                    contentHorizontalPadding = sectionPadding ?: layout.contentHorizontalPadding,
+                    contentHorizontalPadding = maxOf(
+                        sectionPadding ?: layout.contentHorizontalPadding,
+                        layout.contentHorizontalPadding,
+                    ),
                     coroutineScope = coroutineScope,
                     onItemClick = onItemClick,
                 )
@@ -219,32 +257,52 @@ private fun HeroBackgroundLayers(
         includePagerNeighbors = includePagerNeighbors,
     )
 
+    val backgroundMotionStrength = if (desktopFrame) layout.backgroundMotionStrength else 1f
     layerPages.forEach { page ->
-        val item = items[page]
-        AsyncImage(
-            model = item.banner ?: item.poster,
-            contentDescription = item.name,
-            modifier = Modifier
+        val item = items[page % items.size]
+        val imageUrl = item.banner ?: item.poster
+        val backgroundModifier = if (desktopFrame) {
+            Modifier
+                .fillMaxSize()
+                .heroStretchZoom { stretchPx() * backgroundMotionStrength }
+        } else {
+            Modifier
                 .fillMaxWidth()
                 .height(layout.heroHeight)
                 .heroStretchZoom(stretchPx)
+        }
+        AsyncImage(
+            model = if (desktopFrame) originalTmdbImageUrl(imageUrl) else imageUrl,
+            contentDescription = item.name,
+            modifier = backgroundModifier
                 .graphicsLayer {
                     val pageOffset = heroPageOffset(pagerState, page)
                     val scrollOffsetPx = heroScrollOffsetPx(listState, heroHeightPx)
-                    val scrollScale = heroBackgroundScrollScale(scrollOffsetPx)
+                    val scrollScale = if (desktopFrame) {
+                        1f + (heroBackgroundScrollScale(scrollOffsetPx) - 1f) * backgroundMotionStrength
+                    } else {
+                        heroBackgroundScrollScale(scrollOffsetPx)
+                    }
 
                     alpha = heroPageVisibility(pageOffset)
                     translationX = -pageOffset * heroWidthPx * HERO_BACKGROUND_PARALLAX
                     translationY = if (desktopFrame) {
-                        heroDesktopBackgroundScrollTranslationY(scrollOffsetPx)
+                        heroDesktopBackgroundScrollTranslationY(scrollOffsetPx) * backgroundMotionStrength
                     } else {
                         heroBackgroundScrollTranslationY(scrollOffsetPx)
                     }
-                    val baseScale = if (desktopFrame) 1.04f else HERO_BACKGROUND_SCALE
+                    val baseScale = if (desktopFrame) 1f else HERO_BACKGROUND_SCALE
                     scaleX = baseScale * scrollScale
                     scaleY = baseScale * scrollScale
                 },
-            alignment = if (desktopFrame || !layout.isTablet) Alignment.Center else Alignment.TopCenter,
+            alignment = when {
+                desktopFrame -> BiasAlignment(
+                    horizontalBias = 0f,
+                    verticalBias = DesktopBackdropVerticalBias,
+                )
+                layout.isTablet -> Alignment.TopCenter
+                else -> Alignment.Center
+            },
             contentScale = ContentScale.Crop,
             desktopImageScaling = NuvioDesktopImageScaling.Disabled,
         )
@@ -276,7 +334,7 @@ private fun HeroContentLayers(
             },
         ) {
             HeroContentBlock(
-                item = items[page],
+                item = items[page % items.size],
                 layout = layout,
                 onItemClick = onItemClick,
             )
@@ -292,12 +350,12 @@ private fun rememberHeroLayerPages(
 ): List<Int> {
     if (itemCount <= 0) return emptyList()
 
-    val currentPage = pagerState.currentPage.coerceIn(0, itemCount - 1)
+    val currentPage = pagerState.currentPage
     val includeNeighbors = includePagerNeighbors || pagerState.isScrollInProgress
     return remember(currentPage, includeNeighbors, itemCount) {
         heroLayerPages(
             currentPage = currentPage,
-            itemCount = itemCount,
+            pageCount = pagerState.pageCount,
             includeNeighbors = includeNeighbors,
         )
     }
@@ -305,13 +363,13 @@ private fun rememberHeroLayerPages(
 
 private fun heroLayerPages(
     currentPage: Int,
-    itemCount: Int,
+    pageCount: Int,
     includeNeighbors: Boolean,
 ): List<Int> {
-    if (!includeNeighbors || itemCount == 1) return listOf(currentPage)
+    if (!includeNeighbors || pageCount == 1) return listOf(currentPage)
 
     val neighbors = listOf(currentPage - 1, currentPage + 1)
-        .map { page -> page.coerceIn(0, itemCount - 1) }
+        .map { page -> page.coerceIn(0, pageCount - 1) }
         .filter { page -> page != currentPage }
         .distinct()
     return neighbors + currentPage
@@ -344,7 +402,7 @@ private fun HeroDesktopContentLayers(
                 },
         ) {
             DesktopHeroContentBlock(
-                item = items[page],
+                item = items[page % items.size],
                 layout = layout,
                 onItemClick = onItemClick,
             )
@@ -503,15 +561,14 @@ private fun DesktopHomeHeroFrame(
 
         Box(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
+                .height(layout.topFadeHeight)
+                .align(Alignment.TopCenter)
                 .background(
                     Brush.verticalGradient(
-                        colorStops = arrayOf(
-                            0.00f to Color.Transparent,
-                            0.18f to backgroundColor.copy(alpha = opacity.subtle),
-                            0.46f to backgroundColor.copy(alpha = opacity.overlayLight),
-                            0.78f to backgroundColor.copy(alpha = opacity.overlayHeavy),
-                            1.00f to backgroundColor,
+                        colors = listOf(
+                            backgroundColor.copy(alpha = opacity.overlayHeavy),
+                            Color.Transparent,
                         ),
                     ),
                 ),
@@ -523,18 +580,13 @@ private fun DesktopHomeHeroFrame(
                 .background(
                     Brush.horizontalGradient(
                         colorStops = arrayOf(
-                            0f to backgroundColor,
-                            0.06f to backgroundColor,
-                            0.10f to backgroundColor.copy(alpha = 0.96f),
-                            0.14f to backgroundColor.copy(alpha = 0.90f),
-                            0.18f to backgroundColor.copy(alpha = 0.82f),
-                            0.22f to backgroundColor.copy(alpha = 0.72f),
-                            0.27f to backgroundColor.copy(alpha = 0.58f),
-                            0.32f to backgroundColor.copy(alpha = 0.44f),
-                            0.38f to backgroundColor.copy(alpha = 0.30f),
-                            0.44f to backgroundColor.copy(alpha = 0.18f),
-                            0.50f to backgroundColor.copy(alpha = 0.08f),
-                            0.58f to Color.Transparent,
+                            0.00f to backgroundColor.copy(alpha = 0.96f),
+                            0.08f to backgroundColor.copy(alpha = 0.90f),
+                            0.16f to backgroundColor.copy(alpha = 0.76f),
+                            0.26f to backgroundColor.copy(alpha = 0.54f),
+                            0.36f to backgroundColor.copy(alpha = 0.30f),
+                            0.46f to backgroundColor.copy(alpha = 0.12f),
+                            0.54f to Color.Transparent,
                         ),
                     ),
                 ),
@@ -557,52 +609,59 @@ private fun DesktopHomeHeroFrame(
 
         Box(
             modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(
-                    start = contentHorizontalPadding,
-                    end = space.s32,
-                    bottom = space.s40,
-                )
-                .fillMaxWidth(layout.contentWidthFraction)
-                .widthIn(max = layout.contentMaxWidth),
-            contentAlignment = Alignment.CenterStart,
+                .align(Alignment.Center)
+                .widthIn(max = layout.contentContainerMaxWidth)
+                .fillMaxSize(),
         ) {
-            HeroDesktopContentLayers(
-                items = items,
-                pagerState = pagerState,
-                layout = layout,
-                heroWidthPx = heroWidthPx,
-                onItemClick = onItemClick,
-                includePagerNeighbors = includePagerNeighbors,
-            )
-        }
-
-        if (isFullscreenActionSupported) {
-            FullscreenActionButton(
+            Box(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
+                    .align(Alignment.BottomStart)
                     .padding(
-                        top = space.s32,
+                        start = contentHorizontalPadding,
+                        end = space.s32,
+                        bottom = layout.contentVerticalPadding,
+                    )
+                    .fillMaxWidth(layout.contentWidthFraction)
+                    .widthIn(max = layout.contentMaxWidth),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                HeroDesktopContentLayers(
+                    items = items,
+                    pagerState = pagerState,
+                    layout = layout,
+                    heroWidthPx = heroWidthPx,
+                    onItemClick = onItemClick,
+                    includePagerNeighbors = includePagerNeighbors,
+                )
+            }
+
+            if (isFullscreenActionSupported) {
+                FullscreenActionButton(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(
+                            top = space.s32,
+                            end = contentHorizontalPadding,
+                        ),
+                    buttonSize = 48.dp,
+                    iconSize = 24.dp,
+                    containerColor = colorScheme.surfaceVariant.copy(alpha = 0.82f),
+                    contentColor = colorScheme.onSurface,
+                )
+            }
+
+            HeroPageIndicatorRow(
+                itemCount = items.size,
+                pagerState = pagerState,
+                coroutineScope = coroutineScope,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(
                         end = contentHorizontalPadding,
+                        bottom = space.s40,
                     ),
-                buttonSize = 48.dp,
-                iconSize = 24.dp,
-                containerColor = colorScheme.surfaceVariant.copy(alpha = 0.82f),
-                contentColor = colorScheme.onSurface,
             )
         }
-
-        HeroPageIndicatorRow(
-            itemCount = items.size,
-            pagerState = pagerState,
-            coroutineScope = coroutineScope,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(
-                    end = contentHorizontalPadding,
-                    bottom = space.s40,
-                ),
-        )
     }
 }
 
@@ -621,12 +680,13 @@ private fun HeroPageIndicatorRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         repeat(itemCount) { index ->
-            val activeFraction = heroPageVisibility(pagerState, index)
+            val page = heroPageForItem(pagerState.currentPage, index, itemCount)
+            val activeFraction = heroPageVisibility(pagerState, page)
             Box(
                 modifier = Modifier
                     .clickable {
                         coroutineScope.launch {
-                            pagerState.animateScrollToPage(index)
+                            pagerState.animateScrollToPage(heroPageForItem(pagerState.currentPage, index, itemCount))
                         }
                     }
                     .clip(CircleShape)
@@ -639,6 +699,14 @@ private fun HeroPageIndicatorRow(
             )
         }
     }
+}
+
+internal fun heroPageForItem(currentPage: Int, itemIndex: Int, itemCount: Int): Int {
+    val page = currentPage.toLong() - currentPage % itemCount + itemIndex
+    return listOf(page - itemCount, page, page + itemCount)
+        .filter { it in 0L until Int.MAX_VALUE.toLong() }
+        .minBy { abs(it - currentPage) }
+        .toInt()
 }
 
 private fun heroPageOffset(
@@ -657,16 +725,16 @@ private fun currentHeroItem(
     items: List<MetaPreview>,
     pagerState: PagerState,
 ): MetaPreview {
-    val currentPage = pagerState.currentPage.coerceIn(0, items.lastIndex)
+    val currentPage = pagerState.currentPage
     val currentVisiblePages = heroLayerPages(
         currentPage = currentPage,
-        itemCount = items.size,
+        pageCount = pagerState.pageCount,
         includeNeighbors = true,
     )
     val selectedPage = currentVisiblePages.maxBy { page ->
         heroPageVisibility(pagerState, page)
     }
-    return items[selectedPage]
+    return items[selectedPage % items.size]
 }
 
 @Composable
@@ -969,47 +1037,81 @@ internal fun homeHeroLayout(
     viewportHeightDp: Float? = null,
     mobileBelowSectionHeightHintDp: Float? = null,
     preferDesktopLayout: Boolean = false,
-): HomeHeroLayout =
-    when {
-        preferDesktopLayout -> HomeHeroLayout(
-            isTablet = true,
-            heroHeight = (maxWidthDp * 0.56f).dp.coerceIn(460.dp, 660.dp),
-            contentMaxWidth = 760.dp,
-            contentWidthFraction = 0.58f,
-            contentHorizontalPadding = if (maxWidthDp >= 840f) 56.dp else 32.dp,
-            contentVerticalPadding = 40.dp,
-            bottomFadeHeight = 260.dp,
-            logoWidthFraction = 0.74f,
+): HomeHeroLayout {
+    if (preferDesktopLayout) {
+        val heroHeight = desktopHeroHeight(
+            maxWidthDp = maxWidthDp,
+            viewportHeightDp = viewportHeightDp,
         )
+        val ultrawideProgress = ultrawideViewportProgress(
+            widthDp = maxWidthDp,
+            heightDp = viewportHeightDp,
+        )
+
+        val standardHorizontalPadding = homeSectionHorizontalPaddingForWidth(maxWidthDp).value
+
+        return HomeHeroLayout(
+            isTablet = true,
+            heroHeight = heroHeight,
+            contentMaxWidth = 760.dp,
+            contentContainerMaxWidth = maxWidthDp.dp,
+            contentWidthFraction = 0.58f,
+            contentHorizontalPadding = lerp(
+                start = standardHorizontalPadding,
+                stop = DESKTOP_HERO_ULTRAWIDE_HORIZONTAL_PADDING_DP,
+                fraction = ultrawideProgress,
+            ).dp,
+            contentVerticalPadding = lerp(
+                start = 40f,
+                stop = DESKTOP_HERO_ULTRAWIDE_BOTTOM_PADDING_DP,
+                fraction = ultrawideProgress,
+            ).dp,
+            topFadeHeight = DESKTOP_HERO_TOP_FADE_HEIGHT_DP.dp,
+            bottomFadeHeight = DESKTOP_HERO_BOTTOM_FADE_HEIGHT_DP.dp,
+            logoWidthFraction = 0.74f,
+            backgroundMotionStrength = 1f - ultrawideProgress,
+        )
+    }
+
+    return when {
         maxWidthDp >= 1200f -> HomeHeroLayout(
             isTablet = true,
             heroHeight = (maxWidthDp * 0.42f).dp.coerceIn(360.dp, 440.dp),
             contentMaxWidth = 640.dp,
+            contentContainerMaxWidth = maxWidthDp.dp,
             contentWidthFraction = 0.56f,
             contentHorizontalPadding = 56.dp,
             contentVerticalPadding = 22.dp,
+            topFadeHeight = 0.dp,
             bottomFadeHeight = 190.dp,
             logoWidthFraction = 0.58f,
+            backgroundMotionStrength = 1f,
         )
         maxWidthDp >= 840f -> HomeHeroLayout(
             isTablet = true,
             heroHeight = (maxWidthDp * 0.46f).dp.coerceIn(340.dp, 420.dp),
             contentMaxWidth = 560.dp,
+            contentContainerMaxWidth = maxWidthDp.dp,
             contentWidthFraction = 0.62f,
             contentHorizontalPadding = 40.dp,
             contentVerticalPadding = 20.dp,
+            topFadeHeight = 0.dp,
             bottomFadeHeight = 180.dp,
             logoWidthFraction = 0.56f,
+            backgroundMotionStrength = 1f,
         )
         maxWidthDp >= 600f -> HomeHeroLayout(
             isTablet = true,
             heroHeight = (maxWidthDp * 0.58f).dp.coerceIn(320.dp, 380.dp),
             contentMaxWidth = 520.dp,
+            contentContainerMaxWidth = maxWidthDp.dp,
             contentWidthFraction = 0.72f,
             contentHorizontalPadding = 32.dp,
             contentVerticalPadding = 18.dp,
+            topFadeHeight = 0.dp,
             bottomFadeHeight = 170.dp,
             logoWidthFraction = 0.54f,
+            backgroundMotionStrength = 1f,
         )
         else -> HomeHeroLayout(
             isTablet = false,
@@ -1019,13 +1121,40 @@ internal fun homeHeroLayout(
                 mobileBelowSectionHeightHintDp = mobileBelowSectionHeightHintDp,
             ),
             contentMaxWidth = 480.dp,
+            contentContainerMaxWidth = maxWidthDp.dp,
             contentWidthFraction = 1f,
             contentHorizontalPadding = 24.dp,
             contentVerticalPadding = 16.dp,
+            topFadeHeight = 0.dp,
             bottomFadeHeight = 220.dp,
             logoWidthFraction = 0.62f,
+            backgroundMotionStrength = 1f,
         )
     }
+}
+
+private fun desktopHeroHeight(
+    maxWidthDp: Float,
+    viewportHeightDp: Float?,
+): Dp {
+    val baselineHeight = (maxWidthDp * 0.56f).dp.coerceIn(460.dp, 660.dp)
+    val viewportHeight = viewportHeightDp ?: return baselineHeight
+    val ultrawideProgress = ultrawideViewportProgress(
+        widthDp = maxWidthDp,
+        heightDp = viewportHeight,
+    )
+    if (ultrawideProgress <= 0f) return baselineHeight
+
+    val ultrawideHeight = (viewportHeight * ULTRAWIDE_HERO_VIEWPORT_HEIGHT_RATIO).dp
+        .coerceAtLeast(baselineHeight)
+    return (
+        baselineHeight.value +
+            (ultrawideHeight.value - baselineHeight.value) * ultrawideProgress
+        ).dp
+}
+
+private fun lerp(start: Float, stop: Float, fraction: Float): Float =
+    start + (stop - start) * fraction
 
 private fun mobileHeroHeight(
     maxWidthDp: Float,
@@ -1034,7 +1163,11 @@ private fun mobileHeroHeight(
 ): Dp {
     val viewportDrivenHeight = viewportHeightDp?.let { (it * MOBILE_HERO_VIEWPORT_RATIO).dp }
     val widthFallbackHeight = (maxWidthDp * 1.16f).dp
-    val baseHeight = viewportDrivenHeight ?: widthFallbackHeight
+    val baseHeight = if (mobileBelowSectionHeightHintDp == null) {
+        viewportDrivenHeight?.coerceAtMost(widthFallbackHeight) ?: widthFallbackHeight
+    } else {
+        viewportDrivenHeight ?: widthFallbackHeight
+    }
 
     val maxAllowedFromViewportDp = if (viewportHeightDp != null && mobileBelowSectionHeightHintDp != null) {
         viewportHeightDp - mobileBelowSectionHeightHintDp
@@ -1125,7 +1258,7 @@ private fun Modifier.homeHeroPagerGesture(
                         if (dragging) {
                             val targetPage = resolveHeroTargetPage(
                                 startPage = startPage,
-                                itemCount = itemCount,
+                                pageCount = pagerState.pageCount,
                                 totalDx = totalDx,
                                 velocityX = velocityTracker.calculateVelocity().x,
                                 widthPx = widthPx,
@@ -1176,7 +1309,7 @@ private fun Modifier.homeHeroPagerGesture(
 
 private fun resolveHeroTargetPage(
     startPage: Int,
-    itemCount: Int,
+    pageCount: Int,
     totalDx: Float,
     velocityX: Float,
     widthPx: Float,
@@ -1185,10 +1318,10 @@ private fun resolveHeroTargetPage(
         abs(velocityX) > HERO_SWIPE_VELOCITY_THRESHOLD
     if (!thresholdPassed) return startPage
 
-    val currentPage = startPage.coerceIn(0, itemCount - 1)
+    val currentPage = startPage.coerceIn(0, pageCount - 1)
     return when {
-        totalDx > 0f -> if (currentPage == 0) itemCount - 1 else currentPage - 1
-        totalDx < 0f -> if (currentPage == itemCount - 1) 0 else currentPage + 1
+        totalDx > 0f -> (currentPage - 1).coerceAtLeast(0)
+        totalDx < 0f -> (currentPage + 1).coerceAtMost(pageCount - 1)
         else -> currentPage
     }
 }

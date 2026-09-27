@@ -362,6 +362,7 @@ class PlayerTrackSelectionTest {
 
         assertNull(persistedAddonSubtitleUrlForItem(preference, "series|1|2"))
     }
+
     private fun audioTrack(language: String?) = AudioTrack(
         index = 0,
         id = "audio-0",

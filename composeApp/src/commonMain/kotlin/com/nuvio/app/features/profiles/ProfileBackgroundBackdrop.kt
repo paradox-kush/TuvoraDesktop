@@ -22,6 +22,7 @@ import com.nuvio.app.features.membership.resolveProfileBackground
 @Composable
 fun ProfileBackgroundBackdrop(
     profile: NuvioProfile?,
+    colorOverride: Color? = null,
     modifier: Modifier = Modifier,
 ) {
     val memberAccess by remember {
@@ -29,8 +30,8 @@ fun ProfileBackgroundBackdrop(
         MemberAccessRepository.access
     }.collectAsStateWithLifecycle()
     val backgroundCatalog by ProfileBackgroundRepository.catalog.collectAsStateWithLifecycle()
-    val profileColor = remember(profile?.avatarColorHex) {
-        profile?.avatarColorHex?.let(::parseHexColor) ?: Color(0xFF1E88E5)
+    val profileColor = remember(profile?.avatarColorHex, colorOverride) {
+        colorOverride ?: profile?.avatarColorHex?.let(::parseHexColor) ?: Color(0xFF1E88E5)
     }
     val backgroundSelection = remember(
         profile?.profileBackgroundId,

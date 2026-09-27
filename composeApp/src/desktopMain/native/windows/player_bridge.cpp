@@ -66,6 +66,7 @@ constexpr UINT_PTR NUVIO_TIMER_ID = 0x4E50;
 // thread is wedged; shutdown gives up rather than blocking the caller forever.
 constexpr UINT kUiTaskTimeoutMs = 2000;
 constexpr UINT kShutdownJoinTimeoutMs = 3000;
+constexpr double kMaxVolumePercent = 200.0;
 
 const wchar_t *kMessageWindowClass = L"NuvioPlayerBridgeMessageWindow";
 const wchar_t *kContainerWindowClass = L"NuvioPlayerBridgeContainerWindow";
@@ -991,6 +992,32 @@ public:
         });
     }
 
+    void beginWindowDrag() {
+        if (!containerHwnd) return;
+        HWND rootWindow = GetAncestor(containerHwnd, GA_ROOT);
+        if (!rootWindow || !IsWindow(rootWindow)) return;
+        ReleaseCapture();
+        POINT pt;
+        GetCursorPos(&pt);
+        PostMessageW(rootWindow, WM_NCLBUTTONDOWN, HTCAPTION, MAKELPARAM(pt.x, pt.y));
+    }
+
+    void reparentSurface(HWND newHost) {
+        if (!newHost || !IsWindow(newHost)) return;
+        sendUiTask([self = shared_from_this(), newHost]() {
+            if (self->shuttingDown.load() || !IsWindow(newHost) || !self->containerHwnd) return;
+            self->hostHwnd = newHost;
+            SetParent(self->containerHwnd, newHost);
+            LONG_PTR style = GetWindowLongPtrW(self->containerHwnd, GWL_STYLE);
+            style |= WS_CHILD;
+            style &= ~WS_POPUP;
+            SetWindowLongPtrW(self->containerHwnd, GWL_STYLE, style);
+            self->layoutNativeSubviews();
+            ShowWindow(self->containerHwnd, SW_SHOW);
+            self->focusNativeControls();
+        });
+    }
+
     void setPaused(bool paused) {
         std::lock_guard<std::mutex> lock(mpvMutex);
         if (!mpv) return;
@@ -1034,19 +1061,19 @@ public:
         if (!mpv) return;
         double current = 100.0;
         mpvApi().getProperty(mpv, "volume", MPV_FORMAT_DOUBLE, &current);
-        double next = std::max(0.0, std::min(100.0, current + delta));
+        double next = std::max(0.0, std::min(kMaxVolumePercent, current + delta));
         mpvApi().setProperty(mpv, "volume", MPV_FORMAT_DOUBLE, &next);
     }
 
     void setVolume(double level) {
         std::lock_guard<std::mutex> lock(mpvMutex);
         if (!mpv) return;
-        double next = std::max(0.0, std::min(100.0, level * 100.0));
+        double next = std::max(0.0, std::min(kMaxVolumePercent, level * 100.0));
         mpvApi().setProperty(mpv, "volume", MPV_FORMAT_DOUBLE, &next);
     }
 
     double volume() {
-        return std::max(0.0, std::min(100.0, doubleProperty("volume", 100.0))) / 100.0;
+        return std::max(0.0, std::min(kMaxVolumePercent, doubleProperty("volume", 100.0))) / 100.0;
     }
 
     void setResizeMode(int mode) {
@@ -1712,6 +1739,7 @@ private:
             // holds it — every later load is silently ignored (device-traced on Android TV,
             // 2026-08-26). Canonical embedded-mpv setting.
             setMpvOptionStringLocked("idle", "yes");
+            setMpvOptionStringLocked("volume-max", "200");
             setMpvOptionStringLocked("vo", "gpu-next");
             if (nvidiaRtxSuperResolutionEnabled) {
                 setMpvOptionStringLocked("gpu-api", "d3d11");
@@ -1850,6 +1878,7 @@ private:
         if (!webView) return;
         double duration = doubleProperty("duration", 0.0);
         double position = doubleProperty("time-pos", 0.0);
+        double volumeLevel = volume();
         bool paused = isPaused();
         bool loading = isLoading();
         std::string audioTracks = audioTracksJson();
@@ -1858,6 +1887,7 @@ private:
         std::ostringstream script;
         script << "window.playerUpdate({duration:" << duration
                << ",position:" << position
+               << ",volumeLevel:" << volumeLevel
                << ",paused:" << (paused ? "true" : "false")
                << ",loading:" << (loading ? "true" : "false")
                << ",audioTracks:" << audioTracks
@@ -1895,6 +1925,10 @@ private:
             }
             setPaused(!shouldPlay);
             sendPlayerEvent(type, value);
+            return;
+        }
+        if (type == "dragWindow") {
+            beginWindowDrag();
             return;
         }
         sendPlayerEvent(type, value);
@@ -2434,6 +2468,39 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_requestFocus(JNIEnv *, jobject, jlong handle) {
     auto player = playerFromHandle(handle);
     if (player) player->requestFocus();
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_beginWindowDrag(JNIEnv *, jobject, jlong handle) {
+    auto player = playerFromHandle(handle);
+    if (player) player->beginWindowDrag();
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setWindowResizable(
+    JNIEnv *, jobject, jlong windowHwnd, jboolean enabled
+) {
+    HWND window = (HWND)(intptr_t)windowHwnd;
+    if (!window || !IsWindow(window)) return;
+    LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
+    if (enabled == JNI_TRUE) {
+        style |= WS_THICKFRAME;
+        style &= ~(WS_CAPTION | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX);
+    } else {
+        style &= ~(WS_THICKFRAME | WS_MAXIMIZEBOX | WS_MINIMIZEBOX);
+    }
+    SetWindowLongPtrW(window, GWL_STYLE, style);
+    COLORREF black = RGB(0, 0, 0);
+    DwmSetWindowAttribute(window, DWMWA_BORDER_COLOR, &black, sizeof(black));
+    DwmSetWindowAttribute(window, DWMWA_CAPTION_COLOR, &black, sizeof(black));
+    SetWindowPos(window, nullptr, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_reparentSurfaceNative(JNIEnv *, jobject, jlong handle, jlong hostViewPtr) {
+    auto player = playerFromHandle(handle);
+    if (player) player->reparentSurface((HWND)(intptr_t)hostViewPtr);
 }
 
 extern "C" JNIEXPORT void JNICALL

@@ -58,6 +58,8 @@ import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.features.player.ImmersivePlaybackGate
 import com.nuvio.app.features.player.rememberIsInPictureInPicture
 import com.nuvio.app.core.ui.AppTheme
+import com.nuvio.app.core.ui.themePalette
+import com.nuvio.app.core.ui.accentBrush
 import com.nuvio.app.core.ui.appTheme
 import com.nuvio.app.core.ui.nuvio
 import nuvio.composeapp.generated.resources.Res
@@ -189,11 +191,8 @@ private fun AppUpdateBanner(
     )
     val containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
     val isWhiteTheme = MaterialTheme.appTheme == AppTheme.WHITE
-    val progressColor = if (isWhiteTheme) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-    } else {
-        MaterialTheme.colorScheme.primary
-    }
+    val progressBrush = MaterialTheme.themePalette.accentBrush()
+    val progressAlpha = if (isWhiteTheme) 0.18f else 1f
     val dividerColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)
     val debugTestComplete = state.isDebugTest && !state.isDownloading && !state.isUpdateAvailable
     val subtitle = when {
@@ -219,7 +218,8 @@ private fun AppUpdateBanner(
                 drawRect(containerColor)
                 if (progress > 0f) {
                     drawRect(
-                        color = progressColor,
+                        brush = progressBrush,
+                        alpha = progressAlpha,
                         size = Size(width = size.width * progress, height = size.height),
                     )
                 }

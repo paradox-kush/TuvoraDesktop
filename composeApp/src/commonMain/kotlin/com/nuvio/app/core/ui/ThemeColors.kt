@@ -16,6 +16,16 @@ data class ThemeColorPalette(
     val backgroundCard: Color = Color(0xFF242424),
 )
 
+internal fun dominantBackdropBlendColor(dominantColor: Color, backgroundColor: Color): Color {
+    val fraction = 0.42f
+    return Color(
+        red = backgroundColor.red + (dominantColor.red - backgroundColor.red) * fraction,
+        green = backgroundColor.green + (dominantColor.green - backgroundColor.green) * fraction,
+        blue = backgroundColor.blue + (dominantColor.blue - backgroundColor.blue) * fraction,
+        alpha = backgroundColor.alpha + (dominantColor.alpha - backgroundColor.alpha) * fraction,
+    )
+}
+
 object ThemeColors {
 
     val Gold = ThemeColorPalette(
@@ -186,8 +196,12 @@ object ThemeColors {
         backgroundCard = Color(0xFF201C14),
     )
 
-    fun getColorPalette(theme: AppTheme): ThemeColorPalette = when (theme) {
+    fun getColorPalette(
+        theme: AppTheme,
+        customColors: CustomThemeColors = CustomThemeColors.Default,
+    ): ThemeColorPalette = when (theme) {
         AppTheme.MARIGOLD -> Marigold
+        AppTheme.CUSTOM -> customColors.toColorPalette()
         AppTheme.GOLD -> Gold
         AppTheme.JADE -> Jade
         AppTheme.ROSE_GOLD -> RoseGold

@@ -11,6 +11,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -57,6 +60,9 @@ object XtreamRepository : IptvCatalog {
     // --- IptvCatalog read port (S3a) ---
     override fun hasEnabledAccounts(): Boolean = _uiState.value.accounts.any { it.enabled }
     override val enabledAccountCount: Int get() = _uiState.value.accounts.count { it.enabled }
+    override val servedStreamTypes: StateFlow<Set<String>> = uiState
+        .map { servedStreamTypesOf(it.accounts) }
+        .stateIn(scope, SharingStarted.Eagerly, emptySet())
 
     private var loaded = false
 
@@ -657,3 +663,12 @@ internal fun carryPlaylistOptions(
         categorySelections = if (same) old.categorySelections else CategorySelections(),
     )
 }
+
+/** Stremio content types the enabled accounts serve through the IPTV source lane (live is not a VOD source). */
+internal fun servedStreamTypesOf(accounts: List<XtreamAccount>): Set<String> =
+    accounts.filter { it.enabled }.flatMap { account ->
+        buildList {
+            if (account.typeEnabled(CONTENT_TYPE_MOVIES)) add("movie")
+            if (account.typeEnabled(CONTENT_TYPE_SERIES)) add("series")
+        }
+    }.toSet()

@@ -42,3 +42,7 @@ internal actual fun ImageLoader.Builder.configurePlatformImageLoader(context: Pl
         }
         .allowRgb565(true)
         .precision(Precision.INEXACT)
+
+// The Application implements SingletonImageLoader.Factory (NuvioApplication) so the loader exists
+// before Coil's first request; the composable factory in App.kt is skipped on Android.
+internal actual val platformProvidesImageLoader: Boolean = true

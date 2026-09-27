@@ -1298,8 +1298,9 @@ object WatchProgressRepository {
         // derived from exactly the numbers Continue Watching shows. Cannot throw.
         // Deliberately BEFORE the store-worthiness guards below: a user who bails after 30
         // seconds is the strongest dislike signal there is, and that is precisely the progress
-        // watch-progress declines to keep.
-        com.nuvio.app.core.contracts.RecTrackingAccess.reporter.onProgress(
+        // watch-progress declines to keep. Best-effort telemetry: an unregistered reporter (a
+        // process that never ran FeatureWiring) must not throw out of a progress save.
+        com.nuvio.app.core.contracts.RecTrackingAccess.reporterOrNull?.onProgress(
             itemId = session.parentMetaId,
             contentType = session.contentType,
             season = session.seasonNumber,

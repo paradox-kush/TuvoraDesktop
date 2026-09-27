@@ -35,4 +35,7 @@ object RecTrackingAccess {
     val reporter: RecPlaybackReporter
         get() = reporterInstance ?: error("RecPlaybackReporter not registered — see FeatureWiring")
     fun register(reporter: RecPlaybackReporter) { reporterInstance = reporter }
+
+    /** The reporter, or null before registration (tests, a process that never ran FeatureWiring). */
+    val reporterOrNull: RecPlaybackReporter? get() = reporterInstance
 }

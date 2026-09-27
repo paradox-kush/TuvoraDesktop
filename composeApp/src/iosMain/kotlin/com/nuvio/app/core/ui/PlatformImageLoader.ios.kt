@@ -17,3 +17,5 @@ internal actual fun ImageLoader.Builder.configurePlatformImageLoader(context: Pl
         memory.registerBudget("image_memory_cache", cap, priority = 0) { cache.clear() }
         cache
     }
+
+internal actual val platformProvidesImageLoader: Boolean = false

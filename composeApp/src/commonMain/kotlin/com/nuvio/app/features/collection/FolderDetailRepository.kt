@@ -9,6 +9,7 @@ import com.nuvio.app.features.catalog.fetchCatalogPage
 import com.nuvio.app.features.catalog.mergeCatalogItems
 import com.nuvio.app.features.catalog.nextCatalogPaginationState
 import com.nuvio.app.features.catalog.supportsPagination
+import com.nuvio.app.core.poster.withCustomPosterUrls
 import com.nuvio.app.core.i18n.localizedMediaTypeLabel
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.HomeCatalogSection
@@ -307,8 +308,8 @@ object FolderDetailRepository {
      */
     private fun updateTab(index: Int, transform: (FolderTab) -> FolderTab) {
         _uiState.update { current ->
-            if (index !in current.tabs.indices) return@update current
             val updatedTabs = current.tabs.toMutableList()
+            if (index !in updatedTabs.indices) return@update current
             updatedTabs[index] = transform(updatedTabs[index])
 
             val allDone = updatedTabs.none { !it.isAllTab && it.isLoading }
@@ -388,12 +389,16 @@ object FolderDetailRepository {
                     )
                 }.withUnreleasedFilter()
             }.onSuccess { page ->
+                val posterPattern = com.nuvio.app.core.poster.CustomPosterUrlRepository.let { repo ->
+                    repo.ensureLoaded()
+                    repo.patternForScreen(com.nuvio.app.core.poster.CustomPosterScreen.COLLECTIONS)
+                }
                 updateTab(index) { tab ->
                     val mergedItems = if (reset) {
                         page.items
                     } else {
                         mergeCatalogItems(tab.items, page.items)
-                    }
+                    }.withCustomPosterUrls(posterPattern)
                     val supportsPagination = tab.supportsPagination || page.rawItemCount >= CATALOG_PAGE_SIZE
                     val loadedNewItems = reset || mergedItems.size > tab.items.size
                     val paginationState = nextCatalogPaginationState(

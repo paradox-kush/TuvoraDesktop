@@ -19,7 +19,11 @@ import com.nuvio.app.features.player.skip.PlayerNextEpisodeRules
 import com.nuvio.app.features.player.skip.SkipIntroRepository
 import com.nuvio.app.features.player.skip.SkipIntervalLookup
 import com.nuvio.app.features.player.skip.autoSkipKey
+import com.nuvio.app.features.player.skip.autoSkipKeysCompletedBy
 import com.nuvio.app.features.player.skip.resolveSkipIntervalLookup
+import com.nuvio.app.features.player.skip.shouldAutoSkip
+import com.nuvio.app.features.player.skip.internalSkipAction
+import com.nuvio.app.features.player.skip.intervalsAtSeekPositions
 import com.nuvio.app.features.streams.BingeGroupCacheRepository
 import com.nuvio.app.features.streams.StreamLinkCacheRepository
 import com.nuvio.app.features.streams.StreamItem
@@ -46,15 +50,20 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
     }
 
     LaunchedEffect(parentMetaType, parentMetaId) {
-        playerMetaVideos = MetaDetailsRepository.peek(parentMetaType, parentMetaId)?.videos ?: emptyList()
+        playerMeta = MetaDetailsRepository.peek(parentMetaType, parentMetaId)
+        playerMetaVideos = playerMeta?.videos.orEmpty()
         if (playerMetaVideos.isEmpty()) {
-            playerMetaVideos = MetaDetailsRepository.fetch(parentMetaType, parentMetaId)?.videos ?: emptyList()
+            MetaDetailsRepository.fetch(parentMetaType, parentMetaId)?.let { meta ->
+                playerMeta = meta
+                playerMetaVideos = meta.videos
+            }
         }
     }
 
     LaunchedEffect(metaUiState.meta, parentMetaType, parentMetaId) {
         val currentMeta = metaUiState.meta ?: return@LaunchedEffect
         if (currentMeta.type == parentMetaType && currentMeta.id == parentMetaId) {
+            playerMeta = currentMeta
             playerMetaVideos = currentMeta.videos
         }
     }
@@ -66,11 +75,13 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         }
     }
 
-    LaunchedEffect(activeSourceUrl, activeSourceAudioUrl, activeSourceHeaders, activeSourceResponseHeaders) {
+    LaunchedEffect(activePlaybackKey, activeSourceUrl, activeSourceAudioUrl, activeSourceHeaders, activeSourceResponseHeaders) {
         errorMessage = null
         playerController = null
         playerControllerSourceUrl = null
         playbackSnapshot = PlayerPlaybackSnapshot()
+        playbackSnapshotKey = null
+        cancelNextEpisodeAutoPlay()
         isScrubbingTimeline = false
         scrubbingPositionMs = null
         liveGestureFeedback = null
@@ -79,8 +90,9 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         credentialRefreshJob?.cancel()
         credentialRefreshJob = null
         // NOTE: do NOT reset the credential-refresh counter here. This effect fires on the refresh's
-        // OWN source swap (activeSourceUrl changes to the fresh link); resetting here is what let a
-        // short-TTL Stalker link re-mint forever. Re-armed only on a new videoId or healthy playback.
+        // OWN source swap (activeSourceUrl changes to the fresh link), and resetting the counter here
+        // is exactly what let a short-TTL Stalker link re-mint forever. The counter is re-armed only on
+        // a new videoId (channel/content change) or after sustained healthy playback — see below.
         initialLoadCompleted = false
         lastProgressPersistEpochMs = 0L
         previousIsPlaying = false
@@ -92,19 +104,26 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         accumulatedSeekState = null
         speedBoostRestoreSpeed = null
         preferredAudioSelectionApplied = false
+        appliedAudioPreferences = null
         preferredSubtitleSelectionApplied = false
+        isUserExplicitAudioSelection = false
         isUserExplicitSubtitleSelection = false
         hasScannedTextTracksOnce = false
+        selectedSubtitleIndex = -1
+        selectedAddonSubtitleId = null
+        useCustomSubtitles = false
         showSourcesPanel = false
         showEpisodesPanel = false
         episodeStreamsPanelState = EpisodeStreamsPanelState()
         PlayerStreamsRepository.clearEpisodeStreams()
         SubtitleRepository.clear()
+        autoFetchedAddonSubtitlesForKey = null
         WatchProgressRepository.ensureLoaded()
     }
 
-    // Re-arm the credential-refresh counter on a genuinely new stream (channel/content change), keyed
-    // on videoId (NOT the source URL), so it does not fire on the refresh's own re-mint swap.
+    // Re-arm the credential-refresh counter on a genuinely new stream (channel/content change). This is
+    // keyed on the videoId, NOT the source URL, so it does NOT fire on the refresh's own re-mint swap
+    // (which keeps the same videoId) — the loop guard survives a re-mint but a real channel-zap resets it.
     LaunchedEffect(activeVideoId, activeSeasonNumber, activeEpisodeNumber) {
         credentialRefreshAttempts = 0
         credentialRefreshBaselinePositionMs = 0L
@@ -251,16 +270,21 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
     LaunchedEffect(
         activeSourceUrl,
         addonSubtitleFetchKey,
-        playerController,
-        playerControllerSourceUrl,
     ) {
+        if (activeSourceUrl.startsWith("file:") && externalSubtitles.isNotEmpty()) return@LaunchedEffect
         val fetchKey = addonSubtitleFetchKey ?: return@LaunchedEffect
         if (autoFetchedAddonSubtitlesForKey == fetchKey) return@LaunchedEffect
         autoFetchedAddonSubtitlesForKey = fetchKey
         fetchAddonSubtitlesForActiveItem()
     }
 
-    LaunchedEffect(playbackSnapshot.isLoading, playerController) {
+    LaunchedEffect(playerController, playerControllerSourceUrl, activeSourceUrl, preferredAudioLanguageTargets) {
+        if (playerControllerSourceUrl == activeSourceUrl) {
+            applyPreferredAudioTrack(preferredAudioLanguageTargets)
+        }
+    }
+
+    LaunchedEffect(playbackSnapshot.isLoading, playerController, preferredAudioLanguageTargets) {
         if (!playbackSnapshot.isLoading && playerController != null) {
             refreshTracks()
         }
@@ -271,19 +295,20 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         playbackSnapshot.isLoading,
         preferredAudioSelectionApplied,
         preferredSubtitleSelectionApplied,
+        trackPreferenceRestoreApplied,
         addonSubtitles,
         isLoadingAddonSubtitles,
     ) {
         if (playerController == null || playbackSnapshot.isLoading) {
             return@LaunchedEffect
         }
-        if (preferredAudioSelectionApplied && preferredSubtitleSelectionApplied) {
+        if (trackPreferenceRestoreApplied && preferredAudioSelectionApplied && preferredSubtitleSelectionApplied) {
             return@LaunchedEffect
         }
 
         repeat(10) {
             refreshTracks()
-            if (preferredAudioSelectionApplied && preferredSubtitleSelectionApplied) {
+            if (trackPreferenceRestoreApplied && preferredAudioSelectionApplied && preferredSubtitleSelectionApplied) {
                 return@LaunchedEffect
             }
             delay(300)
@@ -346,6 +371,7 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
     }
 
     DisposableEffect(Unit) {
+        PlayerStreamsRepository.pauseSearchForPlayback()
         onDispose {
             playerController?.clearNowPlayingInfo()
             P2pStreamingEngine.shutdown()
@@ -385,9 +411,15 @@ private fun PlayerScreenRuntime.BindPlayerUiVisibilityEffects() {
         lockedOverlayVisible = false
     }
 
-    LaunchedEffect(playbackSnapshot.isPlaying, playbackSnapshot.isLoading, playbackSnapshot.durationMs, errorMessage) {
+    LaunchedEffect(
+        playerSettingsUiState.pauseOverlayEnabled,
+        playbackSnapshot.isPlaying,
+        playbackSnapshot.isLoading,
+        playbackSnapshot.durationMs,
+        errorMessage,
+    ) {
         pausedOverlayVisible = false
-        if (playbackSnapshot.isPlaying || playbackSnapshot.isLoading || playbackSnapshot.durationMs <= 0L || errorMessage != null) {
+        if (!playerSettingsUiState.pauseOverlayEnabled || playbackSnapshot.isPlaying || playbackSnapshot.isLoading || playbackSnapshot.durationMs <= 0L || errorMessage != null) {
             return@LaunchedEffect
         }
         delay(5000)
@@ -469,17 +501,28 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
         activeVideoId,
         activeSeasonNumber,
         activeEpisodeNumber,
+        parentMetaId,
+        parentMetaType,
+        contentType,
         playerSettingsUiState.skipIntroEnabled,
     ) {
         skipIntervals = emptyList()
+        autoSkippedIntervals.clear()
+        lastManualSkipSeekPositions = null
         activeSkipInterval = null
         skipIntervalDismissed = false
         autoSkippedIntervalKeys.clear()
+        playerNotificationMessage = ""
         showNextEpisodeCard = false
-        nextEpisodeAutoPlayJob?.cancel()
-        nextEpisodeAutoPlaySearching = false
+        nextEpisodeCardDismissed = false
+        cancelNextEpisodeAutoPlay()
 
         if (!playerSettingsUiState.skipIntroEnabled) return@LaunchedEffect
+
+        if ((contentType ?: parentMetaType).equals("movie", ignoreCase = true)) {
+            skipIntervals = SkipIntroRepository.getMovieSkipIntervals(parentMetaId, activeVideoId)
+            return@LaunchedEffect
+        }
 
         val lookup = resolveSkipIntervalLookup(
             videoId = activeVideoId,
@@ -488,6 +531,11 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
         ) ?: return@LaunchedEffect
 
         launch {
+            val imdbFromContent = parentMetaId.takeIf { it.startsWith("tt") }
+                ?: (metaUiState.meta ?: playerMeta)
+                    ?.takeIf { it.id == parentMetaId }
+                    ?.imdbId
+                    ?.takeIf { it.startsWith("tt") }
             val intervals = when (lookup) {
                 is SkipIntervalLookup.Imdb -> SkipIntroRepository.getSkipIntervals(
                     imdbId = lookup.imdbId,
@@ -497,10 +545,16 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
                 is SkipIntervalLookup.Mal -> SkipIntroRepository.getSkipIntervalsForMal(
                     malId = lookup.malId,
                     episode = lookup.episode,
+                    imdbId = imdbFromContent,
+                    imdbSeason = activeSeasonNumber,
+                    imdbEpisode = activeEpisodeNumber ?: lookup.episode,
                 )
                 is SkipIntervalLookup.Kitsu -> SkipIntroRepository.getSkipIntervalsForKitsu(
                     kitsuId = lookup.kitsuId,
                     episode = lookup.episode,
+                    imdbId = imdbFromContent,
+                    imdbSeason = activeSeasonNumber,
+                    imdbEpisode = activeEpisodeNumber ?: lookup.episode,
                 )
             }
             skipIntervals = intervals
@@ -509,16 +563,43 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
 
     LaunchedEffect(
         playbackSnapshot.positionMs,
+        playbackSnapshot.isLoading,
         skipIntervals,
         playerSettingsUiState.autoSkipSegmentTypes,
+        playerController,
+        initialLoadCompleted,
+        activeInitialPositionMs,
+        activeInitialProgressFraction,
+        playbackSnapshot.durationMs,
+        playbackSnapshot.isPlaying,
+        playerSettingsUiState.skipIntroEnabled,
+        isScrubbingTimeline,
+        initialSeekApplied,
+        lastManualSkipSeekPositions,
+        playerControllerSourceUrl,
+        activeSourceUrl,
     ) {
         if (skipIntervals.isEmpty()) {
             activeSkipInterval = null
             return@LaunchedEffect
         }
+        val initialProgressFraction = activeInitialProgressFraction
+        val initialPlaybackPositionMs = when {
+            activeInitialPositionMs > 0L -> activeInitialPositionMs
+            initialProgressFraction != null && playbackSnapshot.durationMs > 0L -> {
+                val fraction = initialProgressFraction.coerceIn(0f, 1f)
+                (playbackSnapshot.durationMs.toDouble() * fraction.toDouble()).toLong()
+            }
+            else -> 0L
+        }
+        autoSkippedIntervalKeys += skipIntervals.autoSkipKeysCompletedBy(initialPlaybackPositionMs)
         val positionSec = playbackSnapshot.positionMs / 1000.0
+        lastManualSkipSeekPositions?.let { (fromMs, toMs) ->
+            autoSkippedIntervals += skipIntervals.intervalsAtSeekPositions(fromMs, toMs)
+        }
         val current = skipIntervals.firstOrNull { interval ->
-            positionSec >= interval.startTime && positionSec < interval.endTime
+            positionSec >= interval.startTime && positionSec < interval.endTime &&
+                interval.internalSkipAction(skipIntervals, playbackSnapshot.durationMs) != null
         }
         if (current != activeSkipInterval) {
             activeSkipInterval = current
@@ -529,15 +610,36 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
             val intervalKey = current.autoSkipKey()
             val controller = playerController
             if (
+                playerControllerSourceUrl == activeSourceUrl &&
+                playerSettingsUiState.skipIntroEnabled &&
+                playbackSnapshot.isPlaying &&
+                !isScrubbingTimeline && initialSeekApplied &&
+                current.shouldAutoSkip(playerSettingsUiState.autoSkipSegmentTypes) &&
+                current !in autoSkippedIntervals &&
+                initialLoadCompleted &&
+                !playbackSnapshot.isLoading &&
                 controller != null &&
                 segmentType != null &&
                 segmentType in playerSettingsUiState.autoSkipSegmentTypes &&
                 intervalKey !in autoSkippedIntervalKeys
             ) {
+                val durationMs = playbackSnapshot.durationMs
+                val rawMs = current.internalSkipAction(skipIntervals, durationMs)?.targetMs ?: return@LaunchedEffect
+                val seekPositionMs = if (durationMs > 0L) rawMs.coerceAtMost(durationMs - 1) else rawMs
+                if (!controller.trySeekTo(seekPositionMs)) return@LaunchedEffect
                 autoSkippedIntervalKeys.add(intervalKey)
-                controller.seekTo((current.endTime * 1000).toLong())
+                autoSkippedIntervals.add(current)
                 scheduleProgressSyncAfterSeek()
                 skipIntervalDismissed = true
+                playerNotificationMessage = getString(
+                    when (segmentType) {
+                        AutoSkipSegmentType.INTRO -> Res.string.player_auto_skip_intro_notification
+                        AutoSkipSegmentType.RECAP -> Res.string.player_auto_skip_recap_notification
+                        AutoSkipSegmentType.OUTRO, AutoSkipSegmentType.MOVIE_CREDITS -> Res.string.player_auto_skip_outro_notification
+                    },
+                    formatPlaybackTime(seekPositionMs),
+                )
+                playerNotificationToken += 1L
             }
         }
     }
@@ -598,32 +700,36 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
     }
 
     LaunchedEffect(
-        playbackSnapshot.positionMs,
-        playbackSnapshot.durationMs,
+        activePlaybackKey,
+        playbackSnapshot,
+        playbackSnapshotKey,
+        initialSeekApplied,
+        isScrubbingTimeline,
+        errorMessage,
         nextEpisodeInfo,
         skipIntervals,
         playerSettingsUiState.nextEpisodeThresholdMode,
         playerSettingsUiState.nextEpisodeThresholdPercent,
         playerSettingsUiState.nextEpisodeThresholdMinutesBeforeEnd,
+        playerSettingsUiState.streamAutoPlayNextEpisodeEnabled,
+        nextEpisodeCardDismissed,
     ) {
-        if (nextEpisodeInfo == null || playbackSnapshot.durationMs <= 0L) {
-            if (!nextEpisodeFlowIsManual) showNextEpisodeCard = false
-            return@LaunchedEffect
+        // Upstream's threshold (incl. ended + playback-key guards). `atThreshold` is kept separate
+        // from `shouldShow` because the fork's reset below re-arms a dismissed card only once the
+        // position leaves the end zone — keying it on shouldShow would re-show a dismissed card.
+        val atThreshold = nextEpisodeInfo != null && isAtNextEpisodeThreshold()
+        val shouldShow = atThreshold && !nextEpisodeCardDismissed
+        if (nextEpisodeAutoPlayAutomatic &&
+            (!shouldShow || !playerSettingsUiState.streamAutoPlayNextEpisodeEnabled)
+        ) {
+            cancelNextEpisodeAutoPlay()
         }
-        val shouldShow = PlayerNextEpisodeRules.shouldShowNextEpisodeCard(
-            positionMs = playbackSnapshot.positionMs,
-            durationMs = playbackSnapshot.durationMs,
-            skipIntervals = skipIntervals,
-            thresholdMode = playerSettingsUiState.nextEpisodeThresholdMode,
-            thresholdPercent = playerSettingsUiState.nextEpisodeThresholdPercent,
-            thresholdMinutesBeforeEnd = playerSettingsUiState.nextEpisodeThresholdMinutesBeforeEnd,
-        )
-        if (shouldShow && !showNextEpisodeCard && !nextEpisodeCardDismissed) {
+        if (shouldShow && !showNextEpisodeCard) {
             showNextEpisodeCard = true
             if (playerSettingsUiState.streamAutoPlayNextEpisodeEnabled && nextEpisodeInfo?.hasAired == true) {
-                playNextEpisode()
+                playNextEpisode(automatic = true)
             }
-        } else if (!shouldShow && !nextEpisodeFlowIsManual) {
+        } else if (!atThreshold && !nextEpisodeFlowIsManual) {
             // Seeking back out of the end zone cancels a pending auto-advance and re-arms the card.
             if (showNextEpisodeCard) {
                 nextEpisodeAutoPlayJob?.cancel()
@@ -633,20 +739,6 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
             }
             showNextEpisodeCard = false
             nextEpisodeCardDismissed = false
-        }
-    }
-
-    LaunchedEffect(playbackSnapshot.isEnded, nextEpisodeInfo) {
-        if (
-            playbackSnapshot.isEnded &&
-            nextEpisodeInfo != null &&
-            !showNextEpisodeCard &&
-            !nextEpisodeCardDismissed
-        ) {
-            showNextEpisodeCard = true
-            if (playerSettingsUiState.streamAutoPlayNextEpisodeEnabled && nextEpisodeInfo?.hasAired == true) {
-                playNextEpisode()
-            }
         }
     }
 }
@@ -721,8 +813,8 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
     }
     // Bounded, URL-INDEPENDENT gate (PlayerCredentialRefreshPolicy): a Stalker create_link mints a new
     // unique short-TTL URL every time, so a URL-keyed guard never matched and the refresh looped
-    // forever. Cap the consecutive re-mints; the counter re-arms only on a new channel/content or
-    // sustained healthy playback (never on the refresh's own swap).
+    // forever. Cap the consecutive re-mints instead; the counter re-arms only on a new channel/content
+    // or sustained healthy playback (never on the refresh's own swap).
     when (
         PlayerCredentialRefreshPolicy.decide(
             isEligible = isEligible,
@@ -760,104 +852,109 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
     controlsVisible = !playerControlsLocked
 
     credentialRefreshJob = scope.launch {
-        var refreshedStream: StreamItem? = null
-        if (matchedSourceId != null) {
-            // TMDB-matched iptv stream: PlayerStreamsRepository has no xtream-match lane to poll,
-            // so re-run the owning source's TMDB->stream match directly — one targeted resolve
-            // that mints a fresh Stalker create_link (Xtream URLs come back identical and are
-            // rejected by the candidate's url != failedUrl check, which is correct: a 401 on a
-            // stable URL is an account problem, not a token problem).
-            val streams = runCatchingUnlessCancelled {
-                streamProvider.resolveMatchStreams(matchedSourceId, type, currentVideoId, season, episode)
-            }.getOrDefault(emptyList())
-            iptvRefreshLog.i { "matched-lane re-resolve: sourceId=$matchedSourceId returned ${streams.size} stream(s) type=$type videoId=$currentVideoId" }
-            refreshedStream = findCredentialRefreshCandidate(
-                streams = streams,
-                failedUrl = failedUrl,
-                expectedProviderAddonId = expectedProviderAddonId,
-                expectedProviderName = expectedProviderName,
-                expectedStreamTitle = expectedStreamTitle,
-                expectedBingeGroup = expectedBingeGroup,
-            )
-        } else {
-            PlayerStreamsRepository.loadSources(
-                type = type,
-                videoId = currentVideoId,
-                season = season,
-                episode = episode,
-                forceRefresh = true,
-                // A static-cmd Stalker verdict would rebuild the URL that just 401'd — the
-                // refresh needs a genuinely fresh create_link.
-                forceMintIptv = true,
-            )
-
-            var pollCount = 0
-            while (pollCount < CREDENTIAL_REFRESH_POLL_COUNT && refreshedStream == null) {
-                val state = PlayerStreamsRepository.sourceState.value
+        try {
+            var refreshedStream: StreamItem? = null
+            if (matchedSourceId != null) {
+                // TMDB-matched iptv stream: PlayerStreamsRepository has no xtream-match lane to poll,
+                // so re-run the owning source's TMDB->stream match directly — one targeted resolve
+                // that mints a fresh Stalker create_link (Xtream URLs come back identical and are
+                // rejected by the candidate's url != failedUrl check, which is correct: a 401 on a
+                // stable URL is an account problem, not a token problem).
+                val streams = runCatchingUnlessCancelled {
+                    streamProvider.resolveMatchStreams(matchedSourceId, type, currentVideoId, season, episode)
+                }.getOrDefault(emptyList())
+                iptvRefreshLog.i { "matched-lane re-resolve: sourceId=$matchedSourceId returned ${streams.size} stream(s) type=$type videoId=$currentVideoId" }
                 refreshedStream = findCredentialRefreshCandidate(
-                    streams = state.groups.flatMap { it.streams },
+                    streams = streams,
                     failedUrl = failedUrl,
                     expectedProviderAddonId = expectedProviderAddonId,
                     expectedProviderName = expectedProviderName,
                     expectedStreamTitle = expectedStreamTitle,
                     expectedBingeGroup = expectedBingeGroup,
                 )
-                if (
-                    refreshedStream != null ||
-                    state.emptyStateReason != null ||
-                    (!state.isAnyLoading && state.groups.isNotEmpty())
-                ) {
-                    break
-                }
-                delay(CREDENTIAL_REFRESH_POLL_INTERVAL_MS)
-                pollCount++
-            }
-        }
-
-        val stream = refreshedStream
-        if (stream == null) {
-            iptvRefreshLog.w { "no replacement stream found — surfacing the original error" }
-            errorMessage = message
-            controlsVisible = !playerControlsLocked
-            return@launch
-        }
-
-        // A matched-lane Stalker candidate is DEFERRED ("stalker-deferred:…") — listing never
-        // mints. The refresh must hand the engine a REAL url, and it forces the mint: a
-        // static-cmd verdict here would rebuild the very URL that just died.
-        val refreshedUrl = stream.playableDirectUrl?.let { candidate ->
-            if (streamProvider.isDeferredUrl(candidate)) {
-                runCatchingUnlessCancelled {
-                    streamProvider.resolveDeferredUrl(candidate, forceMint = true)
-                }.getOrNull()
             } else {
-                candidate
-            }
-        }
-        if (refreshedUrl.isNullOrBlank() || refreshedUrl == failedUrl) {
-            iptvRefreshLog.w { "replacement URL unusable (blank=${refreshedUrl.isNullOrBlank()} sameAsFailed=${refreshedUrl == failedUrl})" }
-            errorMessage = message
-            controlsVisible = !playerControlsLocked
-            return@launch
-        }
-        iptvRefreshLog.i { "recovered with a fresh link, resuming at ${savedPositionMs}ms" }
+                PlayerStreamsRepository.loadSources(
+                    type = type,
+                    videoId = currentVideoId,
+                    season = season,
+                    episode = episode,
+                    forceRefresh = true,
+                    // A static-cmd Stalker verdict would rebuild the URL that just 401'd — the
+                    // refresh needs a genuinely fresh create_link.
+                    forceMintIptv = true,
+                )
 
-        flushWatchProgress()
-        stopActiveP2pStream()
-        activeSourceUrl = refreshedUrl
-        activeSourceAudioUrl = null
-        activeSourceHeaders = sanitizePlaybackHeaders(stream.behaviorHints.proxyHeaders?.request)
-        activeSourceResponseHeaders = sanitizePlaybackResponseHeaders(stream.behaviorHints.proxyHeaders?.response)
-        activeStreamType = stream.streamType
-        activeStreamTitle = stream.streamLabel
-        activeStreamSubtitle = stream.streamSubtitle
-        activeProviderName = stream.addonName
-        activeProviderAddonId = stream.addonId
-        currentStreamBingeGroup = stream.behaviorHints.bingeGroup
-        activeInitialPositionMs = savedPositionMs
-        activeInitialProgressFraction = null
-        showSourcesPanel = false
-        controlsVisible = true
+                var pollCount = 0
+                while (pollCount < CREDENTIAL_REFRESH_POLL_COUNT && refreshedStream == null) {
+                    val state = PlayerStreamsRepository.sourceState.value
+                    refreshedStream = findCredentialRefreshCandidate(
+                        streams = state.groups.flatMap { it.streams },
+                        failedUrl = failedUrl,
+                        expectedProviderAddonId = expectedProviderAddonId,
+                        expectedProviderName = expectedProviderName,
+                        expectedStreamTitle = expectedStreamTitle,
+                        expectedBingeGroup = expectedBingeGroup,
+                    )
+                    if (
+                        refreshedStream != null ||
+                        state.emptyStateReason != null ||
+                        (!state.isAnyLoading && state.groups.isNotEmpty())
+                    ) {
+                        break
+                    }
+                    delay(CREDENTIAL_REFRESH_POLL_INTERVAL_MS)
+                    pollCount++
+                }
+            }
+
+            val stream = refreshedStream
+            if (stream == null) {
+                iptvRefreshLog.w { "no replacement stream found — surfacing the original error" }
+                errorMessage = message
+                controlsVisible = !playerControlsLocked
+                return@launch
+            }
+
+            // A matched-lane Stalker candidate is DEFERRED ("stalker-deferred:…") — listing never
+            // mints. The refresh must hand the engine a REAL url, and it forces the mint: a
+            // static-cmd verdict here would rebuild the very URL that just died.
+            val refreshedUrl = stream.playableDirectUrl?.let { candidate ->
+                if (streamProvider.isDeferredUrl(candidate)) {
+                    runCatchingUnlessCancelled {
+                        streamProvider.resolveDeferredUrl(candidate, forceMint = true)
+                    }.getOrNull()
+                } else {
+                    candidate
+                }
+            }
+            if (refreshedUrl.isNullOrBlank() || refreshedUrl == failedUrl) {
+                iptvRefreshLog.w { "replacement URL unusable (blank=${refreshedUrl.isNullOrBlank()} sameAsFailed=${refreshedUrl == failedUrl})" }
+                errorMessage = message
+                controlsVisible = !playerControlsLocked
+                return@launch
+            }
+            iptvRefreshLog.i { "recovered with a fresh link, resuming at ${savedPositionMs}ms" }
+
+            flushWatchProgress()
+            stopActiveP2pStream()
+            activeSourceUrl = refreshedUrl
+            activeSourceAudioUrl = null
+            activeSourceHeaders = sanitizePlaybackHeaders(stream.behaviorHints.proxyHeaders?.request)
+            activeSourceResponseHeaders = sanitizePlaybackResponseHeaders(stream.behaviorHints.proxyHeaders?.response)
+            activeStreamType = stream.streamType
+            activeStreamTitle = stream.streamLabel
+            activeStreamSubtitle = stream.streamSubtitle
+            activeProviderName = stream.addonName
+            activeProviderAddonId = stream.addonId
+            currentStreamBingeGroup = stream.behaviorHints.bingeGroup
+            activeInitialPositionMs = savedPositionMs
+            activeInitialProgressFraction = null
+            showSourcesPanel = false
+            controlsVisible = true
+        } finally {
+            // Upstream: always release the sources loader, even when the refresh bails out early.
+            PlayerStreamsRepository.stopSourcesLoading()
+        }
     }
     return true
 }
