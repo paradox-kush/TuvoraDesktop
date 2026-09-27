@@ -1291,6 +1291,7 @@ private fun LazyListScope.homeContinueWatchingSections(
                 style = preferences.style,
                 useEpisodeThumbnails = preferences.useEpisodeThumbnails,
                 blurNextUp = preferences.blurNextUp,
+                splitByType = preferences.splitByType,
                 modifier = Modifier.padding(bottom = 12.dp),
                 sectionPadding = sectionPadding,
                 layout = layout,
@@ -2085,9 +2086,9 @@ private fun WatchProgressEntry.isCloudLibraryProgressEntry(): Boolean =
         parentMetaType.equals(CloudLibraryContentType, ignoreCase = true)
 
 /**
- * Continue Watching split into type-grouped rows: a Live TV row (recently-watched channels, since
- * live records no resume position), then Movies and Series rows from the real watch-progress items.
- * Each row hides itself when empty.
+ * Continue Watching: a Live TV row (recently-watched channels, since live records no resume position),
+ * then one Continue Watching row, or Movies and Series rows when [splitByType] is on
+ * ([ContinueWatchingRowsPolicy], F04). Each row hides itself when empty.
  */
 @Composable
 private fun HomeContinueWatchingSplit(
@@ -2097,6 +2098,7 @@ private fun HomeContinueWatchingSplit(
     dataSourceKey: WatchProgressSource,
     useEpisodeThumbnails: Boolean,
     blurNextUp: Boolean,
+    splitByType: Boolean,
     sectionPadding: Dp,
     layout: ContinueWatchingLayout,
     onItemClick: ((ContinueWatchingItem) -> Unit)?,
@@ -2107,10 +2109,13 @@ private fun HomeContinueWatchingSplit(
     modifier: Modifier = Modifier,
 ) {
     // Live channels belong only in the Live TV row above — keep any that leaked into watch-progress
-    // (a live id classifies as tv -> series) out of the Movies/Series rows.
-    val nonLive = items.filterNot { IptvContentClassifierAccess.classifier.isLiveId(it.parentMetaId) }
-    val movies = nonLive.filterNot { it.parentMetaType.isSeriesTypeForContinueWatching() }
-    val series = nonLive.filter { it.parentMetaType.isSeriesTypeForContinueWatching() }
+    // (a live id classifies as tv -> series) out of the resumable rows.
+    val rows = ContinueWatchingRowsPolicy.rows(
+        items,
+        splitByType = splitByType,
+        isLive = { IptvContentClassifierAccess.classifier.isLiveId(it.parentMetaId) },
+        isSeries = { it.parentMetaType.isSeriesTypeForContinueWatching() },
+    )
     Column(modifier = modifier.padding(bottom = 12.dp)) {
         if (liveRecents.isNotEmpty()) {
             HomeCatalogRowSection(
@@ -2129,30 +2134,23 @@ private fun HomeContinueWatchingSplit(
                 onPosterLongClick = onLivePosterLongPress,
             )
         }
-        HomeContinueWatchingSection(
-            items = movies,
-            style = style,
-            dataSourceKey = dataSourceKey,
-            useEpisodeThumbnails = useEpisodeThumbnails,
-            blurNextUp = blurNextUp,
-            sectionPadding = sectionPadding,
-            layout = layout,
-            title = "Movies",
-            listState = listState,
-            onItemClick = onItemClick,
-            onItemLongPress = onItemLongPress,
-        )
-        HomeContinueWatchingSection(
-            items = series,
-            style = style,
-            dataSourceKey = dataSourceKey,
-            useEpisodeThumbnails = useEpisodeThumbnails,
-            blurNextUp = blurNextUp,
-            sectionPadding = sectionPadding,
-            layout = layout,
-            title = "Series",
-            onItemClick = onItemClick,
-            onItemLongPress = onItemLongPress,
-        )
+        rows.forEachIndexed { index, row ->
+            androidx.compose.runtime.key(row.title) {
+                HomeContinueWatchingSection(
+                    items = row.items,
+                    style = style,
+                    dataSourceKey = dataSourceKey,
+                    useEpisodeThumbnails = useEpisodeThumbnails,
+                    blurNextUp = blurNextUp,
+                    sectionPadding = sectionPadding,
+                    layout = layout,
+                    title = row.title,
+                    // The first row keeps the hoisted scroll state (restored across returns to home).
+                    listState = if (index == 0) listState else rememberLazyListState(),
+                    onItemClick = onItemClick,
+                    onItemLongPress = onItemLongPress,
+                )
+            }
+        }
     }
 }

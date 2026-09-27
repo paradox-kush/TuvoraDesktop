@@ -764,6 +764,11 @@ internal fun settingsSearchEntries(
                 stringResource(Res.string.settings_continue_watching_show_title),
                 stringResource(Res.string.settings_continue_watching_show_description),
             ),
+            PlaybackSearchRow(
+                "split-continue-watching",
+                stringResource(Res.string.settings_continue_watching_split_by_type_title),
+                stringResource(Res.string.settings_continue_watching_split_by_type_description),
+            ),
         ),
     )
     addContinueWatchingRows(

@@ -24,6 +24,9 @@ private data class StoredContinueWatchingPreferences(
     val showResumePromptOnLaunch: Boolean = true,
     @SerialName("sort_mode")
     val sortMode: ContinueWatchingSortMode = ContinueWatchingSortMode.DEFAULT,
+    // Device-local like sortMode: the TV app has one row and nothing to sync it with.
+    @SerialName("split_continue_watching_by_type")
+    val splitByType: Boolean = false,
 )
 
 object ContinueWatchingPreferencesRepository {
@@ -100,6 +103,7 @@ object ContinueWatchingPreferencesRepository {
                 dismissedNextUpKeys = stored.dismissedNextUpKeys,
                 showResumePromptOnLaunch = stored.showResumePromptOnLaunch,
                 sortMode = stored.sortMode,
+                splitByType = stored.splitByType,
             )
         } else {
             ContinueWatchingPreferencesUiState()
@@ -158,6 +162,13 @@ object ContinueWatchingPreferencesRepository {
         persist()
     }
 
+    fun setSplitByType(enabled: Boolean) {
+        ensureLoaded()
+        if (_uiState.value.splitByType == enabled) return
+        _uiState.value = _uiState.value.copy(splitByType = enabled)
+        persist()
+    }
+
     fun setSortMode(mode: ContinueWatchingSortMode) {
         ensureLoaded()
         if (_uiState.value.sortMode == mode) return
@@ -189,6 +200,7 @@ object ContinueWatchingPreferencesRepository {
                     dismissedNextUpKeys = _uiState.value.dismissedNextUpKeys,
                     showResumePromptOnLaunch = _uiState.value.showResumePromptOnLaunch,
                     sortMode = _uiState.value.sortMode,
+                    splitByType = _uiState.value.splitByType,
                 ),
             ),
         )

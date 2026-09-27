@@ -41,6 +41,8 @@ import nuvio.composeapp.generated.resources.settings_continue_watching_resume_pr
 import nuvio.composeapp.generated.resources.settings_continue_watching_resume_prompt_title
 import nuvio.composeapp.generated.resources.settings_continue_watching_blur_next_up_description
 import nuvio.composeapp.generated.resources.settings_continue_watching_blur_next_up_title
+import nuvio.composeapp.generated.resources.settings_continue_watching_split_by_type_description
+import nuvio.composeapp.generated.resources.settings_continue_watching_split_by_type_title
 import nuvio.composeapp.generated.resources.settings_continue_watching_show_unaired_next_up_description
 import nuvio.composeapp.generated.resources.settings_continue_watching_show_unaired_next_up_title
 import nuvio.composeapp.generated.resources.settings_continue_watching_section_card_style
@@ -78,6 +80,7 @@ internal fun LazyListScope.continueWatchingSettingsContent(
     useEpisodeThumbnails: Boolean,
     showUnairedNextUp: Boolean,
     blurNextUp: Boolean,
+    splitByType: Boolean,
     showResumePromptOnLaunch: Boolean,
     sortMode: ContinueWatchingSortMode,
 ) {
@@ -93,6 +96,14 @@ internal fun LazyListScope.continueWatchingSettingsContent(
                     checked = isVisible,
                     isTablet = isTablet,
                     onCheckedChange = ContinueWatchingPreferencesRepository::setVisible,
+                )
+                SettingsGroupDivider(isTablet = isTablet)
+                SettingsSwitchRow(
+                    title = stringResource(Res.string.settings_continue_watching_split_by_type_title),
+                    description = stringResource(Res.string.settings_continue_watching_split_by_type_description),
+                    checked = splitByType,
+                    isTablet = isTablet,
+                    onCheckedChange = ContinueWatchingPreferencesRepository::setSplitByType,
                 )
             }
         }

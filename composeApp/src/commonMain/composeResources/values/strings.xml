@@ -854,6 +854,8 @@
     <string name="settings_continue_watching_resume_prompt_title">Resume prompt on launch</string>
     <string name="settings_continue_watching_blur_next_up_description">Blur unwatched episode thumbnails in Continue Watching to avoid spoilers.</string>
     <string name="settings_continue_watching_blur_next_up_title">Blur Unwatched in Continue Watching</string>
+    <string name="settings_continue_watching_split_by_type_title">Separate Movies and Series</string>
+    <string name="settings_continue_watching_split_by_type_description">Show Movies and Series as two rows instead of one Continue Watching row.</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">Include upcoming episodes in Continue Watching before they air.</string>
     <string name="settings_continue_watching_show_unaired_next_up_title">Show Unaired Next Up Episodes</string>
     <string name="settings_continue_watching_section_sort_order">SORT ORDER</string>

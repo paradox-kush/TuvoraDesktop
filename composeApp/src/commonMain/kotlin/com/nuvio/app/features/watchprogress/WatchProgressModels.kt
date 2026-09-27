@@ -241,6 +241,8 @@ data class ContinueWatchingPreferencesUiState(
     val dismissedNextUpKeys: Set<String> = emptySet(),
     val showResumePromptOnLaunch: Boolean = true,
     val sortMode: ContinueWatchingSortMode = ContinueWatchingSortMode.DEFAULT,
+    /** F04: separate Movies and Series rows instead of one Continue Watching row (off by default). */
+    val splitByType: Boolean = false,
 )
 
 internal fun nextUpDismissKey(
