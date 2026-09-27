@@ -149,6 +149,8 @@ internal class PlayerScreenRuntime(
         initialPositionMs <= 0L && ((initialProgressFraction ?: 0f) <= 0f),
     )
     var lastProgressPersistEpochMs by mutableStateOf(0L)
+    /** Video this playback already saved as completed; see [CompletedPlaybackSavePolicy]. */
+    var completionRecordedForVideoId: String? = null
     var previousIsPlaying by mutableStateOf(false)
     var hasRequestedScrobbleStartForCurrentItem by mutableStateOf(false)
     var scrobbleStartRequestGeneration by mutableStateOf(0L)

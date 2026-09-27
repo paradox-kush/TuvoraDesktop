@@ -10,6 +10,7 @@ import com.nuvio.app.features.watchprogress.WatchProgressClock
 import com.nuvio.app.features.watchprogress.WatchProgressPlaybackSession
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import com.nuvio.app.features.watchprogress.buildPlaybackVideoId
+import com.nuvio.app.features.watchprogress.isWatchProgressComplete
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -284,10 +285,32 @@ internal fun PlayerScreenRuntime.flushWatchProgress(
         TrackingScrobbleAction.STOP -> emitStopScrobbleForCurrentProgress()
         TrackingScrobbleAction.START -> Unit
     }
+    if (!admitProgressSave()) return
     WatchProgressRepository.flushPlaybackProgress(
         session = playbackSession,
         snapshot = playbackSnapshot,
     )
+}
+
+/**
+ * Gate for every player progress save. Once this playback has saved the current video as completed,
+ * a later non-completed save (a stale snapshot after natural end, e.g. duration 0) is dropped so it
+ * cannot revert the completed entry locally and on remote. Keyed by videoId, so the next episode or
+ * a later playback of this one saves normally.
+ */
+private fun PlayerScreenRuntime.admitProgressSave(): Boolean {
+    val snapshot = playbackSnapshot
+    val videoId = playbackSession.videoId
+    val isCompleted = isWatchProgressComplete(
+        positionMs = snapshot.positionMs.coerceAtLeast(0L),
+        durationMs = snapshot.durationMs.coerceAtLeast(0L),
+        isEnded = snapshot.isEnded,
+    )
+    if (CompletedPlaybackSavePolicy.shouldSkip(isCompleted, completionRecordedForVideoId == videoId)) {
+        return false
+    }
+    if (isCompleted) completionRecordedForVideoId = videoId
+    return true
 }
 
 internal fun PlayerScreenRuntime.scheduleProgressSyncAfterSeek() {
@@ -295,10 +318,12 @@ internal fun PlayerScreenRuntime.scheduleProgressSyncAfterSeek() {
     seekProgressSyncJob?.cancel()
     seekProgressSyncJob = scope.launch {
         delay(PlayerSeekProgressSyncDebounceMs)
-        WatchProgressRepository.upsertPlaybackProgress(
-            session = playbackSession,
-            snapshot = playbackSnapshot,
-        )
+        if (admitProgressSave()) {
+            WatchProgressRepository.upsertPlaybackProgress(
+                session = playbackSession,
+                snapshot = playbackSnapshot,
+            )
+        }
 
         val progressPercent = currentPlaybackProgressPercent()
         if (
@@ -343,6 +368,7 @@ internal fun PlayerScreenRuntime.persistPlaybackProgressTick() {
     val now = WatchProgressClock.nowEpochMs()
     if (now - lastProgressPersistEpochMs < PlaybackProgressPersistIntervalMs) return
     lastProgressPersistEpochMs = now
+    if (!admitProgressSave()) return
     WatchProgressRepository.upsertPlaybackProgress(
         session = playbackSession,
         snapshot = playbackSnapshot,
