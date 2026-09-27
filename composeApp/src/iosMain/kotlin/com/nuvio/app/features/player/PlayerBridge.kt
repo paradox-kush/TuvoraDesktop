@@ -20,6 +20,8 @@ interface NuvioPlayerBridge {
     fun seekTo(positionMs: Long)
     fun seekBy(offsetMs: Long)
     fun retry()
+    /** Reopen the current source at 0:00 on the same player ("Start from beginning"). */
+    fun restartFromBeginning()
     // Live streams must rejoin the live edge (reload) on foreground instead of unpausing.
     fun setIsLiveStream(isLive: Boolean)
     fun updateNowPlayingMetadata(

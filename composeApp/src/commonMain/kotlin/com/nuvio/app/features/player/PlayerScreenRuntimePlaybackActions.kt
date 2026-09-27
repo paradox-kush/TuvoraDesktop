@@ -87,6 +87,7 @@ internal fun PlayerScreenRuntime.resetIdentityStateIfNeeded() {
         lastResetPlaybackIdentity = identity
         shouldPlay = true
         initialLoadCompleted = false
+        resumePlaybackStarted = false
         speedBoostRestoreSpeed = null
         isHoldToSpeedGestureActive = false
         initialSeekApplied = activeInitialPositionMs <= 0L &&
@@ -428,6 +429,11 @@ internal fun PlayerScreenRuntime.startOverFromBeginning() {
     activeInitialProgressFraction = null
     initialSeekApplied = true
     initialLoadCompleted = false
+    resumePlaybackStarted = false
     startOverOffered = false
-    startOverGeneration += 1
+    // Restart on the player that exists: rebuilding it would first wait for the old player to tear
+    // down, and with a slow provider that one is stuck in the read being escaped (emulator,
+    // 2026-09-27: the new mpv waited on its predecessor for good). Remount only without a player.
+    val controller = playerController
+    if (controller != null) controller.restartFromBeginning() else startOverGeneration += 1
 }

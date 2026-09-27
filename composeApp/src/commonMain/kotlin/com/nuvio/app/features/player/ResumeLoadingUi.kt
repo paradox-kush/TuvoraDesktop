@@ -26,17 +26,19 @@ internal fun PlayerScreenRuntime.resumeLoadingUi(): ResumeLoadingUi {
         initialPositionMs = activeInitialPositionMs,
         isLive = activeStreamType.equals("live", ignoreCase = true),
     )
-    LaunchedEffect(activePlaybackKey, startOverGeneration, isResume, initialLoadCompleted) {
+    // Keyed on the first real frame, not on the file opening: a slow provider stalls after the open,
+    // on the jump to the saved position, and the viewer must still get a way out then.
+    LaunchedEffect(activePlaybackKey, startOverGeneration, isResume, resumePlaybackStarted) {
         startOverOffered = false
-        if (!isResume || initialLoadCompleted) return@LaunchedEffect
+        if (!isResume || resumePlaybackStarted) return@LaunchedEffect
         delay(ResumeLoadPolicy.START_OVER_OFFER_AFTER_MS)
         startOverOffered = ResumeLoadPolicy.offerStartOver(
             isResumeLoad = isResume,
-            firstFrameShown = initialLoadCompleted,
+            firstFrameShown = resumePlaybackStarted,
             loadingForMs = ResumeLoadPolicy.START_OVER_OFFER_AFTER_MS,
         )
     }
-    if (!isResume || initialLoadCompleted) return ResumeLoadingUi(null, null, null)
+    if (!isResume || resumePlaybackStarted) return ResumeLoadingUi(null, null, null)
     val at = formatPlaybackTime(activeInitialPositionMs)
     return if (startOverOffered) {
         ResumeLoadingUi(

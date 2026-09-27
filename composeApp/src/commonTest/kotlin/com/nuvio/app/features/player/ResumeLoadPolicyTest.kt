@@ -46,4 +46,26 @@ class ResumeLoadPolicyTest {
     fun the_threshold_is_fifteen_seconds() {
         assertEquals(15_000L, ResumeLoadPolicy.START_OVER_OFFER_AFTER_MS)
     }
+
+    // Regression (emulator, 2026-09-27): the offer keyed off "the file opened" (snapshot not loading),
+    // but a slow provider stalls AFTER the open — on the jump to the saved position — so the loading
+    // screen and its button vanished while the viewer stared at a buffering spinner.
+    @Test
+    fun an_opened_file_that_has_drawn_no_frame_has_not_started() {
+        assertFalse(
+            ResumeLoadPolicy.playbackStarted(videoProgressTicks = 0L, hasVideoTrack = true, positionMs = 64_000L, initialPositionMs = 64_000L),
+            "opened, seeking, no frame yet",
+        )
+    }
+
+    @Test
+    fun the_first_frame_starts_playback() {
+        assertTrue(ResumeLoadPolicy.playbackStarted(videoProgressTicks = 1L, hasVideoTrack = true, positionMs = 64_000L, initialPositionMs = 64_000L))
+    }
+
+    @Test
+    fun audio_only_starts_when_the_position_moves() {
+        assertFalse(ResumeLoadPolicy.playbackStarted(0L, hasVideoTrack = false, positionMs = 64_500L, initialPositionMs = 64_000L), "not yet")
+        assertTrue(ResumeLoadPolicy.playbackStarted(0L, hasVideoTrack = false, positionMs = 66_000L, initialPositionMs = 64_000L), "moving")
+    }
 }

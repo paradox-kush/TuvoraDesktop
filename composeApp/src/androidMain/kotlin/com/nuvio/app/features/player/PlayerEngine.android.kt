@@ -2010,6 +2010,11 @@ private class NuvioLibmpvView(
                 ctl { loadCurrentSource(playWhenReady = true) }
             }
 
+            // mpv drops a seek issued before playback initialises, so reload at 0 instead.
+            override fun restartFromBeginning() {
+                ctl { loadCurrentSource(playWhenReady = true, startOption = "start=0") }
+            }
+
             /**
              * `video-reload` reinitialises the video track off the demuxer that is already
              * connected, so a wedged decoder is reset without asking the provider for a new

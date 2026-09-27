@@ -110,6 +110,10 @@ actual fun PlatformPlayerSurface(
                 bridge.retry()
             }
 
+            override fun restartFromBeginning() {
+                bridge.restartFromBeginning()
+            }
+
             override fun updateNowPlayingMetadata(info: PlayerNowPlayingInfo) {
                 runCatching {
                     bridge.updateNowPlayingMetadata(

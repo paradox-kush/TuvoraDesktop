@@ -55,6 +55,7 @@ final class MPVPlayerBridgeImpl: NSObject, NuvioPlayerBridge {
     func seekTo(positionMs: Int64) { playerVC?.seekToMs(positionMs) }
     func seekBy(offsetMs: Int64) { playerVC?.seekByMs(offsetMs) }
     func retry() { playerVC?.retryPlayback() }
+    func restartFromBeginning() { playerVC?.restartFromBeginning() }
     func updateNowPlayingMetadata(
         title: String,
         subtitle: String?,
@@ -671,6 +672,15 @@ final class MPVPlayerViewController: UIViewController {
         let seconds = Double(ms) / 1000.0
         let seekMode = exact ? "relative+exact" : "relative"
         command("seek", args: [String(format: "%.3f", seconds), seekMode])
+    }
+
+    /// "Start from beginning": reopen at 0:00 on this player. mpv drops a seek issued before playback
+    /// initialises, and a slow resume is stuck exactly there, so reload with a start position instead.
+    func restartFromBeginning() {
+        guard mpv != nil, let path = getString("path") else { return }
+        clearPlaybackError()
+        applyRequestHeaders(activeRequestHeaders)
+        command("loadfile", args: [path, "replace", "-1", "start=0"])
     }
 
     func retryPlayback() {

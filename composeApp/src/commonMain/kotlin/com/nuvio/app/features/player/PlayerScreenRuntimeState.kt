@@ -168,6 +168,8 @@ internal class PlayerScreenRuntime(
     // Bumped by "Start from beginning": re-mounts the player surface so the file reopens at 0:00.
     var startOverGeneration by mutableStateOf(0)
     var startOverOffered by mutableStateOf(false)
+    /** A resume has drawn its first frame ([ResumeLoadPolicy.playbackStarted]); not merely opened the file. */
+    var resumePlaybackStarted by mutableStateOf(false)
     var activeInitialProgressFraction by mutableStateOf(initialProgressFraction)
     var shouldPlay by mutableStateOf(true)
     var resizeMode by mutableStateOf(playerSettingsUiState.resizeMode.supportedOnCurrentPlatform())

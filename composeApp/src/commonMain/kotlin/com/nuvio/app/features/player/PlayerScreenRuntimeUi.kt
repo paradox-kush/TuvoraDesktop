@@ -548,6 +548,12 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                     if (!updatePlaybackSnapshot(snapshot)) return@PlatformPlayerSurface
                     refreshAudioTracksIfChanged()
                     if (!snapshot.isLoading) initialLoadCompleted = true
+                    if (!resumePlaybackStarted && ResumeLoadPolicy.playbackStarted(
+                            snapshot.videoProgressTicks, snapshot.hasVideoTrack, snapshot.positionMs, activeInitialPositionMs,
+                        )
+                    ) {
+                        resumePlaybackStarted = true
+                    }
                     // Re-arm the credential-refresh loop guard once the stream has genuinely recovered
                     // (played continuously well past the refresh baseline). A short-TTL link that dies
                     // ~5s after minting never reaches this threshold, so it cannot re-arm the loop.

@@ -975,6 +975,20 @@ internal class NativePlayerController(
         handle.takeIf { it != 0L }?.let { NativePlayerBridge.seekBy(it, offsetMs) }
     }
 
+    /** "Start from beginning": re-attach the current source at 0:00 on this controller (see [retry]). */
+    override fun restartFromBeginning() {
+        val pending = pendingSource ?: return seekTo(0L)
+        attach(
+            sourceUrl = pending.sourceUrl,
+            sourceHeaders = pending.headerLines.toHeaderMap(),
+            playWhenReady = true,
+            initialPositionMs = 0L,
+            decoderPriority = pending.decoderPriority,
+            nvidiaRtxSuperResolutionEnabled = pending.nvidiaRtxSuperResolutionEnabled,
+            onError = pending.onError,
+        )
+    }
+
     override fun retry() {
         val pending = pendingSource ?: return
         attach(

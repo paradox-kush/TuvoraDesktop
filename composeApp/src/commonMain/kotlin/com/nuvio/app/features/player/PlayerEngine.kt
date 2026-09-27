@@ -13,6 +13,13 @@ interface PlayerEngineController {
     }
     fun seekBy(offsetMs: Long)
     fun retry()
+    /**
+     * Reopen the current source at 0:00 on THIS player ("Start from beginning"). A new player would
+     * first wait for the old one to tear down, and with a slow provider the old one is stuck in the
+     * very read the viewer is trying to escape. Engines that cannot seek before playback starts
+     * (mpv) override this to reload with a start position.
+     */
+    fun restartFromBeginning() = seekTo(0L)
 
     /**
      * Reinitialise the video pipeline, leaving the connection alone — for a live channel whose

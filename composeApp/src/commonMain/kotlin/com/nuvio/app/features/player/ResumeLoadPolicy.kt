@@ -16,4 +16,14 @@ internal object ResumeLoadPolicy {
 
     fun offerStartOver(isResumeLoad: Boolean, firstFrameShown: Boolean, loadingForMs: Long): Boolean =
         isResumeLoad && !firstFrameShown && loadingForMs >= START_OVER_OFFER_AFTER_MS
+
+    /**
+     * Whether playback has really begun: a frame was drawn ([videoProgressTicks], normalised across
+     * engines), or, for audio-only streams, the position moved on from where it opened. "The file
+     * opened" is not enough — a slow provider stalls after the open, on the jump to the saved spot.
+     */
+    fun playbackStarted(videoProgressTicks: Long, hasVideoTrack: Boolean, positionMs: Long, initialPositionMs: Long): Boolean =
+        if (hasVideoTrack) videoProgressTicks > 0L else positionMs >= initialPositionMs + AUDIO_STARTED_AFTER_MS
+
+    private const val AUDIO_STARTED_AFTER_MS = 1_000L
 }

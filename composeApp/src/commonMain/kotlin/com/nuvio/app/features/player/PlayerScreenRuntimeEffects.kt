@@ -94,6 +94,7 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         // is exactly what let a short-TTL Stalker link re-mint forever. The counter is re-armed only on
         // a new videoId (channel/content change) or after sustained healthy playback — see below.
         initialLoadCompleted = false
+        resumePlaybackStarted = false
         lastProgressPersistEpochMs = 0L
         previousIsPlaying = false
         pendingSeekScrobbleRestart = false
@@ -157,6 +158,7 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         playerControllerSourceUrl = null
         playbackSnapshot = PlayerPlaybackSnapshot()
         initialLoadCompleted = false
+        resumePlaybackStarted = false
 
         try {
             val localUrl = P2pStreamingEngine.startStream(
