@@ -19,10 +19,17 @@ import kotlin.test.assertTrue
  */
 class ArchitectureTest {
 
-    private val files: List<Pair<String, String>> =
-        Konsist.scopeFromProject().files
+    // Only THIS checkout's sources. Nested worktrees (wt/…) hold their own copy of composeApp/src and
+    // must not be scanned twice — but the old `"/wt/" !in path` filter also dropped EVERY file when the
+    // checkout itself lives under wt/, so the whole test passed vacuously in any worktree. Keep the
+    // files whose checkout prefix is the shortest one seen (the project's own).
+    private val files: List<Pair<String, String>> = run {
+        val sources = Konsist.scopeFromProject().files
             .map { it.path to it.text }
-            .filter { (p, _) -> "/composeApp/src/" in p && "/wt/" !in p }
+            .filter { (p, _) -> "/composeApp/src/" in p }
+        val checkout = sources.map { (p, _) -> p.substringBefore("/composeApp/src/") }.minByOrNull { it.length }
+        sources.filter { (p, _) -> p.substringBefore("/composeApp/src/") == checkout }
+    }
 
     // --- fork-side definition (upstream absence, not directory naming) ---
     private val forkPaths = listOf(
@@ -47,6 +54,13 @@ class ArchitectureTest {
         text.replace(Regex("""/\*[\s\S]*?\*/"""), "").replace(Regex("""(?m)^\s*//.*$"""), "")
 
     private fun rel(path: String) = path.substringAfter("/composeApp/src/")
+
+    @Test
+    fun `the scan covers this checkout's sources`() {
+        // Guard against a vacuous pass: every rule below iterates [files].
+        assertTrue(files.size > 200, "scanned only ${files.size} source files")
+        assertTrue(files.any { (p, _) -> isWiringFile(p) }, "composition root not in the scan")
+    }
 
     @Test
     fun `non-fork code never references a fork feature or fork-only core subsystem (R2b + R2d)`() {
