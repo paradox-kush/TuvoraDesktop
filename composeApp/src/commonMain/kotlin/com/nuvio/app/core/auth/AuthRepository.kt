@@ -40,6 +40,22 @@ object AuthRepository {
     private val _signInRequests = MutableStateFlow(0)
     val signInRequests: StateFlow<Int> = _signInRequests.asStateFlow()
 
+    private val _sessionLostNotice = MutableStateFlow<LocalDataOwner?>(null)
+
+    /**
+     * Non-null while the "you were signed out; everything on this device was kept — sign in again"
+     * notice should show. Raised only for a lost session (never a deliberate sign-out), see D1.
+     */
+    val sessionLostNotice: StateFlow<LocalDataOwner?> = _sessionLostNotice.asStateFlow()
+
+    private val _accountSwitchPrompt = MutableStateFlow<AccountSwitchPrompt?>(null)
+
+    /**
+     * Non-null while a DIFFERENT account has signed in over a lost session's kept data. That account
+     * is held back (auth stays signed out, so nothing syncs) until the viewer confirms or cancels.
+     */
+    val accountSwitchPrompt: StateFlow<AccountSwitchPrompt?> = _accountSwitchPrompt.asStateFlow()
+
     private var initialized = false
     private var validatedRemoteUserId: String? = null
 
@@ -86,10 +102,12 @@ object AuthRepository {
                             val user = status.session.user
                             val userId = user?.id.orEmpty()
                             if (!validateRemoteSession(userId)) return@collect
-                            _state.value = AuthState.Authenticated(
-                                userId = userId,
-                                email = user?.email,
-                                isAnonymous = false,
+                            publishAuthState(
+                                AuthState.Authenticated(
+                                    userId = userId,
+                                    email = user?.email,
+                                    isAnonymous = false,
+                                )
                             )
                         }
                         is SessionStatus.NotAuthenticated -> {
@@ -98,7 +116,12 @@ object AuthRepository {
                             // been re-imported. Only show sign-in when storage has no recoverable
                             // full-account session. Explicit sign-out clears storage first.
                             if (!restorePersistedSession()) {
+                                // No session left to switch to, so any pending switch prompt is moot.
+                                _accountSwitchPrompt.value = null
                                 _state.value = AuthState.Unauthenticated
+                                // A session that vanished (e.g. "No entry with the key sb-…-session"
+                                // on launch) keeps the data and asks the viewer to sign in again.
+                                refreshSessionLostNotice()
                             }
                         }
                         is SessionStatus.Initializing -> {
@@ -112,10 +135,12 @@ object AuthRepository {
                             val user = runCatching {
                                 SupabaseProvider.client.auth.sessionManager.loadSession()
                             }.getOrNull()?.user
-                            _state.value = authStateAfterRefreshFailure(
-                                current = _state.value,
-                                persistedUserId = user?.id,
-                                persistedEmail = user?.email,
+                            publishAuthState(
+                                authStateAfterRefreshFailure(
+                                    current = _state.value,
+                                    persistedUserId = user?.id,
+                                    persistedEmail = user?.email,
+                                )
                             )
                         }
                     }
@@ -137,12 +162,15 @@ object AuthRepository {
             val persistedUser = runCatching {
                 SupabaseProvider.client.auth.sessionManager.loadSession()
             }.getOrNull()?.user
-            _state.value = authStateAfterInitStall(
-                current = _state.value,
-                anonymousUserId = anonymousUserId,
-                persistedUserId = persistedUser?.id,
-                persistedEmail = persistedUser?.email,
+            publishAuthState(
+                authStateAfterInitStall(
+                    current = _state.value,
+                    anonymousUserId = anonymousUserId,
+                    persistedUserId = persistedUser?.id,
+                    persistedEmail = persistedUser?.email,
+                )
             )
+            if (_state.value is AuthState.Unauthenticated) refreshSessionLostNotice()
             log.w { "Auth init not settled after ${AUTH_INIT_STALL_TIMEOUT_MS}ms; proceeding with ${_state.value::class.simpleName}" }
         }
     }
@@ -157,10 +185,12 @@ object AuthRepository {
         if (persistedSession.refreshToken.isBlank()) return false
 
         // Keep the cached account usable offline while the SDK refreshes in the background.
-        _state.value = AuthState.Authenticated(
-            userId = user.id,
-            email = user.email,
-            isAnonymous = false,
+        publishAuthState(
+            AuthState.Authenticated(
+                userId = user.id,
+                email = user.email,
+                isAnonymous = false,
+            )
         )
         return runCatching {
             auth.importSession(persistedSession, autoRefresh = true)
@@ -241,6 +271,9 @@ object AuthRepository {
 
     suspend fun signOut(): Result<Unit> {
         _error.value = null
+        // Deliberate: forget the data owner BEFORE the session goes, so the NotAuthenticated this
+        // triggers is not mistaken for a lost session (no "sign in again" notice).
+        forgetLocalDataOwner()
         val anonymousRead = runCatching { AuthStorage.loadAnonymousUserId() }
         val wasAnonymous = anonymousRead.getOrNull() != null
         val anonymousClear = runCatching { AuthStorage.clearAnonymousUserId() }
@@ -257,7 +290,10 @@ object AuthRepository {
         } else {
             Result.success(Unit)
         }
-        val localCleanup = runCatching { LocalAccountDataCleaner.wipe() }
+        val localCleanup = runCatching {
+            endAccountSession(SessionEndReason.USER_SIGN_OUT, clearLocalData = LocalAccountDataCleaner::wipe)
+        }
+        forgetLocalDataOwner()
         _state.value = AuthState.Unauthenticated
 
         val failure = anonymousRead.exceptionOrNull()
@@ -298,6 +334,12 @@ object AuthRepository {
         return true
     }
 
+    /**
+     * The server said this session is dead. That is a LOST session, not a sign-out: the dead auth is
+     * dropped, but every profile's local data — including progress that never synced — stays, and the
+     * viewer is asked to sign in again (D1). Signing back in to the same account syncs what is pending;
+     * a different account is held behind [accountSwitchPrompt].
+     */
     private suspend fun clearLocalSessionAfterRemoteInvalidation() {
         _error.value = null
         AuthStorage.clearAnonymousUserId()
@@ -305,17 +347,121 @@ object AuthRepository {
         runCatching {
             SupabaseProvider.client.auth.clearSession()
         }.onFailure { e ->
-            log.w(e) { "Failed to clear Supabase session after remote invalidation; continuing local reset" }
+            log.w(e) { "Failed to clear Supabase session after remote invalidation; local data is kept" }
         }
-        val localCleanup = runCatching { LocalAccountDataCleaner.wipe() }
         _state.value = AuthState.Unauthenticated
-        localCleanup.onFailure { error ->
-            log.e(error) { "Local account cleanup failed after remote session invalidation" }
+        endAccountSession(
+            reason = SessionEndReason.SESSION_LOST,
+            clearLocalData = LocalAccountDataCleaner::wipe,
+            onSessionLost = ::refreshSessionLostNotice,
+        )
+    }
+
+    /**
+     * The one place a full (non-anonymous) account becomes the app's auth state. When a lost
+     * session's data from a DIFFERENT account is still on the device, that account is held back —
+     * auth stays signed out so no sync can push the kept data into it — and the viewer is asked.
+     */
+    private fun publishAuthState(next: AuthState) {
+        if (next !is AuthState.Authenticated || next.isAnonymous || next.userId.isBlank()) {
+            _state.value = next
+            return
         }
+        val owner = LocalDataOwnerStore.load()
+        when (AccountDataRetentionPolicy.decideOnSignIn(owner, next.userId)) {
+            SignInDataDecision.PROCEED -> {
+                LocalDataOwnerStore.record(LocalDataOwner(userId = next.userId, email = next.email))
+                _accountSwitchPrompt.value = null
+                _sessionLostNotice.value = null
+                _state.value = next
+            }
+            SignInDataDecision.ASK_BEFORE_REPLACING_OTHER_ACCOUNT_DATA -> {
+                val previousOwner = owner ?: return
+                if (_accountSwitchPrompt.value?.newUserId != next.userId) {
+                    log.w { "A different account signed in over a lost session's kept data; asking before touching it" }
+                }
+                _accountSwitchPrompt.value = AccountSwitchPrompt(
+                    previousOwner = previousOwner,
+                    newUserId = next.userId,
+                    newEmail = next.email,
+                )
+                _sessionLostNotice.value = null
+                if (_state.value !is AuthState.Unauthenticated) _state.value = AuthState.Unauthenticated
+            }
+        }
+    }
+
+    private fun refreshSessionLostNotice() {
+        val owner = LocalDataOwnerStore.load()
+        _sessionLostNotice.value = owner?.takeIf {
+            AccountDataRetentionPolicy.showsSessionLostNotice(
+                isSignedOut = _state.value is AuthState.Unauthenticated,
+                owner = it,
+                acknowledged = LocalDataOwnerStore.isNoticeAcknowledged(),
+            )
+        }
+    }
+
+    /** The viewer has seen the lost-session notice; do not show it again until the next loss. */
+    fun acknowledgeSessionLostNotice() {
+        LocalDataOwnerStore.acknowledgeNotice()
+        _sessionLostNotice.value = null
+    }
+
+    /**
+     * The viewer confirmed continuing as the new account: the previous account's kept data leaves the
+     * device (a deliberate choice, like signing that account out), then the new account signs in and
+     * syncs its own data. Nothing of the previous account is pushed to the new one.
+     */
+    suspend fun confirmAccountSwitch() {
+        val prompt = _accountSwitchPrompt.value ?: return
+        forgetLocalDataOwner()
+        runCatching {
+            endAccountSession(SessionEndReason.SWITCHED_ACCOUNT, clearLocalData = LocalAccountDataCleaner::wipe)
+        }.onFailure { error ->
+            log.e(error) { "Local cleanup failed while switching accounts" }
+        }
+        forgetLocalDataOwner()
+        val liveUser = runCatching { SupabaseProvider.client.auth.currentUserOrNull() }.getOrNull()
+            ?.takeIf { it.id == prompt.newUserId }
+        publishAuthState(
+            AuthState.Authenticated(
+                userId = prompt.newUserId,
+                email = liveUser?.email ?: prompt.newEmail,
+                isAnonymous = false,
+            )
+        )
+    }
+
+    /**
+     * The viewer chose to keep the previous account's data: the new account's session is dropped
+     * (local scope — its other devices are untouched) and the kept data stays, waiting for the
+     * previous account to sign back in.
+     */
+    suspend fun cancelAccountSwitch() {
+        _accountSwitchPrompt.value ?: return
+        _accountSwitchPrompt.value = null
+        // They just read why they are signed out; don't stack the lost-session notice on top.
+        LocalDataOwnerStore.acknowledgeNotice()
+        _sessionLostNotice.value = null
+        validatedRemoteUserId = null
+        runCatching { SupabaseProvider.client.auth.signOut() }
+            .onFailure { error ->
+                log.w(error) { "Sign-out of the declined account failed; clearing its session locally" }
+                runCatching { SupabaseProvider.client.auth.clearSession() }
+            }
+        _state.value = AuthState.Unauthenticated
+    }
+
+    private fun forgetLocalDataOwner() {
+        LocalDataOwnerStore.clear()
+        _sessionLostNotice.value = null
+        _accountSwitchPrompt.value = null
     }
 
     suspend fun resetForSyncBackendChange(): Result<Unit> = runCatching {
         _error.value = null
+        forgetLocalDataOwner()
         val wasAnonymous = AuthStorage.loadAnonymousUserId() != null
         AuthStorage.clearAnonymousUserId()
         validatedRemoteUserId = null
@@ -329,7 +475,8 @@ object AuthRepository {
         }
 
         _state.value = AuthState.Unauthenticated
-        LocalAccountDataCleaner.wipe()
+        endAccountSession(SessionEndReason.SYNC_BACKEND_SWITCH, clearLocalData = LocalAccountDataCleaner::wipe)
+        forgetLocalDataOwner()
     }.onFailure { e ->
         log.e(e) { "Sync backend auth reset failed" }
         _error.value = e.message ?: getString(Res.string.auth_sign_out_failed)
@@ -338,13 +485,16 @@ object AuthRepository {
     suspend fun deleteAccount(): Result<Unit> = runCatching {
         _error.value = null
         SupabaseProvider.client.functions.invoke("delete-account")
+        forgetLocalDataOwner()
         SupabaseProvider.client.auth.signOut()
         validatedRemoteUserId = null
         try {
-            LocalAccountDataCleaner.wipe()
+            endAccountSession(SessionEndReason.ACCOUNT_DELETED, clearLocalData = LocalAccountDataCleaner::wipe)
         } finally {
+            forgetLocalDataOwner()
             _state.value = AuthState.Unauthenticated
         }
+        Unit
     }.onFailure { e ->
         log.e(e) { "Account deletion failed" }
         _error.value = e.message ?: getString(Res.string.auth_account_deletion_failed)

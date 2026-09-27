@@ -23,4 +23,15 @@ actual object AuthStorage {
     actual fun clearAnonymousUserId() {
         preferences?.edit()?.remove(KEY_ANONYMOUS_USER_ID)?.apply()
     }
+
+    actual fun loadValue(key: String): String? =
+        preferences?.getString(key, null)
+
+    actual fun saveValue(key: String, value: String) {
+        preferences?.edit()?.putString(key, value)?.apply()
+    }
+
+    actual fun removeValue(key: String) {
+        preferences?.edit()?.remove(key)?.apply()
+    }
 }

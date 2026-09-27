@@ -1615,6 +1615,14 @@
     <string name="auth_account_deletion_failed">Account deletion failed</string>
     <string name="auth_sign_in_failed">Sign-in failed</string>
     <string name="auth_sign_out_failed">Sign-out failed</string>
+    <string name="account_session_lost_title">You were signed out</string>
+    <string name="account_session_lost_message">Your Tuvora session ended, so this device stopped syncing. Everything on this device has been kept, including anything that hadn't synced yet. Sign in again to sync it.</string>
+    <string name="account_session_lost_later">Not now</string>
+    <string name="account_switch_title">Different account</string>
+    <string name="account_switch_message">This device still has data from %1$s, and some of it may not have synced. It won't be added to %2$s. Continue as %2$s and remove it from this device, or keep it and sign back in as %1$s later.</string>
+    <string name="account_switch_confirm">Remove and continue</string>
+    <string name="account_switch_keep">Keep data</string>
+    <string name="account_switch_unknown_account">another account</string>
     <string name="auth_sign_up_failed">Sign-up failed</string>
     <string name="catalog_load_failed">Unable to load catalog items.</string>
     <string name="continue_watching_up_next">Next Up</string>
