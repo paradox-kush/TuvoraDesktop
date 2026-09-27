@@ -2,6 +2,7 @@ package com.nuvio.app.features.iptv
 
 import com.nuvio.app.core.contracts.StreamSourceGroup
 import com.nuvio.app.core.contracts.StreamSourceProvider
+import com.nuvio.app.features.iptv.match.MatchKind
 import com.nuvio.app.features.iptv.match.XtreamStreamSource
 import com.nuvio.app.features.streams.StreamItem
 
@@ -28,11 +29,26 @@ internal object XtreamStreamSourceProvider : StreamSourceProvider {
     override fun matchSourceGroups(type: String): List<StreamSourceGroup> {
         if (type != "movie" && type != "series") return emptyList()
         XtreamRepository.ensureLoaded()
-        return XtreamRepository.uiState.value.accounts
-            .filter {
-                it.enabled && (it.sourceType == SOURCE_TYPE_XTREAM || it.sourceType == SOURCE_TYPE_STALKER)
-            }
+        return matchTargets(XtreamRepository.uiState.value.accounts, type)
             .map { StreamSourceGroup(XtreamStreamSource.groupId(it), it.name) }
+    }
+
+    /**
+     * Playlists that may offer matched sources for [type] ("movie" / "series"): enabled Xtream and
+     * Stalker playlists whose in-app settings leave that content type on with at least one category
+     * (B19). A playlist that offers nothing gets no source group at all, rather than an empty one.
+     */
+    internal fun matchTargets(accounts: List<XtreamAccount>, type: String): List<XtreamAccount> {
+        val kind = when (type) {
+            "movie" -> MatchKind.MOVIE
+            "series" -> MatchKind.SERIES
+            else -> return emptyList()
+        }
+        return accounts.filter {
+            it.enabled &&
+                (it.sourceType == SOURCE_TYPE_XTREAM || it.sourceType == SOURCE_TYPE_STALKER) &&
+                XtreamStreamSource.offersKind(it, kind)
+        }
     }
 
     override suspend fun resolveMatchStreams(
