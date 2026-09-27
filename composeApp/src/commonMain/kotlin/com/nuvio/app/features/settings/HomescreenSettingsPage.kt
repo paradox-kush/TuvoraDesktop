@@ -67,6 +67,11 @@ import nuvio.composeapp.generated.resources.settings_homescreen_show_hero
 import nuvio.composeapp.generated.resources.settings_homescreen_show_hero_description
 import nuvio.composeapp.generated.resources.settings_homescreen_summary
 import nuvio.composeapp.generated.resources.settings_homescreen_summary_hint
+import nuvio.composeapp.generated.resources.settings_continue_watching_show_description
+import nuvio.composeapp.generated.resources.settings_continue_watching_show_title
+import nuvio.composeapp.generated.resources.settings_continue_watching_split_by_type_description
+import nuvio.composeapp.generated.resources.settings_continue_watching_split_by_type_title
+import com.nuvio.app.features.watchprogress.ContinueWatchingPreferencesRepository
 import org.jetbrains.compose.resources.stringResource
 import sh.calvin.reorderable.ReorderableCollectionItemScope
 import sh.calvin.reorderable.ReorderableItem
@@ -78,6 +83,8 @@ internal fun LazyListScope.homescreenSettingsContent(
     showCatalogType: Boolean,
     hideUnreleasedContent: Boolean,
     showLiveOnHome: Boolean,
+    continueWatchingVisible: Boolean,
+    continueWatchingSplitByType: Boolean,
     items: List<HomeCatalogSettingsItem>,
     isCatalogLoading: Boolean,
     catalogErrorMessage: String?,
@@ -121,6 +128,26 @@ internal fun LazyListScope.homescreenSettingsContent(
                     isTablet = isTablet,
                     onCheckedChange = HomeCatalogSettingsRepository::setHideUnreleasedContent,
                 )
+                // Every row the home screen can show or hide is switched here (Continue Watching also keeps
+                // its own page for its style options; both bind the same preferences).
+                SettingsGroupDivider(isTablet = isTablet)
+                SettingsSwitchRow(
+                    title = stringResource(Res.string.settings_continue_watching_show_title),
+                    description = stringResource(Res.string.settings_continue_watching_show_description),
+                    checked = continueWatchingVisible,
+                    isTablet = isTablet,
+                    onCheckedChange = ContinueWatchingPreferencesRepository::setVisible,
+                )
+                if (continueWatchingVisible) {
+                    SettingsGroupDivider(isTablet = isTablet)
+                    SettingsSwitchRow(
+                        title = stringResource(Res.string.settings_continue_watching_split_by_type_title),
+                        description = stringResource(Res.string.settings_continue_watching_split_by_type_description),
+                        checked = continueWatchingSplitByType,
+                        isTablet = isTablet,
+                        onCheckedChange = ContinueWatchingPreferencesRepository::setSplitByType,
+                    )
+                }
                 SettingsGroupDivider(isTablet = isTablet)
                 SettingsSwitchRow(
                     title = stringResource(Res.string.layout_show_live_on_home),

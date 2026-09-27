@@ -62,6 +62,11 @@ fun HomescreenSettingsScreen(
         HomeCatalogSettingsRepository.syncCollections(collections)
     }
 
+    val continueWatchingPreferencesUiState by remember {
+        ContinueWatchingPreferencesRepository.ensureLoaded()
+        ContinueWatchingPreferencesRepository.uiState
+    }.collectAsStateWithLifecycle()
+
     NuvioScreen(
         modifier = Modifier.fillMaxSize(),
     ) {
@@ -77,6 +82,8 @@ fun HomescreenSettingsScreen(
             showCatalogType = homescreenSettingsUiState.showCatalogType,
             hideUnreleasedContent = homescreenSettingsUiState.hideUnreleasedContent,
             showLiveOnHome = homescreenSettingsUiState.showLiveOnHome,
+            continueWatchingVisible = continueWatchingPreferencesUiState.isVisible,
+            continueWatchingSplitByType = continueWatchingPreferencesUiState.splitByType,
             items = homescreenSettingsUiState.items,
             isCatalogLoading = addonManifestsLoading,
             catalogErrorMessage = addonManifestErrorMessage,
