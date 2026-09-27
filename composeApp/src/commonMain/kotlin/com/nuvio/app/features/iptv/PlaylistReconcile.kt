@@ -10,6 +10,11 @@ package com.nuvio.app.features.iptv
  *   delete A,       server holds [A,B]  ⇒  Delete(A) onto [A,B] = [B]     (not a resurrection)
  *   edit B,         server holds [A,B]  ⇒  Update(B') onto [A,B] = [A,B'] (edit re-applied)
  *   edit B,         server deleted B    ⇒  Update(B') dropped, surfaced   (no zombie re-add)
+ *   edit A's URL,   server holds [A,B]  ⇒  Replace(A→A2) = [A2,B]        (B60: in place, never a delete)
+ *
+ * Edits carry the pre-edit row as `base`, and only the fields the user changed (`edit != base`) are
+ * applied onto the server row — per-field last-writer-wins, so a stale form on one device cannot
+ * blank a user agent or revert a refresh interval that another device (or the web) set.
  *
  * Intent, not a set-union: a set diff would resurrect a row the user deleted on this device the
  * moment another device still lists it. These are pure functions — the durable op log, the v2 push
@@ -24,8 +29,22 @@ sealed interface PendingPlaylistOp {
     }
 
     /** The user edited an existing playlist. Re-applied to the matching baseline row; dropped (and
-     *  surfaced) if the server no longer has that id. */
-    data class Update(val account: XtreamAccount) : PendingPlaylistOp {
+     *  surfaced) if the server no longer has that id. [base] is the row as it was before the edit: when
+     *  present only the fields that differ from it are applied (see [mergeEditOntoServer]); null (a
+     *  pending log written by an older build) keeps the whole-row semantics. */
+    data class Update(val account: XtreamAccount, val base: XtreamAccount? = null) : PendingPlaylistOp {
+        override val id: String get() = account.id
+    }
+
+    /**
+     * B60 — the user edited a playlist's URL / username / MAC, which changes its id (ids are derived
+     * from the connection). One atomic op: [oldId] leaves the set and [account] takes its position.
+     * Modelled explicitly because as an Update it was dropped (the new id is not on the server — the
+     * edit snapped back) and as Delete+Update it deleted the playlist (and, for the only one, pushed a
+     * delete-all). If [oldId] is already gone on the server the row is kept as an add: the user just
+     * typed it.
+     */
+    data class Replace(val oldId: String, val account: XtreamAccount, val base: XtreamAccount? = null) : PendingPlaylistOp {
         override val id: String get() = account.id
     }
 
@@ -56,10 +75,33 @@ fun reconcilePendingOntoBaseline(
     ops.forEach { op ->
         when (op) {
             is PendingPlaylistOp.Add -> byId[op.account.id] = op.account // upsert: append or replace
-            is PendingPlaylistOp.Update ->
-                if (byId.containsKey(op.account.id)) byId[op.account.id] = op.account
+            is PendingPlaylistOp.Update -> {
+                val server = byId[op.account.id]
+                if (server != null) byId[op.account.id] = mergeEditOntoServer(server, op.base, op.account)
                 else dropped += op.account.id                            // server row gone — do not re-add
+            }
             is PendingPlaylistOp.Delete -> byId.remove(op.id)
+            is PendingPlaylistOp.Replace -> {
+                val serverOld = byId[op.oldId]
+                if (serverOld == null) {
+                    // Old row deleted elsewhere (or already replaced there): keep the user's row as an
+                    // add, merged onto any server row that already carries the new id.
+                    val serverNew = byId[op.account.id]
+                    byId[op.account.id] = if (serverNew != null) mergeEditOntoServer(serverNew, op.base, op.account) else op.account
+                } else {
+                    val merged = mergeEditOntoServer(serverOld, op.base, op.account)
+                    val rebuilt = LinkedHashMap<String, XtreamAccount>()
+                    byId.forEach { (id, row) ->
+                        when (id) {
+                            op.oldId -> rebuilt[op.account.id] = merged   // new id takes the old one's position
+                            op.account.id -> Unit                          // a pre-existing duplicate of the new id
+                            else -> rebuilt[id] = row
+                        }
+                    }
+                    byId.clear()
+                    byId.putAll(rebuilt)
+                }
+            }
         }
     }
     return PlaylistReconcileResult(byId.values.toList(), dropped)
@@ -101,3 +143,36 @@ fun classifyPlaylistPull(succeeded: Boolean, accounts: List<XtreamAccount>, revi
  * and a [PlaylistPullOutcome.Present] set must be reconciled onto (B24 §4).
  */
 fun PlaylistPullOutcome.permitsFreshCreation(): Boolean = this is PlaylistPullOutcome.AuthoritativeAbsent
+
+/**
+ * B60/B04 — per-field last-writer-wins for an edit replayed onto the server's row. A synced field the
+ * user changed ([edit] differs from [base]) takes the edited value; every other synced field keeps
+ * the [server]'s, so an edit made from a stale form cannot overwrite what another device set. The id
+ * and this device's local-only preferences (never on the wire) come from [edit]. A null [base] (a
+ * pending log written before this field existed) is the old whole-row replace.
+ */
+fun mergeEditOntoServer(server: XtreamAccount, base: XtreamAccount?, edit: XtreamAccount): XtreamAccount {
+    if (base == null) return edit
+    fun <T> pick(serverValue: T, baseValue: T, editValue: T): T = if (editValue != baseValue) editValue else serverValue
+    return edit.copy(
+        name = pick(server.name, base.name, edit.name),
+        baseUrl = pick(server.baseUrl, base.baseUrl, edit.baseUrl),
+        username = pick(server.username, base.username, edit.username),
+        password = pick(server.password, base.password, edit.password),
+        enabled = pick(server.enabled, base.enabled, edit.enabled),
+        sourceType = pick(server.sourceType, base.sourceType, edit.sourceType),
+        epgUrl = pick(server.epgUrl, base.epgUrl, edit.epgUrl),
+        userAgent = pick(server.userAgent, base.userAgent, edit.userAgent),
+        fileName = pick(server.fileName, base.fileName, edit.fileName),
+        dnsProvider = pick(server.dnsProvider, base.dnsProvider, edit.dnsProvider),
+        autoRefreshHours = pick(server.autoRefreshHours, base.autoRefreshHours, edit.autoRefreshHours),
+        contentTypes = pick(server.contentTypes, base.contentTypes, edit.contentTypes),
+        categorySelections = pick(server.categorySelections, base.categorySelections, edit.categorySelections),
+        macAddress = pick(server.macAddress, base.macAddress, edit.macAddress),
+        stalkerUsername = pick(server.stalkerUsername, base.stalkerUsername, edit.stalkerUsername),
+        stalkerPassword = pick(server.stalkerPassword, base.stalkerPassword, edit.stalkerPassword),
+        serialNumber = pick(server.serialNumber, base.serialNumber, edit.serialNumber),
+        deviceId = pick(server.deviceId, base.deviceId, edit.deviceId),
+        sendDeviceId = pick(server.sendDeviceId, base.sendDeviceId, edit.sendDeviceId),
+    )
+}

@@ -66,6 +66,109 @@ class PlaylistReconcileTest {
         assertEquals("New", result.accounts.single().name)
     }
 
+    // --- B60: replace (id-changing edit) + field-level merge ----------------------------------------
+
+    @Test
+    fun `a replace swaps the old id for the new one in place`() {
+        val result = reconcilePendingOntoBaseline(
+            listOf(acc("A"), acc("B")),
+            listOf(PendingPlaylistOp.Replace(oldId = "A", account = acc("A2"), base = acc("A"))),
+        )
+        assertEquals(listOf("A2", "B"), result.accounts.map { it.id }, "old id removed, new id at its position")
+        assertTrue(result.droppedUpdateIds.isEmpty())
+    }
+
+    @Test
+    fun `a replace whose old row was deleted elsewhere is kept as the user's add`() {
+        val result = reconcilePendingOntoBaseline(
+            listOf(acc("B")),
+            listOf(PendingPlaylistOp.Replace(oldId = "A", account = acc("A2"), base = acc("A"))),
+        )
+        assertEquals(listOf("B", "A2"), result.accounts.map { it.id }, "the user typed this playlist; it is not dropped")
+    }
+
+    @Test
+    fun `a replace of the only playlist never yields an empty set`() {
+        val result = reconcilePendingOntoBaseline(
+            listOf(acc("A")),
+            listOf(PendingPlaylistOp.Replace(oldId = "A", account = acc("A2"), base = acc("A"))),
+        )
+        assertEquals(listOf("A2"), result.accounts.map { it.id })
+    }
+
+    @Test
+    fun `an update with a base applies only the fields the user changed`() {
+        val base = acc("A")
+        val server = base.copy(userAgent = "X", name = "Server name")
+        val edited = base.copy(autoRefreshHours = 6)
+        val merged = mergeEditOntoServer(server, base, edited)
+        assertEquals(6, merged.autoRefreshHours, "the edited field wins")
+        assertEquals("X", merged.userAgent, "an untouched field keeps the server's value")
+        assertEquals("Server name", merged.name, "an untouched field keeps the server's value")
+    }
+
+    @Test
+    fun `an update without a base replaces the whole row - older pending logs`() {
+        val result = reconcilePendingOntoBaseline(
+            listOf(acc("A").copy(userAgent = "X")),
+            listOf(PendingPlaylistOp.Update(acc("A", name = "New"))),
+        )
+        assertEquals("New", result.accounts.single().name)
+        assertEquals(null, result.accounts.single().userAgent, "no base = legacy whole-row semantics")
+    }
+
+    // --- B60: pending-op collapse rules for replace -------------------------------------------------
+
+    @Test
+    fun `a replace is recorded as one op carrying the old id`() {
+        val ops = emptyList<PendingOpDto>().recordReplace("A", acc("A2"), base = acc("A"))
+        assertEquals(1, ops.size)
+        assertEquals("replace", ops.single().kind)
+        assertEquals("A", ops.single().oldId)
+        assertEquals("A2", ops.single().id)
+    }
+
+    @Test
+    fun `a replace of a locally added playlist stays an add`() {
+        val ops = emptyList<PendingOpDto>().recordAdd(acc("A")).recordReplace("A", acc("A2"), base = acc("A"))
+        assertEquals(listOf("add" to "A2"), ops.map { it.kind to it.id })
+    }
+
+    @Test
+    fun `a replace chain collapses to the first old id and the first base`() {
+        val ops = emptyList<PendingOpDto>()
+            .recordReplace("A", acc("B"), base = acc("A"))
+            .recordReplace("B", acc("C"), base = acc("B"))
+        assertEquals(1, ops.size)
+        assertEquals("A", ops.single().oldId)
+        assertEquals("C", ops.single().id)
+        assertEquals("A", ops.single().base?.id, "the base stays the last-synced row")
+    }
+
+    @Test
+    fun `deleting a replaced playlist deletes the old id`() {
+        val ops = emptyList<PendingOpDto>().recordReplace("A", acc("B"), base = acc("A")).recordDelete("B")
+        assertEquals(listOf("delete" to "A"), ops.map { it.kind to it.id })
+    }
+
+    @Test
+    fun `an update after a replace keeps the replace`() {
+        val ops = emptyList<PendingOpDto>()
+            .recordReplace("A", acc("B"), base = acc("A"))
+            .recordUpdate(acc("B", name = "Renamed"), base = acc("B"))
+        assertEquals(1, ops.size)
+        assertEquals("replace", ops.single().kind)
+        assertEquals("A", ops.single().oldId)
+        assertEquals("Renamed", ops.single().account?.name)
+    }
+
+    @Test
+    fun `an older pending log without base or old id still decodes`() {
+        val raw = """{"revision":3,"pending":[{"kind":"update","id":"A","account":{"id":"A","name":"P","baseUrl":"http://A","username":"u","password":"p"}}]}"""
+        val ops = decodePlaylistSyncState(raw).pending.toOps()
+        assertEquals(listOf<PendingPlaylistOp>(PendingPlaylistOp.Update(acc("A"))), ops)
+    }
+
     // --- pull classification: never infer absence from a failure -----------------------------------
 
     @Test

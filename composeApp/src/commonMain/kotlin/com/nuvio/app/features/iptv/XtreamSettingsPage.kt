@@ -80,10 +80,12 @@ internal fun LazyListScope.xtreamSettingsContent(
                     SettingsGroupDivider(isTablet = isTablet)
                     SettingsNavigationRow(
                         title = account.name,
-                        description = com.nuvio.app.features.iptv.match.indexingStatusLine(
-                            isIndexing = account.id in indexingAccounts,
-                            progress = indexProgress[account.id],
-                        ) ?: (account.baseUrl + if (account.enabled) "" else "  •  disabled"),
+                        // B60: an edit saved despite a failed provider check says so first.
+                        description = state.saveWarnings[account.id]
+                            ?: com.nuvio.app.features.iptv.match.indexingStatusLine(
+                                isIndexing = account.id in indexingAccounts,
+                                progress = indexProgress[account.id],
+                            ) ?: (account.baseUrl + if (account.enabled) "" else "  •  disabled"),
                         isTablet = isTablet,
                         onClick = { actionsFor = account },
                     )
