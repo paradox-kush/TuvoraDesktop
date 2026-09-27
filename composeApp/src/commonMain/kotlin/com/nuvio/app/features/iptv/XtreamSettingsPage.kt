@@ -43,6 +43,11 @@ internal fun LazyListScope.xtreamSettingsContent(
         var actionsFor by remember { mutableStateOf<XtreamAccount?>(null) }
         var pendingRemoval by remember { mutableStateOf<XtreamAccount?>(null) }
         val rematchScope = rememberCoroutineScope()
+        var hiddenFor by remember { mutableStateOf<XtreamAccount?>(null) }
+        val hiddenController = remember(rematchScope) {
+            com.nuvio.app.features.iptv.overlay.IptvHiddenItemsController(rematchScope)
+        }
+        val hiddenState by hiddenController.state.collectAsStateWithLifecycle()
         // A first catalog build runs for minutes on a large panel (~17 on a measured 468k items),
         // and this screen showed NOTHING while it happened — the `indexing` flow existed but had no
         // consumer. NuvioTV has shown a status here all along.
@@ -119,6 +124,10 @@ internal fun LazyListScope.xtreamSettingsContent(
                                     when (action) {
                                         PlaylistAction.EDIT -> onEditPlaylist(account)
                                         PlaylistAction.CONTENT -> onOpenContent(account)
+                                        PlaylistAction.HIDDEN -> {
+                                            hiddenFor = account
+                                            hiddenController.open(account)
+                                        }
                                         // Stale "not on this provider" verdicts hide titles the panel added
                                         // AFTER the verdict (they sync across devices and live up to 7 days).
                                         // Catalog syncs that ADD items reset them automatically; this is the
@@ -147,6 +156,15 @@ internal fun LazyListScope.xtreamSettingsContent(
                 dismissButton = {
                     TextButton(onClick = { actionsFor = null }) { Text("Close") }
                 },
+            )
+        }
+
+        hiddenFor?.let { account ->
+            IptvHiddenItemsDialog(
+                playlistName = account.name,
+                state = hiddenState,
+                onUnhide = { hiddenController.unhide(account, it) },
+                onDismiss = { hiddenFor = null },
             )
         }
 

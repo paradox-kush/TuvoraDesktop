@@ -1,6 +1,7 @@
 package com.nuvio.app.features.livetv
 
 import com.nuvio.app.features.epg.EpgMirrorRepository
+import com.nuvio.app.features.iptv.CONTENT_TYPE_LIVE
 import com.nuvio.app.features.iptv.CatchUpDialectWalk
 import com.nuvio.app.features.iptv.CatchUpEpgRepository
 import com.nuvio.app.features.iptv.EpgSourceLadder
@@ -12,7 +13,10 @@ import com.nuvio.app.features.iptv.XtreamItemRegistry
 import com.nuvio.app.features.iptv.XtreamKind
 import com.nuvio.app.features.iptv.XtreamLiveRecents
 import com.nuvio.app.features.iptv.XtreamRepository
+import com.nuvio.app.features.iptv.XtreamChannel
 import com.nuvio.app.features.iptv.XtreamProgram
+import com.nuvio.app.features.iptv.allowsCategory
+import com.nuvio.app.features.iptv.overlay.IptvHiddenItemsPolicy
 import com.nuvio.app.features.iptv.XtreamSearchIndex
 import com.nuvio.app.features.iptv.resolveLivePlaybackUrl
 import com.nuvio.app.features.trakt.TraktPlatformClock
@@ -99,9 +103,10 @@ object LiveTvData {
         XtreamRepository.ensureLoaded()
         val account = XtreamRepository.uiState.value.accounts
             .firstOrNull { it.id == parsed.accountId } ?: return emptyList()
-        val channels = runCatching { XtreamSearchIndex.liveChannelsFor(account) }
+        val allChannels = runCatching { XtreamSearchIndex.liveChannelsFor(account) }
             .getOrDefault(emptyList())
-        if (channels.isEmpty()) return emptyList()
+        if (allChannels.isEmpty()) return emptyList()
+        val channels = visibleGuideChannels(account, allChannels, currentStreamId = parsed.id)
 
         val currentCategory = channels.firstOrNull { it.streamId.toString() == parsed.id }?.categoryId
         val supportsCatchUp = CatchUpEpgRepository.supportsCatchUp(account)
@@ -152,6 +157,38 @@ object LiveTvData {
         return com.nuvio.app.features.iptv.overlay.IptvChannelOverlayPolicy.displayedByCategory(
             tagged, overlay, categoryOf = { it.categoryId }, withName = { row, newName -> row.copy(name = newName) },
         )
+    }
+
+    /**
+     * B65: the guide drops channels whose category is hidden (website or device) or switched off in the
+     * playlist's in-app category settings, as the hub already drops the category itself. The channel
+     * being watched always stays so the guide still opens on it. Category names are read only when the
+     * overlay hides some category, because the overlay keys categories by name.
+     */
+    private suspend fun visibleGuideChannels(
+        account: XtreamAccount,
+        channels: List<XtreamChannel>,
+        currentStreamId: String,
+    ): List<XtreamChannel> {
+        val overlay = runCatching {
+            com.nuvio.app.features.iptv.overlay.IptvOverlayStore
+                .snapshot(com.nuvio.app.features.profiles.ProfileRepository.activeProfileId)
+                .categories
+        }.getOrDefault(emptyMap())
+        val hiddenIds = if (overlay.values.any { it.hidden }) {
+            IptvHiddenItemsPolicy.hiddenCategoryIds(account.id, CONTENT_TYPE_LIVE, com.nuvio.app.features.iptv.overlay.IptvHiddenItems.categoryNames(account, CONTENT_TYPE_LIVE), overlay)
+        } else {
+            emptySet()
+        }
+        val visible = IptvHiddenItemsPolicy.guideChannels(
+            channels,
+            hiddenCategoryIds = hiddenIds,
+            allowedBySelection = { account.allowsCategory(CONTENT_TYPE_LIVE, it) },
+            categoryOf = { it.categoryId },
+        )
+        if (visible.size == channels.size) return channels
+        val keep = visible.toHashSet()
+        return channels.filter { it in keep || it.streamId.toString() == currentStreamId }
     }
 
     /**

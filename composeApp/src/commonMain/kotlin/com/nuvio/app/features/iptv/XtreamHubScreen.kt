@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.material3.TextButton
+import com.nuvio.app.core.ui.NuvioToastController
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -210,6 +212,19 @@ fun XtreamHubScreen(
                     onPosterClick = onTileClick,
                     onPosterLongClick = onTileLongClick,
                     loadFromRepository = !openCategory.id.startsWith(SPECIAL_CATEGORY_PREFIX),
+                    onHideGroup = if (account != null && !openCategory.id.startsWith(SPECIAL_CATEGORY_PREFIX)) {
+                        {
+                            XtreamHubRepository.hideCategory(openCategory.id)?.let { name ->
+                                NuvioToastController.show(
+                                    "“$name” hidden. Unhide it in Settings → Integrations → IPTV → ${account.name}.",
+                                    durationMillis = 4000L,
+                                )
+                            }
+                            openCategoryId = null
+                        }
+                    } else {
+                        null
+                    },
                 )
                 return@Column
             }
@@ -506,6 +521,7 @@ private fun XtreamHubCategoryPage(
     onPosterClick: (MetaPreview) -> Unit,
     onPosterLongClick: ((MetaPreview) -> Unit)?,
     loadFromRepository: Boolean = true,
+    onHideGroup: (() -> Unit)? = null,
 ) {
     PlatformBackHandler(enabled = true, onBack = onBack)
     val landscape = live || rememberPosterCardStyleUiState().catalogLandscapeModeEnabled
@@ -532,7 +548,11 @@ private fun XtreamHubCategoryPage(
                 color = MaterialTheme.nuvio.colors.textPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
             )
+            if (onHideGroup != null) {
+                TextButton(onClick = onHideGroup) { Text("Hide group") }
+            }
         }
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val columns = remember(maxWidth, landscape) {

@@ -778,6 +778,20 @@ object XtreamHubRepository {
         if (isCurrent(u.accountId, section)) _uiState.update { it.copy(categories = applyCategoryOverlay(u.accountId, section.contentKey, updated)) }
     }
 
+    /**
+     * F02: hide a provider category of the current section from this device (synced like a website
+     * hide). Keyed on the provider's own name from the raw cache, never a renamed display title.
+     * Returns the hidden category's name, or null when [categoryId] is not a provider category here.
+     */
+    fun hideCategory(categoryId: String): String? {
+        val st = _uiState.value
+        val accountId = st.selectedAccountId ?: return null
+        val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == accountId } ?: return null
+        val raw = cachedCategories(accountId, st.section)?.firstOrNull { it.id == categoryId } ?: return null
+        com.nuvio.app.features.iptv.overlay.IptvHiddenItems.hideGroup(account, st.section.contentKey, raw.name)
+        return raw.name
+    }
+
     private fun isCurrent(accountId: String, section: XtreamHubSection): Boolean =
         _uiState.value.selectedAccountId == accountId && _uiState.value.section == section
 

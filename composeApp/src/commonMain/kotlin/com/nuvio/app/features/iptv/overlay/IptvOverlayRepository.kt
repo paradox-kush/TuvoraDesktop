@@ -133,6 +133,9 @@ internal object IptvOverlayRepository {
         }
     }
 
+    fun setCategoryHidden(playlistId: String, contentType: String, categoryKey: String, hidden: Boolean) =
+        editCategory(playlistId, contentType, categoryKey) { it.copy(hidden = hidden) }
+
     fun toggleCategoryHidden(playlistId: String, contentType: String, categoryKey: String) =
         editCategory(playlistId, contentType, categoryKey) { it.copy(hidden = !it.hidden) }
 

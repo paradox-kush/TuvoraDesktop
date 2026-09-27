@@ -1,7 +1,7 @@
 package com.nuvio.app.features.iptv
 
 /** What a saved playlist's actions dialog offers, besides Enable/Disable (the dialog's confirm slot). */
-internal enum class PlaylistAction { EDIT, CONTENT, REMATCH, REMOVE }
+internal enum class PlaylistAction { EDIT, CONTENT, HIDDEN, REMATCH, REMOVE }
 
 /**
  * The playlist actions dialog's decisions, kept out of the Composable so they test without UI.
@@ -18,6 +18,8 @@ internal object PlaylistActionsPolicy {
     fun bodyActions(account: XtreamAccount): List<PlaylistAction> = buildList {
         add(PlaylistAction.EDIT)
         add(PlaylistAction.CONTENT)
+        // F02: hides made on a device (or the website) are undone here, on every source type.
+        add(PlaylistAction.HIDDEN)
         // Only Xtream playlists build the TMDB match index whose negative verdicts a re-match resets.
         if (account.sourceType == SOURCE_TYPE_XTREAM) add(PlaylistAction.REMATCH)
         add(PlaylistAction.REMOVE)
@@ -26,6 +28,7 @@ internal object PlaylistActionsPolicy {
     fun label(action: PlaylistAction): String = when (action) {
         PlaylistAction.EDIT -> "Edit playlist"
         PlaylistAction.CONTENT -> "Content & Categories"
+        PlaylistAction.HIDDEN -> "Hidden channels & groups"
         PlaylistAction.REMATCH -> "Re-match catalog"
         PlaylistAction.REMOVE -> "Remove playlist"
     }

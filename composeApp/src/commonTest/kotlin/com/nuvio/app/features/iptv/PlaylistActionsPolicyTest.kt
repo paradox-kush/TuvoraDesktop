@@ -57,4 +57,13 @@ class PlaylistActionsPolicyTest {
             )
         }
     }
+
+    @Test
+    fun `every playlist type lists its hidden channels and groups right after its categories`() {
+        allSourceTypes.forEach { type ->
+            val actions = PlaylistActionsPolicy.bodyActions(account(type))
+            assertEquals(actions.indexOf(PlaylistAction.CONTENT) + 1, actions.indexOf(PlaylistAction.HIDDEN), "$type: hidden list follows Content & Categories")
+        }
+        assertEquals("Hidden channels & groups", PlaylistActionsPolicy.label(PlaylistAction.HIDDEN), "label")
+    }
 }
