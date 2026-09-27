@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -18,6 +19,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nuvio.app.core.ui.NuvioStatusModal
+import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.settings.SettingsGroup
 import kotlinx.coroutines.launch
 import com.nuvio.app.features.settings.SettingsGroupDivider
@@ -27,7 +30,7 @@ import com.nuvio.app.features.settings.SettingsSection
 /**
  * Xtream IPTV accounts page. "Add Playlist" opens the full form sub-page (SettingsPage.IptvAddPlaylist);
  * tapping a saved account opens an actions dialog (Edit -> the same form in edit mode, Content, Enable,
- * Remove). KMP twin of NuvioTV's XtreamSettingsScreen.
+ * Remove playlist — confirmed first, see [PlaylistActionsPolicy]). KMP twin of NuvioTV's XtreamSettingsScreen.
  */
 internal fun LazyListScope.xtreamSettingsContent(
     isTablet: Boolean,
@@ -38,6 +41,7 @@ internal fun LazyListScope.xtreamSettingsContent(
 ) {
     item {
         var actionsFor by remember { mutableStateOf<XtreamAccount?>(null) }
+        var pendingRemoval by remember { mutableStateOf<XtreamAccount?>(null) }
         val rematchScope = rememberCoroutineScope()
         // A first catalog build runs for minutes on a large panel (~17 on a measured 468k items),
         // and this screen showed NOTHING while it happened — the `indexing` flow existed but had no
@@ -105,25 +109,32 @@ internal fun LazyListScope.xtreamSettingsContent(
                     Column {
                         XtreamAccountDetails(account)
                         Spacer(Modifier.height(8.dp))
-                        TextButton(onClick = {
-                            actionsFor = null
-                            onEditPlaylist(account)
-                        }) { Text("Edit playlist") }
-                        TextButton(onClick = {
-                            actionsFor = null
-                            onOpenContent(account)
-                        }) { Text("Content & Categories") }
-                        if (account.sourceType == SOURCE_TYPE_XTREAM) {
-                            // Stale "not on this provider" verdicts hide titles the panel added
-                            // AFTER the verdict (they sync across devices and live up to 7 days).
-                            // Catalog syncs that ADD items reset them automatically; this is the
-                            // do-it-now button.
-                            TextButton(onClick = {
-                                actionsFor = null
-                                rematchScope.launch {
-                                    com.nuvio.app.features.iptv.match.XtreamMatchIndex.distrustNegativeMappings(account.id)
-                                }
-                            }) { Text("Re-match catalog") }
+                        // B57: every action — Remove included — is a labelled row here; Remove is last,
+                        // in the danger colour, and asks first. The Cancel slot is only "Close".
+                        PlaylistActionsPolicy.bodyActions(account).forEach { action ->
+                            val destructive = PlaylistActionsPolicy.isDestructive(action)
+                            TextButton(
+                                onClick = {
+                                    actionsFor = null
+                                    when (action) {
+                                        PlaylistAction.EDIT -> onEditPlaylist(account)
+                                        PlaylistAction.CONTENT -> onOpenContent(account)
+                                        // Stale "not on this provider" verdicts hide titles the panel added
+                                        // AFTER the verdict (they sync across devices and live up to 7 days).
+                                        // Catalog syncs that ADD items reset them automatically; this is the
+                                        // do-it-now button.
+                                        PlaylistAction.REMATCH -> rematchScope.launch {
+                                            com.nuvio.app.features.iptv.match.XtreamMatchIndex.distrustNegativeMappings(account.id)
+                                        }
+                                        PlaylistAction.REMOVE -> pendingRemoval = account
+                                    }
+                                },
+                                colors = if (destructive) {
+                                    ButtonDefaults.textButtonColors(contentColor = MaterialTheme.nuvio.colors.danger)
+                                } else {
+                                    ButtonDefaults.textButtonColors()
+                                },
+                            ) { Text(PlaylistActionsPolicy.label(action)) }
                         }
                     }
                 },
@@ -134,11 +145,25 @@ internal fun LazyListScope.xtreamSettingsContent(
                     }) { Text(if (account.enabled) "Disable" else "Enable") }
                 },
                 dismissButton = {
-                    TextButton(onClick = {
-                        XtreamRepository.remove(account.id)
-                        actionsFor = null
-                    }) { Text("Remove") }
+                    TextButton(onClick = { actionsFor = null }) { Text("Close") }
                 },
+            )
+        }
+
+        pendingRemoval?.let { account ->
+            NuvioStatusModal(
+                title = PlaylistActionsPolicy.removeConfirmTitle(account),
+                message = PlaylistActionsPolicy.removeConfirmMessage(account),
+                isVisible = true,
+                // Desktop's NuvioStatusModal has no destructive style (Mobile's does); the specific
+                // "Remove playlist" confirm label + message carry the weight, as with addon removal.
+                confirmText = PlaylistActionsPolicy.label(PlaylistAction.REMOVE),
+                dismissText = "Cancel",
+                onConfirm = {
+                    XtreamRepository.remove(account.id)
+                    pendingRemoval = null
+                },
+                onDismiss = { pendingRemoval = null },
             )
         }
     }
