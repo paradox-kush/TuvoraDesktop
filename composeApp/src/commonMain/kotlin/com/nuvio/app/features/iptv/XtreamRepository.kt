@@ -23,7 +23,10 @@ import com.nuvio.app.core.contracts.IptvCatalog
 data class XtreamUiState(
     val accounts: List<XtreamAccount> = emptyList(),
     val isValidating: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    /** accountId -> a non-blocking note about a saved edit (B60: the provider check failed, but the
+     *  edit was kept). Shown on the playlist's row; cleared by the next edit of that playlist. */
+    val saveWarnings: Map<String, String> = emptyMap(),
 )
 
 /**
@@ -87,6 +90,9 @@ object XtreamRepository : IptvCatalog {
      * edit. Never set in production. Reset it in the test's teardown.
      */
     internal var persistWriteForTest: ((profileId: Int, json: String) -> Unit)? = null
+
+    /** Test seam (B60): stands in for the live provider check of an edit. Never set in production. */
+    internal var verifyForTest: (suspend (XtreamAccount) -> Result<Unit>)? = null
 
     /** Test seam (B24 §3): invoke the private persist() directly to exercise the write path. */
     internal fun persistForTest() = persist()
@@ -358,10 +364,14 @@ object XtreamRepository : IptvCatalog {
     }
 
     /**
-     * Verifies the edited credentials live, then swaps the account in place (keeping its
+     * Checks the edited connection live, then swaps the account in place (keeping its
      * position + enabled flag) and re-runs the discovery cycle. Saved items (library,
      * watch progress, watched marks, recent channels) follow the account when it's still
      * the same playlist; a completely different playlist purges them instead.
+     *
+     * B60: a failed check never discards the edit — it is saved and the reason shown on the row
+     * ([PlaylistEditVerifyPolicy]). An id-changing edit is recorded as ONE v2 replace, not an update
+     * (which the reconcile dropped, snapping the edit back) — see [recordReplace].
      */
     private fun verifyAndReplace(
         oldId: String,
@@ -383,42 +393,43 @@ object XtreamRepository : IptvCatalog {
         scope.launch {
             _uiState.update { it.copy(isValidating = true, error = null) }
             // Options-only edit (name/EPG/DNS/refresh) — nothing about how we reach the provider
-            // changed, so an unreachable provider must not block the save. See sameConnectionAs.
+            // changed, so it is not checked at all. See sameConnectionAs.
             val verified =
-                if (account.sameConnectionAs(old)) Result.success(Unit)
-                else IptvClient.forAccount(account).verify(account)
-            verified
-                .onSuccess {
-                    // Profile switched while verifying — see verifyAndSave.
-                    if (currentProfileId != profileAtStart) {
-                        _uiState.update { it.copy(isValidating = false) }
-                        onResult(false)
-                        return@onSuccess
-                    }
-                    _uiState.update { st ->
-                        st.copy(
-                            // Replace in place; drop any pre-existing duplicate of the new identity.
-                            accounts = st.accounts
-                                .filterNot { it.id == account.id && it.id != oldId }
-                                .map { if (it.id == oldId) account else it },
-                            isValidating = false,
-                        )
-                    }
-                    if (account.id != oldId) migrateSavedData(old, account)
-                    // A changed M3U URL invalidates the old catalog rows — drop them.
-                    if (old.sourceType == SOURCE_TYPE_M3U_URL && old.id != account.id) M3UClient.clear(old)
-                    // Re-run the discovery cycle: drop caches/URLs built with the old server/creds.
-                    XtreamItemRegistry.resetForProfile()
-                    XtreamHubRepository.resetForProfile()
-                    XtreamSearchIndex.resetForProfile()
-                    XtreamTmdbResolver.warmUp(listOf(account))
-                    recordPending { it.recordUpdate(account) }   // B24 v2: durable "user edited this playlist" intent
-                    persistAndReport(onResult)
-                }
-                .onFailure { e ->
-                    _uiState.update { it.copy(isValidating = false, error = e.message ?: "Could not reach the panel") }
-                    onResult(false)
-                }
+                if (!PlaylistEditVerifyPolicy.needsVerify(old, account)) Result.success(Unit)
+                else verifyForTest?.invoke(account) ?: IptvClient.forAccount(account).verify(account)
+            // Decision 2026-09-27: a failed check saves anyway and warns (never discards the edit).
+            val outcome = PlaylistEditVerifyPolicy.outcome(verified)
+            // Profile switched while verifying — see verifyAndSave.
+            if (currentProfileId != profileAtStart) {
+                _uiState.update { it.copy(isValidating = false) }
+                onResult(false)
+                return@launch
+            }
+            _uiState.update { st ->
+                st.copy(
+                    // Replace in place; drop any pre-existing duplicate of the new identity.
+                    accounts = st.accounts
+                        .filterNot { it.id == account.id && it.id != oldId }
+                        .map { if (it.id == oldId) account else it },
+                    isValidating = false,
+                    saveWarnings = (st.saveWarnings - oldId - account.id) +
+                        (outcome.warning?.let { mapOf(account.id to it) } ?: emptyMap()),
+                )
+            }
+            if (account.id != oldId) migrateSavedData(old, account)
+            // A changed M3U URL invalidates the old catalog rows — drop them.
+            if (old.sourceType == SOURCE_TYPE_M3U_URL && old.id != account.id) M3UClient.clear(old)
+            // Re-run the discovery cycle: drop caches/URLs built with the old server/creds.
+            XtreamItemRegistry.resetForProfile()
+            XtreamHubRepository.resetForProfile()
+            XtreamSearchIndex.resetForProfile()
+            XtreamTmdbResolver.warmUp(listOf(account))
+            // B24 v2: durable "user edited this playlist" intent. An id change is ONE replace (B60).
+            recordPending {
+                if (account.id != oldId) it.recordReplace(oldId, account, base = old)
+                else it.recordUpdate(account, base = old)
+            }
+            persistAndReport(onResult)
         }
     }
 
@@ -441,25 +452,33 @@ object XtreamRepository : IptvCatalog {
      * persist + sync-push. No credential re-verify — the identity fields don't change.
      */
     fun updateOptions(id: String, transform: (XtreamAccount) -> XtreamAccount) {
+        val before = _uiState.value.accounts.firstOrNull { it.id == id }
         _uiState.update { st ->
             st.copy(accounts = st.accounts.map { if (it.id == id) transform(it) else it })
+        }
+        // B04: a synced option (content types, category picks) must be recorded as a v2 edit, or the
+        // next sync adopts the server's older row and reverts it. Device-local prefs push nothing.
+        val after = _uiState.value.accounts.firstOrNull { it.id == id }
+        if (before != null && after != null && optionEditNeedsSync(before, after)) {
+            recordPending { it.recordUpdate(after, base = before) }
         }
         persist()
     }
 
     fun setEnabled(id: String, enabled: Boolean) {
+        val before = _uiState.value.accounts.firstOrNull { it.id == id }
         _uiState.update { state ->
             state.copy(accounts = state.accounts.map { if (it.id == id) it.copy(enabled = enabled) else it })
         }
         if (enabled) _uiState.value.accounts.firstOrNull { it.id == id }?.let { XtreamTmdbResolver.warmUp(listOf(it)) }
-        _uiState.value.accounts.firstOrNull { it.id == id }?.let { recordPending { ops -> ops.recordUpdate(it) } }
+        _uiState.value.accounts.firstOrNull { it.id == id }?.let { recordPending { ops -> ops.recordUpdate(it, base = before) } }
         persist()
     }
 
     fun remove(id: String) {
         val removed = _uiState.value.accounts.firstOrNull { it.id == id }
         recordPending { ops -> ops.recordDelete(id) }
-        _uiState.update { it.copy(accounts = it.accounts.filterNot { acc -> acc.id == id }) }
+        _uiState.update { it.copy(accounts = it.accounts.filterNot { acc -> acc.id == id }, saveWarnings = it.saveWarnings - id) }
         // Caches keyed by this id leak otherwise (match db rows survive forever); saved
         // refs would be dead ids (phantom favorites / continue-watching rows).
         XtreamItemRegistry.resetForProfile()
@@ -541,8 +560,11 @@ object XtreamRepository : IptvCatalog {
      * to A+B+C: the accounts blob may be wiped, but the "add C" intent persists here.
      */
     private fun recordPending(transform: (List<PendingOpDto>) -> List<PendingOpDto>) {
-        if (!PlaylistSyncConfig.v2Enabled) return
         val cur = decodePlaylistSyncState(XtreamAccountStorage.loadPlaylistSyncStateJson(currentProfileId))
+        // A profile that already advanced a v2 revision (or holds pending v2 ops) has ADOPTED v2, so it
+        // keeps recording pending even while paused — never silently dropping intent (B24 activation).
+        val adopted = cur.revision > 0 || cur.pending.isNotEmpty()
+        if (!PlaylistSyncConfig.recordsPending(adopted)) return
         XtreamAccountStorage.savePlaylistSyncStateJson(
             currentProfileId,
             encodePlaylistSyncState(cur.copy(pending = transform(cur.pending)))

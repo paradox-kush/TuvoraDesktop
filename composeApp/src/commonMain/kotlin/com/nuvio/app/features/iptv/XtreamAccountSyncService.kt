@@ -74,8 +74,23 @@ object XtreamAccountSyncService {
             delay(PUSH_DEBOUNCE_MS)
             if (ProfileRepository.activeProfileId != profileId) return@launch
             if (isSyncingFromRemote || !authed()) return@launch
-            if (PlaylistSyncConfig.v2Enabled) runV2Sync(profileId) else pushToRemote(profileId)
+            when (activationFor(profileId)) {
+                PlaylistSyncActivation.V2_ACTIVE -> runV2Sync(profileId)
+                PlaylistSyncActivation.V1_LEGACY -> pushToRemote(profileId)
+                // Adopted profile with v2 turned off: never fall back to destructive v1. Retain
+                // pending; push nothing until v2 is re-enabled.
+                PlaylistSyncActivation.V2_PAUSED ->
+                    log.w { "triggerPush — v2 paused for profile $profileId; pending retained, no v1 write" }
+            }
         }
+    }
+
+    /** Per-profile activation: reads the stored sync-state to decide whether this profile has adopted
+     *  v2, then applies the rollout policy. */
+    private fun activationFor(profileId: Int): PlaylistSyncActivation {
+        val st = decodePlaylistSyncState(XtreamAccountStorage.loadPlaylistSyncStateJson(profileId))
+        val adopted = st.revision > 0 || st.pending.isNotEmpty()
+        return PlaylistSyncConfig.activationFor(adopted)
     }
 
     private suspend fun pushToRemote(profileId: Int) {
@@ -105,7 +120,7 @@ object XtreamAccountSyncService {
     }
 
     // ---------------------------------------------------------------------------------------------
-    // B24 v2 — the REAL revision-contract sync path (debug/local only; see PlaylistSyncConfig).
+    // B24 v2 — the REAL revision-contract sync path (enabled in release since 2026-09-27; see PlaylistSyncConfig).
     // Drives the shared PlaylistV2SyncEngine through a transport that calls the actual v2 RPCs, using
     // the real repository state + reconcile core. Serialized per profile by [v2Mutex] (the network
     // calls happen INSIDE the engine, NOT inside any storage lock).
@@ -176,7 +191,8 @@ object XtreamAccountSyncService {
         saveState = { p, s -> XtreamAccountStorage.savePlaylistSyncStateJson(p, encodePlaylistSyncState(s)) },
         currentAccounts = { XtreamRepository.uiState.value.accounts },
         canPush = { XtreamRepository.canPushFullReplace() },
-        applyLocal = { p, accounts -> XtreamRepository.applyFromRemote(p, reconcileLocalIds(accounts, XtreamRepository.uiState.value.accounts)) },
+        // Keeps this device's file-playlist ids and local-only catch-up/guide prefs (B60 part c).
+        applyLocal = { p, accounts -> XtreamRepository.applyFromRemote(p, v2ApplyLocal(accounts, XtreamRepository.uiState.value.accounts)) },
         stillActive = { ProfileRepository.activeProfileId == it },
         newMutationId = { newPlaylistMutationId() },
     )
@@ -224,7 +240,16 @@ object XtreamAccountSyncService {
      */
     suspend fun pullFromServer(profileId: Int) {
         if (!authed() || ProfileRepository.activeProfileId != profileId) return
-        if (PlaylistSyncConfig.v2Enabled) { runV2Sync(profileId); return }
+        when (activationFor(profileId)) {
+            PlaylistSyncActivation.V2_ACTIVE -> { runV2Sync(profileId); return }
+            // Adopted-but-paused: don't run a v1 pull/apply that could overwrite local; freeze the
+            // profile (pending retained) until v2 is re-enabled.
+            PlaylistSyncActivation.V2_PAUSED -> {
+                log.w { "pullFromServer — v2 paused for profile $profileId; skipping (local + pending preserved)" }
+                return
+            }
+            PlaylistSyncActivation.V1_LEGACY -> Unit // fall through to the legacy v1 pull below
+        }
         runCatching {
             val rows = SupabaseProvider.client.postgrest
                 .from("iptv_playlists")

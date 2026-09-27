@@ -26,9 +26,14 @@ import kotlinx.serialization.json.Json
 /** A durable, per-profile pending op (collapsed to the latest intent per id), serialized to storage. */
 @Serializable
 internal data class PendingOpDto(
-    val kind: String,                 // "upsert" | "delete"
+    val kind: String,                 // "add" | "update" | "replace" | "delete"
     val id: String,
     val account: XtreamAccount? = null,
+    /** The row as last synced, before this device's edit — the field-level merge's reference (B60).
+     *  Additive: logs written by older builds decode with null (whole-row semantics). */
+    val base: XtreamAccount? = null,
+    /** For "replace" only: the id the edited playlist had before its URL/username/MAC changed. */
+    val oldId: String? = null,
 )
 
 /** The persisted v2 sync state for one profile — survives the accounts-store corruption reset because
@@ -49,7 +54,8 @@ internal data class PlaylistSyncState(
 
 private fun PendingOpDto.toOp(): PendingPlaylistOp? = when (kind) {
     "add" -> account?.let { PendingPlaylistOp.Add(it) }       // a locally-created playlist: always (re)added
-    "update" -> account?.let { PendingPlaylistOp.Update(it) } // an edit of an existing one: dropped if the server row is gone
+    "update" -> account?.let { PendingPlaylistOp.Update(it, base) } // an edit of an existing one: dropped if the server row is gone
+    "replace" -> account?.let { acc -> oldId?.let { PendingPlaylistOp.Replace(it, acc, base) } } // id-changing edit (B60)
     "delete" -> PendingPlaylistOp.Delete(id)
     else -> null
 }
@@ -62,17 +68,54 @@ internal fun List<PendingOpDto>.recordAdd(account: XtreamAccount): List<PendingO
 
 /** The user EDITED an existing playlist. Kept as an add if it was locally created this session (so it
  *  still survives), else an update (dropped on reconcile if the server row was deleted elsewhere). */
-internal fun List<PendingOpDto>.recordUpdate(account: XtreamAccount): List<PendingOpDto> {
-    val kind = if (firstOrNull { it.id == account.id }?.kind == "add") "add" else "update"
-    return filterNot { it.id == account.id } + PendingOpDto(kind, account.id, account)
+internal fun List<PendingOpDto>.recordUpdate(account: XtreamAccount, base: XtreamAccount? = null): List<PendingOpDto> {
+    val existing = firstOrNull { it.id == account.id }
+    val entry = when (existing?.kind) {
+        "add" -> PendingOpDto("add", account.id, account)
+        // Still the same pending replace — only the edited row moves on; its old id and base stay.
+        "replace" -> existing.copy(account = account)
+        // Keep the FIRST base: it is the row as last synced, so every field edited since is applied.
+        "update" -> PendingOpDto("update", account.id, account, base = existing.base)
+        else -> PendingOpDto("update", account.id, account, base = base)
+    }
+    return filterNot { it.id == account.id } + entry
+}
+
+/**
+ * B60 — the user edited a playlist's URL / username / MAC, so its id changed from [oldId] to
+ * [account]'s. Recorded as ONE replace op (never a delete + update: that pair deleted the playlist,
+ * and for the only one pushed a delete-all). Collapse rules: a replace of a local add is an add of the
+ * new row; a chain A→B→C is Replace(A, C) with A's base; a pending update of [oldId] folds in.
+ */
+internal fun List<PendingOpDto>.recordReplace(oldId: String, account: XtreamAccount, base: XtreamAccount? = null): List<PendingOpDto> {
+    if (oldId == account.id) return recordUpdate(account, base)
+    val existing = firstOrNull { it.id == oldId }
+    val rest = filterNot { it.id == oldId || it.id == account.id }
+    val entry = when (existing?.kind) {
+        "add" -> PendingOpDto("add", account.id, account)
+        "replace" -> PendingOpDto("replace", account.id, account, base = existing.base, oldId = existing.oldId)
+        "update" -> PendingOpDto("replace", account.id, account, base = existing.base ?: base, oldId = oldId)
+        else -> PendingOpDto("replace", account.id, account, base = base, oldId = oldId)
+    }
+    // A→B→A lands back on the original id: that is just an edit of A.
+    if (entry.kind == "replace" && entry.oldId == entry.id) {
+        return rest + PendingOpDto("update", account.id, account, base = entry.base)
+    }
+    return rest + entry
 }
 
 /** The user REMOVED a playlist. A row that was only ever added locally this session collapses to
- *  nothing (net no-op); otherwise a delete is recorded so the reconcile removes it from the server set. */
+ *  nothing (net no-op); a row that is a pending replace deletes the id the server knows (its old id);
+ *  otherwise a delete is recorded so the reconcile removes it from the server set. */
 internal fun List<PendingOpDto>.recordDelete(id: String): List<PendingOpDto> {
-    val wasLocalAdd = firstOrNull { it.id == id }?.kind == "add"
-    val base = filterNot { it.id == id }
-    return if (wasLocalAdd) base else base + PendingOpDto("delete", id)
+    val existing = firstOrNull { it.id == id }
+    val rest = filterNot { it.id == id }
+    return when {
+        existing?.kind == "add" -> rest
+        existing?.kind == "replace" && existing.oldId != null ->
+            rest.filterNot { it.id == existing.oldId } + PendingOpDto("delete", existing.oldId)
+        else -> rest + PendingOpDto("delete", id)
+    }
 }
 
 /** The transport the engine drives — the real impl calls the v2 RPCs; tests supply a fake. */
@@ -128,6 +171,8 @@ internal class PlaylistV2SyncEngine(
     private val stillActive: (Int) -> Boolean,
     private val newMutationId: () -> String,
     private val maxConflictRetries: Int = 5,
+    /** The value two rows must share to count as "in sync": everything the server stores for a row. */
+    private val syncedKey: (XtreamAccount) -> Any = ::playlistSyncKey,
 ) {
     /**
      * One full sync for [profileId]: pull authoritative rows+revision, reconcile pending intent onto
@@ -167,8 +212,10 @@ internal class PlaylistV2SyncEngine(
                 pending = recorded
                 expected = pull.revision
             }
-            sameSet(currentAccounts(), pull.accounts) -> {
-                // In sync — adopt the server revision, clear any stale mutation id.
+            sameSyncedSet(currentAccounts(), pull.accounts, syncedKey) -> {
+                // In sync — ids AND every synced field match (B60: an id-only comparison left a field
+                // changed on another device, e.g. a UA or refresh interval, never applied here).
+                // Adopt the server revision, clear any stale mutation id.
                 saveState(profileId, state.copy(revision = pull.revision, mutationId = null))
                 return PlaylistSyncOutcome.UP_TO_DATE
             }
@@ -180,8 +227,8 @@ internal class PlaylistV2SyncEngine(
             }
             else -> {
                 // No recorded intent and a divergence we can't attribute to the user (e.g. a damaged
-                // local store, or another device's change): the server is authoritative — adopt it,
-                // never push local over it.
+                // local store, or another device's change — including a field-only change): the server
+                // is authoritative — adopt it, never push local over it.
                 applyLocal(profileId, pull.accounts)
                 saveState(profileId, state.copy(revision = pull.revision, pending = emptyList(), mutationId = null, deleteAllIntent = false))
                 return if (canPush()) PlaylistSyncOutcome.UP_TO_DATE else PlaylistSyncOutcome.WITHHELD
@@ -245,9 +292,13 @@ internal class PlaylistV2SyncEngine(
     }
 }
 
-/** Order-independent identity comparison (the payload's order is positional but not identity). */
-private fun sameSet(a: List<XtreamAccount>, b: List<XtreamAccount>): Boolean =
-    a.size == b.size && a.map { it.id }.toSet() == b.map { it.id }.toSet()
+/** Order-independent comparison of what the server stores for each row (the payload's order is
+ *  positional, not content). Ids are not on the wire; the connection fields that derive them are. */
+private fun sameSyncedSet(a: List<XtreamAccount>, b: List<XtreamAccount>, key: (XtreamAccount) -> Any): Boolean =
+    a.size == b.size && a.groupingBy(key).eachCount() == b.groupingBy(key).eachCount()
+
+/** Everything the server stores for [account] — its push row with the positional sort order fixed. */
+internal fun playlistSyncKey(account: XtreamAccount): Any = playlistPushPayload(listOf(account)).single()
 
 internal val playlistSyncStateJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
