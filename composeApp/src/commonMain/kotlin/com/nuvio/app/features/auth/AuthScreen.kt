@@ -109,6 +109,7 @@ import nuvio.composeapp.generated.resources.compose_auth_continue_without_accoun
 import nuvio.composeapp.generated.resources.compose_auth_create_account
 import nuvio.composeapp.generated.resources.compose_auth_dont_have_account
 import nuvio.composeapp.generated.resources.compose_auth_email
+import nuvio.composeapp.generated.resources.compose_auth_email_typo_suggestion
 import nuvio.composeapp.generated.resources.compose_auth_or_separator
 import nuvio.composeapp.generated.resources.compose_auth_password
 import nuvio.composeapp.generated.resources.compose_auth_sign_in
@@ -777,6 +778,22 @@ private fun AuthForm(
                 imeAction = ImeAction.Next,
             ),
         )
+
+        // Sign-up only: the backend refuses domains that can't receive mail, so catch the typo first.
+        val emailSuggestion = if (isSignUp) EmailTypoSuggestion.suggestEmail(email) else null
+        emailSuggestion?.let { suggestion ->
+            Spacer(modifier = Modifier.height(8.dp * scale))
+            Text(
+                text = stringResource(Res.string.compose_auth_email_typo_suggestion, suggestion),
+                modifier = Modifier.clickable { onEmailChange(suggestion) },
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    color = AuthTextPrimary,
+                    fontSize = (13f * scale).sp,
+                    lineHeight = (18f * scale).sp,
+                    fontWeight = FontWeight.SemiBold,
+                ),
+            )
+        }
 
         Spacer(modifier = Modifier.height(14.dp))
 
