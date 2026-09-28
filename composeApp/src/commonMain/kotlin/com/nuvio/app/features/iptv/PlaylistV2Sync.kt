@@ -42,6 +42,9 @@ internal data class PendingOpDto(
 internal data class PlaylistSyncState(
     val revision: Long = 0,
     val mutationId: String? = null,
+    /** The payload [mutationId] was minted for ([PlaylistMutationIdPolicy.fingerprint]). Null for an
+     *  id persisted by a build that stored the id alone — such an id is never reused. */
+    val mutationFingerprint: String? = null,
     val pending: List<PendingOpDto> = emptyList(),
     /** True once the reconciled set is a deliberate empty (a user delete-all), so the push carries
      *  the explicit delete-all intent rather than being rejected as an accidental empty. */
@@ -115,6 +118,35 @@ internal fun List<PendingOpDto>.recordDelete(id: String): List<PendingOpDto> {
         existing?.kind == "replace" && existing.oldId != null ->
             rest.filterNot { it.id == existing.oldId } + PendingOpDto("delete", existing.oldId)
         else -> rest + PendingOpDto("delete", id)
+    }
+}
+
+/**
+ * B68 — a mutation id names exactly ONE payload. The server dedups a resend of the id it last
+ * committed and RAISES (SQLSTATE 22023) when that id arrives with a different body. The engine used to
+ * keep the id across any failed push, so a commit whose response was lost, followed by a reconciled
+ * payload that differed (a new edit, another device's change), re-sent the committed id on every sync
+ * and the profile never synced again (prod 2026-09-27: 16 profiles, some wedged since 2026-09-14).
+ *
+ * Reuse the id only for the identical payload it was minted for; anything else — including an id
+ * stored without a fingerprint by an older build — gets a fresh id. That is always safe: every push is
+ * anchored to a fresh pull's revision, so a fresh id re-sending an already-committed set costs at
+ * most one redundant revision, never a lost update.
+ */
+internal object PlaylistMutationIdPolicy {
+    fun fingerprint(accounts: List<XtreamAccount>, deleteAll: Boolean): String =
+        fnv1a64Hex(playlistPushPayload(accounts).toString() + "|" + deleteAll)
+
+    fun idFor(storedId: String?, storedFingerprint: String?, fingerprint: String, mint: () -> String): String =
+        if (storedId != null && storedFingerprint == fingerprint) storedId else mint()
+
+    private fun fnv1a64Hex(text: String): String {
+        var hash = -0x340d631b7bdddcdbL // FNV-1a 64 offset basis
+        for (ch in text) {
+            hash = hash xor ch.code.toLong()
+            hash *= 0x100000001b3L
+        }
+        return hash.toULong().toString(16)
     }
 }
 
@@ -216,7 +248,7 @@ internal class PlaylistV2SyncEngine(
                 // In sync — ids AND every synced field match (B60: an id-only comparison left a field
                 // changed on another device, e.g. a UA or refresh interval, never applied here).
                 // Adopt the server revision, clear any stale mutation id.
-                saveState(profileId, state.copy(revision = pull.revision, mutationId = null))
+                saveState(profileId, state.copy(revision = pull.revision, mutationId = null, mutationFingerprint = null))
                 return PlaylistSyncOutcome.UP_TO_DATE
             }
             pull.accounts.isEmpty() && pull.revision == 0L && canPush() && currentAccounts().isNotEmpty() -> {
@@ -230,19 +262,16 @@ internal class PlaylistV2SyncEngine(
                 // local store, or another device's change — including a field-only change): the server
                 // is authoritative — adopt it, never push local over it.
                 applyLocal(profileId, pull.accounts)
-                saveState(profileId, state.copy(revision = pull.revision, pending = emptyList(), mutationId = null, deleteAllIntent = false))
+                saveState(profileId, state.copy(revision = pull.revision, pending = emptyList(), mutationId = null, mutationFingerprint = null, deleteAllIntent = false))
                 return if (canPush()) PlaylistSyncOutcome.UP_TO_DATE else PlaylistSyncOutcome.WITHHELD
             }
         }
 
-        // 3. Reconcile pending intent onto the authoritative server rows and push. Keep the SAME
-        //    mutation id across the whole attempt (and across restarts, since it is persisted).
-        val mutationId = state.mutationId ?: newMutationId()
+        // 3. Reconcile pending intent onto the authoritative server rows and push. The mutation id is
+        //    reused (across retries AND restarts, since it is persisted) only for the identical payload
+        //    it was minted for — see [PlaylistMutationIdPolicy].
         var baseRows = pull.accounts
-        // Persist the mutation id + baseline BEFORE the network write, but re-read first so a pending
-        // entry recorded since [loadState] is not clobbered by this write.
-        state = loadState(profileId).copy(mutationId = mutationId, revision = pull.revision)
-        saveState(profileId, state)
+        var baselineRevision = pull.revision
 
         var retries = 0
         while (true) {
@@ -250,6 +279,12 @@ internal class PlaylistV2SyncEngine(
             val reconciled = reconcilePendingOntoBaseline(baseRows, pending)
             applyLocal(profileId, reconciled.accounts)
             val deleteAll = reconciled.accounts.isEmpty()
+            val fingerprint = PlaylistMutationIdPolicy.fingerprint(reconciled.accounts, deleteAll)
+            val mutationId = PlaylistMutationIdPolicy.idFor(state.mutationId, state.mutationFingerprint, fingerprint, newMutationId)
+            // Persist the mutation id + its payload + baseline BEFORE the network write, but re-read
+            // first so a pending entry recorded since [loadState] is not clobbered by this write.
+            state = loadState(profileId).copy(mutationId = mutationId, mutationFingerprint = fingerprint, revision = baselineRevision)
+            saveState(profileId, state)
             val resp = runCatching {
                 // Anchor the write to the generation we observed on pull; the server rejects it as
                 // stale_generation if the profile was deleted since, so a reconcile-retry cannot
@@ -267,6 +302,7 @@ internal class PlaylistV2SyncEngine(
                         revision = resp.revision,
                         pending = fresh.pending.filterNot { it in ackedPending },
                         mutationId = null,
+                        mutationFingerprint = null,
                         deleteAllIntent = false,
                     ))
                     return PlaylistSyncOutcome.SYNCED
@@ -279,6 +315,7 @@ internal class PlaylistV2SyncEngine(
                     }
                     baseRows = resp.currentRows
                     expected = resp.currentRevision
+                    baselineRevision = resp.currentRevision
                     state = state.copy(revision = expected)
                     saveState(profileId, state)
                     // loop: re-reconcile the same pending ops onto the newer server rows
