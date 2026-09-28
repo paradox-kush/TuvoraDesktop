@@ -46,3 +46,26 @@ internal fun homeAnnouncementDefaultTopInset(): Dp =
     WindowInsets.statusBars.asPaddingValues().calculateTopPadding() +
         MaterialTheme.nuvio.spacing.screenTop +
         nuvioPlatformExtraTopPadding
+
+/**
+ * Where the card must start, measured from the top of the screen. Pure, so it tests without a
+ * device. The status-bar-only [defaultTopInset] is enough on phones (their tab bar is at the
+ * bottom), but tablets draw a floating tab-bar pill OVER the top of the content — [topNavOverlay]
+ * is that pill's full height (status bar included), 0 when there is none — and desktop reserves
+ * [topChromePadding] for its top bar. The card clears whichever is lowest, plus [gap] below a pill.
+ */
+internal fun homeAnnouncementTopInset(
+    defaultTopInset: Dp,
+    topChromePadding: Dp?,
+    topNavOverlay: Dp,
+    gap: Dp = 8.dp,
+): Dp {
+    var inset = defaultTopInset
+    if (topChromePadding != null && topChromePadding > inset) inset = topChromePadding
+    if (topNavOverlay > 0.dp && topNavOverlay + gap > inset) inset = topNavOverlay + gap
+    return inset
+}
+
+/** As a plain list item (no hero), the list already pads by [listTopPadding]; add only the rest. */
+internal fun homeAnnouncementItemTopInset(required: Dp, listTopPadding: Dp): Dp =
+    (required - listTopPadding).coerceAtLeast(0.dp)

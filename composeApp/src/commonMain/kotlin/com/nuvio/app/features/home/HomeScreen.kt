@@ -64,6 +64,8 @@ import com.nuvio.app.features.catalog.CatalogTarget
 import com.nuvio.app.features.home.components.HomeAnnouncementSlot
 import com.nuvio.app.features.home.components.HomeCatalogRowSection
 import com.nuvio.app.features.home.components.homeAnnouncementDefaultTopInset
+import com.nuvio.app.features.home.components.homeAnnouncementItemTopInset
+import com.nuvio.app.features.home.components.homeAnnouncementTopInset
 import com.nuvio.app.features.home.components.HomeContinueWatchingSection
 import com.nuvio.app.features.home.components.HomeEmptyStateCard
 import com.nuvio.app.features.home.components.HomeHeroReservedSpace
@@ -999,6 +1001,13 @@ fun HomeScreen(
         val announcementSection = com.nuvio.app.core.contracts.HomeAnnouncementsSectionAccess.current()
         val showAnnouncement = announcementSection?.hasContent() == true
         var announcementHeightPx by remember { mutableIntStateOf(0) }
+        // Clear whatever sits over the top of Home: status bar on phones, the floating tab-bar
+        // pill on tablets, the top bar on desktop.
+        val announcementTopInset = homeAnnouncementTopInset(
+            defaultTopInset = homeAnnouncementDefaultTopInset(),
+            topChromePadding = topChromePadding,
+            topNavOverlay = 0.dp,
+        )
         val heroViewportHeight = if (showHeroSlot && showAnnouncement) {
             // Floor keeps the hero usable if the card is unexpectedly tall (small landscape phone).
             (maxHeight - with(LocalDensity.current) { announcementHeightPx.toDp() })
@@ -1031,7 +1040,10 @@ fun HomeScreen(
                     HomeAnnouncementSlot(
                         section = announcementSection,
                         horizontalPadding = homeSectionPadding,
-                        topInset = 0.dp,
+                        topInset = homeAnnouncementItemTopInset(
+                            required = announcementTopInset,
+                            listTopPadding = topChromePadding ?: homeAnnouncementDefaultTopInset(),
+                        ),
                     )
                 }
             }
@@ -1047,7 +1059,7 @@ fun HomeScreen(
                             HomeAnnouncementSlot(
                                 section = announcementSection,
                                 horizontalPadding = homeSectionPadding,
-                                topInset = topChromePadding ?: homeAnnouncementDefaultTopInset(),
+                                topInset = announcementTopInset,
                                 onHeightChanged = { announcementHeightPx = it },
                             )
                         }
