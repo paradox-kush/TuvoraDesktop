@@ -45,4 +45,9 @@ class AuthEligibilityTest {
     fun termsUrlUsesCurrentTuvoraDomain() {
         assertEquals("https://tuvora.co/terms", TUVORA_TERMS_URL)
     }
+
+    @Test
+    fun privacyUrlUsesCurrentTuvoraDomain() {
+        assertEquals("https://tuvora.co/privacy", TUVORA_PRIVACY_URL)
+    }
 }

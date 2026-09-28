@@ -27,6 +27,12 @@ import kotlinx.serialization.json.put
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.getString
 
+/**
+ * The Terms of Use version recorded in sign-up metadata. Bump it (and its pinning test) whenever
+ * https://tuvora.co/terms changes, so the recorded acceptance matches the text the user agreed to.
+ */
+internal const val TUVORA_TERMS_VERSION = "2026-09-27"
+
 object AuthRepository {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val log = Logger.withTag("AuthRepository")
@@ -243,7 +249,7 @@ object AuthRepository {
             this.password = password
             data = buildJsonObject {
                 put("adult_confirmed", true)
-                put("terms_version", "2026-08-04")
+                put("terms_version", TUVORA_TERMS_VERSION)
             }
         }
         // Clear any lingering anonymous id so the sessionStatus collector honors the real session.

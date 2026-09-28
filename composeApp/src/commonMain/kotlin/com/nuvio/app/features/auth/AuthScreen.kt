@@ -74,7 +74,12 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -111,6 +116,8 @@ import nuvio.composeapp.generated.resources.compose_auth_store_locally
 import nuvio.composeapp.generated.resources.compose_auth_tagline
 import nuvio.composeapp.generated.resources.compose_auth_age_terms_confirmation
 import nuvio.composeapp.generated.resources.compose_auth_terms_link
+import nuvio.composeapp.generated.resources.compose_auth_signup_email_notice
+import nuvio.composeapp.generated.resources.compose_auth_privacy_link
 import nuvio.composeapp.generated.resources.compose_auth_welcome_back
 import org.jetbrains.compose.resources.stringResource
 
@@ -129,6 +136,7 @@ private val AuthSecondaryButtonBackground = Color.White.copy(alpha = 0.05f)
 private val AuthSecondaryButtonBorder = Color.White.copy(alpha = 0.09f)
 
 internal const val TUVORA_TERMS_URL = "https://tuvora.co/terms"
+internal const val TUVORA_PRIVACY_URL = "https://tuvora.co/privacy"
 
 internal fun canSubmitAuth(
     isSignUp: Boolean,
@@ -808,6 +816,11 @@ private fun AuthForm(
                 onCheckedChange = onSignUpEligibilityChange,
                 onTermsClick = { uriHandler.openUri(TUVORA_TERMS_URL) },
             )
+            Spacer(modifier = Modifier.height(8.dp * scale))
+            AuthSignUpEmailNotice(
+                scale = scale,
+                onPrivacyClick = { uriHandler.openUri(TUVORA_PRIVACY_URL) },
+            )
         }
 
         Spacer(modifier = Modifier.height(metrics.primaryTop))
@@ -916,6 +929,42 @@ private fun AuthTermsAcknowledgement(
             ),
         )
     }
+}
+
+/**
+ * One muted line under the 18+/Terms acknowledgement (sign-up only): what we will email, how to
+ * opt out, and an inline Privacy Policy link. Styled exactly like the acknowledgement text.
+ */
+@Composable
+private fun AuthSignUpEmailNotice(
+    scale: Float,
+    onPrivacyClick: () -> Unit,
+) {
+    val notice = stringResource(Res.string.compose_auth_signup_email_notice)
+    val privacy = stringResource(Res.string.compose_auth_privacy_link)
+    val text = buildAnnotatedString {
+        append(notice)
+        append(" ")
+        withLink(
+            LinkAnnotation.Clickable(
+                tag = "privacy",
+                styles = TextLinkStyles(
+                    style = SpanStyle(color = AuthTextPrimary, fontWeight = FontWeight.SemiBold),
+                ),
+                linkInteractionListener = { onPrivacyClick() },
+            ),
+        ) { append(privacy) }
+    }
+    Text(
+        text = text,
+        modifier = Modifier.fillMaxWidth(),
+        style = MaterialTheme.typography.bodyMedium.copy(
+            color = AuthTextSecondary,
+            fontSize = (13f * scale).sp,
+            lineHeight = (18f * scale).sp,
+            fontWeight = FontWeight.Normal,
+        ),
+    )
 }
 
 @Composable

@@ -23,7 +23,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.nuvio.app.AppScreenTab
 import com.nuvio.app.isDesktop
 import com.nuvio.app.core.auth.AuthRepository
@@ -155,6 +158,15 @@ fun HomeScreen(
         if (authState !is AuthState.Authenticated || authState.isAnonymous) {
             WatchProgressSourceCoordinator.ensureStarted()
         }
+    }
+
+    // In-app announcements: checked each time Home becomes RESUMED (never a background loop); the
+    // section's refresh policy makes the visit a no-op unless its 6 h cache is due.
+    val homeLifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(homeLifecycleOwner) {
+        val announcements = com.nuvio.app.core.contracts.HomeAnnouncementsSectionAccess.current()
+            ?: return@LaunchedEffect
+        homeLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) { announcements.refreshIfDue() }
     }
 
     val addonsUiState by AddonRepository.uiState.collectAsStateWithLifecycle()
@@ -1033,6 +1045,13 @@ fun HomeScreen(
                         }
                     }
                 }
+            }
+
+            // In-app announcement (dismissible), first thing under the hero.
+            item(key = "home-announcement") {
+                com.nuvio.app.core.contracts.HomeAnnouncementsSectionAccess.current()?.Render(
+                    modifier = Modifier.padding(horizontal = homeSectionPadding, vertical = 8.dp),
+                )
             }
 
             // Sports Centre home presence: featured-event rail (opt-in) + set-up-Radar promo.
