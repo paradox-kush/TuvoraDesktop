@@ -378,6 +378,7 @@
     <string name="compose_auth_terms_prefix">By signing up, I agree to the</string>
     <string name="compose_auth_terms_link">Terms</string>
     <string name="compose_auth_signup_email_notice">We'll email you about your account, plus occasional tips and updates. You can unsubscribe anytime.</string>
+    <string name="compose_auth_email_typo_suggestion">Did you mean %1$s?</string>
     <string name="compose_auth_privacy_link">Privacy Policy</string>
     <string name="compose_auth_welcome_back">Welcome Back</string>
     <string name="server_menu_content_description">Server options</string>
