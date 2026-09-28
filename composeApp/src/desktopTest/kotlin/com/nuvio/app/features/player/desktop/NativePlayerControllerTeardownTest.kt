@@ -104,6 +104,8 @@ class NativePlayerControllerTeardownTest {
             },
             isHostDisplayable = { true },
             resolveHostView = { NativePlayerHostTarget(viewPtr = 1L) },
+            // The real provider loads the native bridge; the fake create must not need it.
+            controlsPageUrl = { "about:blank" },
         )
 
         controller.attach(

@@ -72,8 +72,14 @@ internal class NativePlayerController(
             eventSink = sink,
         )
     },
-    private val nativeDispose: (Long) -> Unit = NativePlayerBridge::dispose,
-    private val nativeSeekTo: (Long, Long) -> Unit = NativePlayerBridge::seekTo,
+    // Lambdas, not bound references: `NativePlayerBridge::seekTo` evaluates the object and runs its
+    // static init (loads libplayer_bridge) at CONSTRUCTION, so a controller built with injected fakes
+    // still needed the native library — all 23 teardown tests failed after upstream added nativeSeekTo.
+    private val nativeDispose: (Long) -> Unit = { handle -> NativePlayerBridge.dispose(handle) },
+    private val nativeSeekTo: (Long, Long) -> Unit = { handle, positionMs -> NativePlayerBridge.seekTo(handle, positionMs) },
+    // Read at create time. A direct `NativePlayerBridge.controlsPageUrl` initialises the bridge (native
+    // library load) inside the create worker, so injected-fake tests never reached nativeCreate.
+    private val controlsPageUrl: () -> String = { NativePlayerBridge.controlsPageUrl },
     private val isHostDisplayable: () -> Boolean = { host.isDisplayable },
     private val resolveHostView: () -> NativePlayerHostTarget = { AwtNativeViewResolver.resolveNativePlayerHost(host) },
     private val createWaitTimeoutMs: Long = 5_000L,
@@ -326,7 +332,7 @@ internal class NativePlayerController(
                         pending.headerLines.toTypedArray(),
                         pending.playWhenReady,
                         pending.initialPositionMs,
-                        NativePlayerBridge.controlsPageUrl,
+                        controlsPageUrl(),
                         pending.decoderPriority,
                         pending.nvidiaRtxSuperResolutionEnabled,
                         eventSink,
