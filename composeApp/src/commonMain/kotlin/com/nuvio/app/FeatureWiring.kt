@@ -50,6 +50,8 @@ import com.nuvio.app.core.contracts.SportsHubContentAccess
 import com.nuvio.app.features.radar.RadarHubContent
 import com.nuvio.app.core.contracts.LiveTvContentAccess
 import com.nuvio.app.features.livetv.LiveTvContentImpl
+import com.nuvio.app.core.contracts.HomeAnnouncementsSectionAccess
+import com.nuvio.app.features.announcements.api.AnnouncementsFeature
 
 /**
  * THE one firewall exception (rules doc Rule 1 / R2b): the only non-fork file allowed to name fork
@@ -107,6 +109,8 @@ fun registerFeatureContributions() {
     IptvHubContentAccess.register(XtreamHubContent)
     SportsHubContentAccess.register(RadarHubContent)
     LiveTvContentAccess.register(LiveTvContentImpl)
+    // In-app announcements card on Home (lazy: the repository touches storage on first refresh).
+    HomeAnnouncementsSectionAccess.register(AnnouncementsFeature.homeSection())
     FeatureRegistry.markInitialized()
 }
 

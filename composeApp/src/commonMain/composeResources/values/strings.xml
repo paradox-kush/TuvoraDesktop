@@ -377,6 +377,8 @@
     <string name="compose_auth_tagline">Watch your library, anywhere</string>
     <string name="compose_auth_terms_prefix">By signing up, I agree to the</string>
     <string name="compose_auth_terms_link">Terms</string>
+    <string name="compose_auth_signup_email_notice">We'll email you about your account, plus occasional tips and updates. You can unsubscribe anytime.</string>
+    <string name="compose_auth_privacy_link">Privacy Policy</string>
     <string name="compose_auth_welcome_back">Welcome Back</string>
     <string name="server_menu_content_description">Server options</string>
     <string name="server_menu_official">Use official server</string>
@@ -2532,4 +2534,6 @@
     <string name="stream_info_channels_other">%1$dch</string>
     <string name="settings_playback_stream_info">Stream info</string>
     <string name="settings_playback_stream_info_description">Briefly show quality, codec and bitrate when playback starts</string>
+    <string name="announcement_dismiss">Dismiss announcement</string>
+    <string name="external_link_open_failed_copied">Couldn't open a browser. Link copied: %1$s</string>
 </resources>

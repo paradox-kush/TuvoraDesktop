@@ -15,15 +15,20 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.nuvio.app.AppScreenTab
 import com.nuvio.app.isDesktop
 import com.nuvio.app.core.auth.AuthRepository
@@ -56,7 +61,11 @@ import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.details.SeriesPrimaryAction
 import com.nuvio.app.features.details.seriesPrimaryAction
 import com.nuvio.app.features.catalog.CatalogTarget
+import com.nuvio.app.features.home.components.HomeAnnouncementSlot
 import com.nuvio.app.features.home.components.HomeCatalogRowSection
+import com.nuvio.app.features.home.components.homeAnnouncementDefaultTopInset
+import com.nuvio.app.features.home.components.homeAnnouncementItemTopInset
+import com.nuvio.app.features.home.components.homeAnnouncementTopInset
 import com.nuvio.app.features.home.components.HomeContinueWatchingSection
 import com.nuvio.app.features.home.components.HomeEmptyStateCard
 import com.nuvio.app.features.home.components.HomeHeroReservedSpace
@@ -155,6 +164,15 @@ fun HomeScreen(
         if (authState !is AuthState.Authenticated || authState.isAnonymous) {
             WatchProgressSourceCoordinator.ensureStarted()
         }
+    }
+
+    // In-app announcements: checked each time Home becomes RESUMED (never a background loop); the
+    // section's refresh policy makes the visit a no-op unless its 6 h cache is due.
+    val homeLifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(homeLifecycleOwner) {
+        val announcements = com.nuvio.app.core.contracts.HomeAnnouncementsSectionAccess.current()
+            ?: return@LaunchedEffect
+        homeLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) { announcements.refreshIfDue() }
     }
 
     val addonsUiState by AddonRepository.uiState.collectAsStateWithLifecycle()
@@ -980,6 +998,24 @@ fun HomeScreen(
             }
         }
 
+        val announcementSection = com.nuvio.app.core.contracts.HomeAnnouncementsSectionAccess.current()
+        val showAnnouncement = announcementSection?.hasContent() == true
+        var announcementHeightPx by remember { mutableIntStateOf(0) }
+        // Clear whatever sits over the top of Home: status bar on phones, the floating tab-bar
+        // pill on tablets, the top bar on desktop.
+        val announcementTopInset = homeAnnouncementTopInset(
+            defaultTopInset = homeAnnouncementDefaultTopInset(),
+            topChromePadding = topChromePadding,
+            topNavOverlay = 0.dp,
+        )
+        val heroViewportHeight = if (showHeroSlot && showAnnouncement) {
+            // Floor keeps the hero usable if the card is unexpectedly tall (small landscape phone).
+            (maxHeight - with(LocalDensity.current) { announcementHeightPx.toDp() })
+                .coerceAtLeast(maxHeight * 0.6f)
+        } else {
+            maxHeight
+        }
+
         val heroStretchState = rememberHeroStretchState(homeListState)
         val heroStretchModifier = if (showHeroSlot) {
             Modifier.nestedScroll(heroStretchState.nestedScrollConnection)
@@ -999,37 +1035,64 @@ fun HomeScreen(
             topPadding = effectiveTopPadding,
             listState = homeListState,
         ) {
+            if (!showHeroSlot && announcementSection != null && showAnnouncement) {
+                item(key = "home-announcement", contentType = "announcement") {
+                    HomeAnnouncementSlot(
+                        section = announcementSection,
+                        horizontalPadding = homeSectionPadding,
+                        topInset = homeAnnouncementItemTopInset(
+                            required = announcementTopInset,
+                            listTopPadding = topChromePadding ?: homeAnnouncementDefaultTopInset(),
+                        ),
+                    )
+                }
+            }
+
             if (showHeroSlot) {
                 item(key = "home_hero", contentType = "hero") {
-                    Crossfade(
-                        targetState = showHeroSkeleton,
-                        animationSpec = tween(320),
-                        label = "HomeHeroLoading",
-                    ) { isLoading ->
-                        when {
-                            isLoading -> HomeSkeletonHero(
-                                modifier = Modifier,
-                                viewportHeight = maxHeight,
-                                mobileBelowSectionHeightHint = mobileHeroBelowSectionHeightHint,
-                                sectionPadding = if (isDesktop) homeSectionPadding else null,
+                    Column {
+                        // In-app announcement: the very top of Home, above the hero, so it is
+                        // seen on first paint. Same list item as the hero, so the hero keeps
+                        // item index 0 (its parallax/stretch key off that) and dismissing simply
+                        // lets the hero move back up.
+                        if (announcementSection != null && showAnnouncement) {
+                            HomeAnnouncementSlot(
+                                section = announcementSection,
+                                horizontalPadding = homeSectionPadding,
+                                topInset = announcementTopInset,
+                                onHeightChanged = { announcementHeightPx = it },
                             )
+                        }
+                        Crossfade(
+                            targetState = showHeroSkeleton,
+                            animationSpec = tween(320),
+                            label = "HomeHeroLoading",
+                        ) { isLoading ->
+                            when {
+                                isLoading -> HomeSkeletonHero(
+                                    modifier = Modifier,
+                                    viewportHeight = heroViewportHeight,
+                                    mobileBelowSectionHeightHint = mobileHeroBelowSectionHeightHint,
+                                    sectionPadding = if (isDesktop) homeSectionPadding else null,
+                                )
 
-                            homeUiState.heroItems.isNotEmpty() -> HomeHeroSection(
-                                items = homeUiState.heroItems,
-                                modifier = Modifier,
-                                viewportHeight = maxHeight,
-                                mobileBelowSectionHeightHint = mobileHeroBelowSectionHeightHint,
-                                sectionPadding = if (isDesktop) homeSectionPadding else null,
-                                listState = homeListState,
-                                stretchPx = { heroStretchState.stretchPx },
-                                onItemClick = onPosterClick,
-                            )
+                                homeUiState.heroItems.isNotEmpty() -> HomeHeroSection(
+                                    items = homeUiState.heroItems,
+                                    modifier = Modifier,
+                                    viewportHeight = heroViewportHeight,
+                                    mobileBelowSectionHeightHint = mobileHeroBelowSectionHeightHint,
+                                    sectionPadding = if (isDesktop) homeSectionPadding else null,
+                                    listState = homeListState,
+                                    stretchPx = { heroStretchState.stretchPx },
+                                    onItemClick = onPosterClick,
+                                )
 
-                            else -> HomeHeroReservedSpace(
-                                modifier = Modifier,
-                                viewportHeight = maxHeight,
-                                mobileBelowSectionHeightHint = mobileHeroBelowSectionHeightHint,
-                            )
+                                else -> HomeHeroReservedSpace(
+                                    modifier = Modifier,
+                                    viewportHeight = heroViewportHeight,
+                                    mobileBelowSectionHeightHint = mobileHeroBelowSectionHeightHint,
+                                )
+                            }
                         }
                     }
                 }

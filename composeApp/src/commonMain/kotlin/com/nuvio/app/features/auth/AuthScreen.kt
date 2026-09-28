@@ -42,6 +42,7 @@ import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.CheckboxDefaults
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import androidx.compose.material3.Icon
@@ -73,8 +74,14 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalUriHandler
+import com.nuvio.app.core.ui.NuvioToastHost
+import com.nuvio.app.core.ui.rememberSafeUriOpener
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -84,6 +91,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.takeOrElse
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.DeviceLinkAuthRepository
@@ -111,6 +119,8 @@ import nuvio.composeapp.generated.resources.compose_auth_store_locally
 import nuvio.composeapp.generated.resources.compose_auth_tagline
 import nuvio.composeapp.generated.resources.compose_auth_age_terms_confirmation
 import nuvio.composeapp.generated.resources.compose_auth_terms_link
+import nuvio.composeapp.generated.resources.compose_auth_signup_email_notice
+import nuvio.composeapp.generated.resources.compose_auth_privacy_link
 import nuvio.composeapp.generated.resources.compose_auth_welcome_back
 import org.jetbrains.compose.resources.stringResource
 
@@ -129,6 +139,7 @@ private val AuthSecondaryButtonBackground = Color.White.copy(alpha = 0.05f)
 private val AuthSecondaryButtonBorder = Color.White.copy(alpha = 0.09f)
 
 internal const val TUVORA_TERMS_URL = "https://tuvora.co/terms"
+internal const val TUVORA_PRIVACY_URL = "https://tuvora.co/privacy"
 
 internal fun canSubmitAuth(
     isSignUp: Boolean,
@@ -387,6 +398,9 @@ fun AuthScreen(
                     .padding(start = 8.dp, top = statusBarTop + 4.dp),
             )
         }
+        // The auth gate sits outside MainAppContent's toast host; host one here so link
+        // fallbacks ("Couldn't open a browser. Link copied: …") are visible on this screen.
+        NuvioToastHost(modifier = Modifier.align(Alignment.TopCenter))
     }
 
     if (
@@ -744,7 +758,7 @@ private fun AuthForm(
     onEmailBoundsChange: (Rect) -> Unit,
     onPasswordBoundsChange: (Rect) -> Unit,
 ) {
-    val uriHandler = LocalUriHandler.current
+    val openUri = rememberSafeUriOpener()
     Column(
         modifier = Modifier.fillMaxWidth(),
     ) {
@@ -806,7 +820,12 @@ private fun AuthForm(
                 checked = signUpEligibilityConfirmed,
                 scale = scale,
                 onCheckedChange = onSignUpEligibilityChange,
-                onTermsClick = { uriHandler.openUri(TUVORA_TERMS_URL) },
+                onTermsClick = { openUri(TUVORA_TERMS_URL) },
+            )
+            Spacer(modifier = Modifier.height(8.dp * scale))
+            AuthSignUpEmailNotice(
+                scale = scale,
+                onPrivacyClick = { openUri(TUVORA_PRIVACY_URL) },
             )
         }
 
@@ -916,6 +935,45 @@ private fun AuthTermsAcknowledgement(
             ),
         )
     }
+}
+
+/**
+ * One muted line under the 18+/Terms acknowledgement (sign-up only): what we will email, how to
+ * opt out, and an inline Privacy Policy link. Styled exactly like the acknowledgement text.
+ */
+@Composable
+private fun AuthSignUpEmailNotice(
+    scale: Float,
+    onPrivacyClick: () -> Unit,
+) {
+    val notice = stringResource(Res.string.compose_auth_signup_email_notice)
+    val privacy = stringResource(Res.string.compose_auth_privacy_link)
+    val text = buildAnnotatedString {
+        append(notice)
+        append(" ")
+        withLink(
+            LinkAnnotation.Clickable(
+                tag = "privacy",
+                styles = TextLinkStyles(
+                    style = SpanStyle(color = AuthTextPrimary, fontWeight = FontWeight.SemiBold),
+                ),
+                linkInteractionListener = { onPrivacyClick() },
+            ),
+        ) { append(privacy) }
+    }
+    Text(
+        text = text,
+        // Line up with the acknowledgement text, which starts after the checkbox's touch target.
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = LocalMinimumInteractiveComponentSize.current.takeOrElse { 48.dp }),
+        style = MaterialTheme.typography.bodyMedium.copy(
+            color = AuthTextSecondary,
+            fontSize = (13f * scale).sp,
+            lineHeight = (18f * scale).sp,
+            fontWeight = FontWeight.Normal,
+        ),
+    )
 }
 
 @Composable
