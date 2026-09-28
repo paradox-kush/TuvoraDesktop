@@ -36,6 +36,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -111,6 +112,7 @@ import nuvio.composeapp.generated.resources.compose_nav_settings
 import nuvio.composeapp.generated.resources.compose_settings_page_root
 import nuvio.composeapp.generated.resources.sidebar_library
 import nuvio.composeapp.generated.resources.sidebar_search
+import nuvio.composeapp.generated.resources.sidebar_sports
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 
@@ -544,72 +546,27 @@ internal fun TabletFloatingTopBar(
                     horizontalArrangement = Arrangement.spacedBy(itemSpacing),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TabletTopPillItem(
-                        label = stringResource(Res.string.compose_nav_home),
-                        selected = selectedTab == AppScreenTab.Home,
-                        onClick = { onTabSelected(AppScreenTab.Home) },
-                        labelFraction = labelFraction,
-                        pillHeight = pillHeight,
-                        expandedHorizontalPadding = expandedHorizontalPadding,
-                        collapsedHorizontalPadding = iconCollapsedPadding,
-                        textStyle = labelTextStyle,
-                        icon = {
-                            Icon(
-                                imageVector = Icons.Filled.Home,
-                                contentDescription = stringResource(Res.string.compose_nav_home),
-                                modifier = Modifier.size(navIconSize),
-                                tint = if (selectedTab == AppScreenTab.Home) {
-                                    tokens.colors.textPrimary
-                                } else {
-                                    Color.White.copy(alpha = 0.70f)
-                                },
-                            )
-                        },
-                    )
-                    TabletTopPillItem(
-                        label = stringResource(Res.string.compose_nav_search),
-                        selected = selectedTab == AppScreenTab.Search,
-                        onClick = { onTabSelected(AppScreenTab.Search) },
-                        labelFraction = labelFraction,
-                        pillHeight = pillHeight,
-                        expandedHorizontalPadding = expandedHorizontalPadding,
-                        collapsedHorizontalPadding = iconCollapsedPadding,
-                        textStyle = labelTextStyle,
-                        icon = {
-                            Icon(
-                                painter = painterResource(Res.drawable.sidebar_search),
-                                contentDescription = stringResource(Res.string.compose_nav_search),
-                                modifier = Modifier.size(navIconSize),
-                                tint = if (selectedTab == AppScreenTab.Search) {
-                                    tokens.colors.textPrimary
-                                } else {
-                                    Color.White.copy(alpha = 0.70f)
-                                },
-                            )
-                        },
-                    )
-                    TabletTopPillItem(
-                        label = stringResource(Res.string.compose_nav_library),
-                        selected = selectedTab == AppScreenTab.Library,
-                        onClick = { onTabSelected(AppScreenTab.Library) },
-                        labelFraction = labelFraction,
-                        pillHeight = pillHeight,
-                        expandedHorizontalPadding = expandedHorizontalPadding,
-                        collapsedHorizontalPadding = iconCollapsedPadding,
-                        textStyle = labelTextStyle,
-                        icon = {
-                            Icon(
-                                painter = painterResource(Res.drawable.sidebar_library),
-                                contentDescription = stringResource(Res.string.compose_nav_library),
-                                modifier = Modifier.size(navIconSize),
-                                tint = if (selectedTab == AppScreenTab.Library) {
-                                    tokens.colors.textPrimary
-                                } else {
-                                    Color.White.copy(alpha = 0.70f)
-                                },
-                            )
-                        },
-                    )
+                    DesktopNavigationTabs.filter { it != AppScreenTab.Settings }.forEach { tab ->
+                        val label = desktopNavLabel(tab, topBar = true)
+                        TabletTopPillItem(
+                            label = label,
+                            selected = selectedTab == tab,
+                            onClick = { onTabSelected(tab) },
+                            labelFraction = labelFraction,
+                            pillHeight = pillHeight,
+                            expandedHorizontalPadding = expandedHorizontalPadding,
+                            collapsedHorizontalPadding = iconCollapsedPadding,
+                            textStyle = labelTextStyle,
+                            icon = {
+                                DesktopNavIcon(
+                                    tab = tab,
+                                    contentDescription = label,
+                                    modifier = Modifier.size(navIconSize),
+                                    tint = if (selectedTab == tab) tokens.colors.textPrimary else Color.White.copy(alpha = 0.70f),
+                                )
+                            },
+                        )
+                    }
                     TabletTopPillItem(
                         label = stringResource(Res.string.compose_nav_settings),
                         selected = selectedTab == AppScreenTab.Settings,
@@ -856,60 +813,51 @@ internal fun DesktopHoverSidebar(
                     .fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                DesktopSidebarItem(
-                    label = stringResource(Res.string.compose_nav_home),
-                    selected = selectedTab == AppScreenTab.Home,
-                    expanded = sidebarExpanded,
-                    onClick = { selectTab(AppScreenTab.Home) },
-                ) { color ->
-                    Icon(
-                        imageVector = Icons.Filled.Home,
-                        contentDescription = stringResource(Res.string.compose_nav_home),
-                        modifier = Modifier.size(DesktopSidebarIconSize),
-                        tint = color,
-                    )
-                }
-                DesktopSidebarItem(
-                    label = stringResource(Res.string.compose_nav_search),
-                    selected = selectedTab == AppScreenTab.Search,
-                    expanded = sidebarExpanded,
-                    onClick = { selectTab(AppScreenTab.Search) },
-                ) { color ->
-                    Icon(
-                        painter = painterResource(Res.drawable.sidebar_search),
-                        contentDescription = stringResource(Res.string.compose_nav_search),
-                        modifier = Modifier.size(DesktopSidebarIconSize),
-                        tint = color,
-                    )
-                }
-                DesktopSidebarItem(
-                    label = stringResource(Res.string.compose_nav_library),
-                    selected = selectedTab == AppScreenTab.Library,
-                    expanded = sidebarExpanded,
-                    onClick = { selectTab(AppScreenTab.Library) },
-                ) { color ->
-                    Icon(
-                        painter = painterResource(Res.drawable.sidebar_library),
-                        contentDescription = stringResource(Res.string.compose_nav_library),
-                        modifier = Modifier.size(DesktopSidebarIconSize),
-                        tint = color,
-                    )
-                }
-                DesktopSidebarItem(
-                    label = stringResource(Res.string.compose_settings_page_root),
-                    selected = selectedTab == AppScreenTab.Settings,
-                    expanded = sidebarExpanded,
-                    onClick = { selectTab(AppScreenTab.Settings) },
-                ) { color ->
-                    Icon(
-                        imageVector = Icons.Rounded.Settings,
-                        contentDescription = stringResource(Res.string.compose_settings_page_root),
-                        modifier = Modifier.size(DesktopSidebarIconSize),
-                        tint = color,
-                    )
+                DesktopNavigationTabs.forEach { tab ->
+                    val label = desktopNavLabel(tab, topBar = false)
+                    DesktopSidebarItem(
+                        label = label,
+                        selected = selectedTab == tab,
+                        expanded = sidebarExpanded,
+                        onClick = { selectTab(tab) },
+                    ) { color ->
+                        DesktopNavIcon(tab, label, Modifier.size(DesktopSidebarIconSize), color)
+                    }
                 }
             }
         }
+    }
+}
+
+/** Label for a root tab on the desktop nav surfaces (the sidebar says "Settings", the top bar its nav string). */
+@Composable
+private fun desktopNavLabel(tab: AppScreenTab, topBar: Boolean): String = when (tab) {
+    AppScreenTab.Home -> stringResource(Res.string.compose_nav_home)
+    AppScreenTab.Search -> stringResource(Res.string.compose_nav_search)
+    AppScreenTab.Library -> stringResource(Res.string.compose_nav_library)
+    // Fork tabs: the same literal labels the floating/bottom bars use (MainTabsDestination).
+    AppScreenTab.Iptv -> "IPTV"
+    AppScreenTab.Sports -> "Sports"
+    AppScreenTab.Settings -> stringResource(
+        if (topBar) Res.string.compose_nav_settings else Res.string.compose_settings_page_root,
+    )
+}
+
+/** Icon for a root tab on the desktop nav surfaces; exhaustive, so a new tab can't render blank. */
+@Composable
+private fun DesktopNavIcon(
+    tab: AppScreenTab,
+    contentDescription: String,
+    modifier: Modifier,
+    tint: Color,
+) {
+    when (tab) {
+        AppScreenTab.Home -> Icon(Icons.Filled.Home, contentDescription, modifier, tint)
+        AppScreenTab.Search -> Icon(painterResource(Res.drawable.sidebar_search), contentDescription, modifier, tint)
+        AppScreenTab.Library -> Icon(painterResource(Res.drawable.sidebar_library), contentDescription, modifier, tint)
+        AppScreenTab.Iptv -> Icon(Icons.Filled.LiveTv, contentDescription, modifier, tint)
+        AppScreenTab.Sports -> Icon(painterResource(Res.drawable.sidebar_sports), contentDescription, modifier, tint)
+        AppScreenTab.Settings -> Icon(Icons.Rounded.Settings, contentDescription, modifier, tint)
     }
 }
 
