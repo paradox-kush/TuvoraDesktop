@@ -52,7 +52,8 @@ enum class DeviceLinkAuthFailure {
 object DeviceLinkAuthRepository {
     private const val maxConsecutivePollFailures = 3
     private const val maxPollAttempts = 120
-    private const val officialLinkUrl = "https://nuvio.tv/link"
+    // Tuvora serves the approval page (nuvio-web /link -> /tv-login); upstream uses nuvio.tv/link.
+    internal const val officialLinkUrl = "https://tuvora.co/link"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val log = Logger.withTag("DeviceLinkAuthRepository")
     private val json = Json { ignoreUnknownKeys = true }
