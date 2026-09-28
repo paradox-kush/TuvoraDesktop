@@ -81,3 +81,9 @@ private fun Int?.channelLabel(): String? {
         else -> stringResource(Res.string.stream_info_channels_other, count)
     }
 }
+
+/** One row: a bright primary fact and an optional dimmer qualifier, as `1080p · HEVC`. */
+data class StreamInfoLine(
+    val primary: String,
+    val secondary: String? = null,
+)

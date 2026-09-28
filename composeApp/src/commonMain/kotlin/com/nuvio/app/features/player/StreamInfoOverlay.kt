@@ -154,9 +154,3 @@ internal fun StreamInfoOverlay(
         )
     }
 }
-
-/** One row: a bright primary fact and an optional dimmer qualifier, as `1080p · HEVC`. */
-data class StreamInfoLine(
-    val primary: String,
-    val secondary: String? = null,
-)
