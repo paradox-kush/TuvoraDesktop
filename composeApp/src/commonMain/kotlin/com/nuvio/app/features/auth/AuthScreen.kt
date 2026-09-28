@@ -42,6 +42,7 @@ import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.CheckboxDefaults
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import androidx.compose.material3.Icon
@@ -89,6 +90,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.takeOrElse
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.DeviceLinkAuthRepository
@@ -957,7 +959,10 @@ private fun AuthSignUpEmailNotice(
     }
     Text(
         text = text,
-        modifier = Modifier.fillMaxWidth(),
+        // Line up with the acknowledgement text, which starts after the checkbox's touch target.
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = LocalMinimumInteractiveComponentSize.current.takeOrElse { 48.dp }),
         style = MaterialTheme.typography.bodyMedium.copy(
             color = AuthTextSecondary,
             fontSize = (13f * scale).sp,

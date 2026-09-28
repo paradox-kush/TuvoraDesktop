@@ -14,6 +14,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import com.nuvio.app.core.ui.NuvioPrimaryButton
 import com.nuvio.app.core.ui.NuvioSurfaceCard
 import com.nuvio.app.core.ui.nuvio
@@ -24,7 +25,8 @@ import org.jetbrains.compose.resources.stringResource
 
 /**
  * Stateless announcement card — the same surface/typography/button vocabulary as the home screen's
- * empty-state and offline cards (NuvioSurfaceCard + NuvioPrimaryButton + nuvio tokens).
+ * empty-state and offline cards (NuvioSurfaceCard + NuvioPrimaryButton + nuvio tokens). Kept
+ * compact because it sits above the hero: title row (with dismiss), body, optional CTA.
  */
 @Composable
 internal fun AnnouncementCard(
@@ -35,11 +37,13 @@ internal fun AnnouncementCard(
 ) {
     val tokens = MaterialTheme.nuvio
     NuvioSurfaceCard(modifier = modifier) {
-        Row(verticalAlignment = Alignment.Top) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = announcement.title,
                 modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleLarge,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = tokens.colors.textPrimary,
             )
@@ -53,17 +57,18 @@ internal fun AnnouncementCard(
             }
         }
         if (announcement.body.isNotBlank()) {
-            Spacer(modifier = Modifier.height(tokens.spacing.controlGap))
             Text(
                 text = announcement.body,
-                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyMedium,
                 color = tokens.colors.textMuted,
             )
         }
         val label = announcement.ctaLabel
         val url = announcement.ctaUrl
         if (label != null && url != null) {
-            Spacer(modifier = Modifier.height(tokens.spacing.screenHorizontal))
+            Spacer(modifier = Modifier.height(tokens.spacing.controlGap))
             NuvioPrimaryButton(
                 text = label,
                 onClick = { onCtaClick(url) },

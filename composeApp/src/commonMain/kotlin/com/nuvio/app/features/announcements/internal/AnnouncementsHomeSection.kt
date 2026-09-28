@@ -16,6 +16,10 @@ internal class AnnouncementsHomeSection(
     override suspend fun refreshIfDue() = announcements.refreshIfDue()
 
     @Composable
+    override fun hasContent(): Boolean =
+        announcements.visible.collectAsStateWithLifecycle().value != null
+
+    @Composable
     override fun Render(modifier: Modifier) {
         val current by announcements.visible.collectAsStateWithLifecycle()
         val announcement = current ?: return

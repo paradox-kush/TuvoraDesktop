@@ -16,6 +16,13 @@ interface HomeAnnouncementsSection {
      */
     suspend fun refreshIfDue()
 
+    /**
+     * True while there is a card to show. Home uses it to emit the slot only when needed, so an
+     * absent card leaves no gap above the hero.
+     */
+    @Composable
+    fun hasContent(): Boolean
+
     @Composable
     fun Render(modifier: Modifier)
 }
