@@ -1,6 +1,9 @@
 package com.nuvio.app.features.iptv
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -210,6 +213,35 @@ class EpgSourceLadderTest {
         val tally = memory.tally("acc")
         assertEquals(EpgSourceLadder.Tally(manual = 0, provider = 1, mirror = 2, none = 1), tally)
         assertEquals(4, tally.total)
+    }
+
+    /**
+     * The shared session memory is written by the guide's resolver and read by the settings tally
+     * from different threads at once. Unguarded, the tally's iteration raced remember's eviction:
+     * ConcurrentModificationException on the JVM, a SIGSEGV in tally() on iOS (TestFlight crash).
+     */
+    @Test
+    fun `the memory survives concurrent resolvers and tallies`() = runBlocking {
+        val memory = EpgSourceLadder.Memory(cap = 64)
+        withContext(Dispatchers.Default) {
+            repeat(4) { worker ->
+                launch {
+                    repeat(20_000) { i ->
+                        memory.remember("acc", worker * 1_000 + i % 200, EpgSourceLadder.Source.MIRROR)
+                        if (i % 997 == 0) memory.forgetAccount("acc")
+                    }
+                }
+            }
+            repeat(4) {
+                launch {
+                    repeat(5_000) {
+                        memory.tally("acc")
+                        memory.rememberedFor("acc", it % 200)
+                    }
+                }
+            }
+        }
+        assertTrue(memory.tally("acc").total <= 64, "the cap holds under contention")
     }
 
     // --- reporting the coverage split -----------------------------------------------------------

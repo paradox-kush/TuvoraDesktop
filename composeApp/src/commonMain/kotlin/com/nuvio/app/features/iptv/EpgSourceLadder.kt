@@ -1,5 +1,8 @@
 package com.nuvio.app.features.iptv
 
+import kotlinx.atomicfu.locks.SynchronizedObject
+import kotlinx.atomicfu.locks.synchronized
+
 /**
  * The guide's per-channel EPG source ladder: manual mapping → the provider's own rows if they
  * pass a sanity gate → the mirrored canonical EPG → nothing.
@@ -248,11 +251,15 @@ object EpgSourceLadder {
      */
     class Memory(private val cap: Int = MEMORY_CAP) {
 
+        // Every map access holds [lock]: callers resolve and tally from several coroutine threads at
+        // once, and an unguarded HashMap read racing a write SIGSEGVs on Kotlin/Native (iOS
+        // TestFlight crash in tally()).
+        private val lock = SynchronizedObject()
         private val sources = mutableMapOf<String, Source>()   // LinkedHashMap: insertion-ordered
 
-        fun rememberedFor(accountId: String, streamId: Int): Source? = sources[key(accountId, streamId)]
+        fun rememberedFor(accountId: String, streamId: Int): Source? = synchronized(lock) { sources[key(accountId, streamId)] }
 
-        fun remember(accountId: String, streamId: Int, source: Source) {
+        fun remember(accountId: String, streamId: Int, source: Source): Unit = synchronized(lock) {
             val key = key(accountId, streamId)
             if (key !in sources && sources.size >= cap) sources.remove(sources.keys.first())
             sources[key] = source
@@ -261,20 +268,20 @@ object EpgSourceLadder {
         /** Sample size at each account's last report; absent = never reported. */
         private val reportedAt = mutableMapOf<String, Int>()
 
-        fun lastReportedTotal(accountId: String): Int = reportedAt[accountId] ?: 0
+        fun lastReportedTotal(accountId: String): Int = synchronized(lock) { reportedAt[accountId] ?: 0 }
 
-        fun markReported(accountId: String, total: Int) {
+        fun markReported(accountId: String, total: Int): Unit = synchronized(lock) {
             reportedAt[accountId] = total
         }
 
         /** The account's offset changed, or its mapping was rebuilt: measured sources are stale. */
-        fun forgetAccount(accountId: String) {
+        fun forgetAccount(accountId: String): Unit = synchronized(lock) {
             sources.keys.removeAll { it.startsWith("$accountId|") }
             // The split that was reported described the old mapping; let the new one be reported.
             reportedAt.remove(accountId)
         }
 
-        fun tally(accountId: String): Tally {
+        fun tally(accountId: String): Tally = synchronized(lock) {
             var manual = 0; var store = 0; var provider = 0; var mirror = 0; var none = 0; var unavailable = 0
             val prefix = "$accountId|"
             for ((key, source) in sources) {
@@ -288,7 +295,7 @@ object EpgSourceLadder {
                     Source.UNAVAILABLE -> unavailable++
                 }
             }
-            return Tally(manual, provider, mirror, none, unavailable, store)
+            Tally(manual, provider, mirror, none, unavailable, store)
         }
 
         private fun key(accountId: String, streamId: Int) = "$accountId|$streamId"
