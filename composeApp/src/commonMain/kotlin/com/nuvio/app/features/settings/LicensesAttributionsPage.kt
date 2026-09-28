@@ -24,7 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalUriHandler
+import com.nuvio.app.core.ui.rememberSafeUriOpener
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -185,7 +185,7 @@ private fun AttributionRow(
     item: AttributionItem,
     isTablet: Boolean,
 ) {
-    val uriHandler = LocalUriHandler.current
+    val openUri = rememberSafeUriOpener()
     val title = stringResource(item.titleRes)
     LinkedPlainRow(
         title = title,
@@ -213,7 +213,7 @@ private fun AttributionRow(
             }
             else -> null
         },
-        onOpen = { uriHandler.openUri(item.link) },
+        onOpen = { openUri(item.link) },
     )
 }
 
@@ -222,7 +222,7 @@ private fun LicenseRow(
     item: LicenseItem,
     isTablet: Boolean,
 ) {
-    val uriHandler = LocalUriHandler.current
+    val openUri = rememberSafeUriOpener()
     val itemBody = stringResource(item.bodyRes)
     val itemLicense = stringResource(item.licenseRes)
     val body = buildString {
@@ -235,7 +235,7 @@ private fun LicenseRow(
         body = body,
         link = item.link,
         isTablet = isTablet,
-        onOpen = { uriHandler.openUri(item.link) },
+        onOpen = { openUri(item.link) },
     )
 }
 

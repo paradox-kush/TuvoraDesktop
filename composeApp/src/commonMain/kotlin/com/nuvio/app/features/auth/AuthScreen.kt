@@ -74,7 +74,8 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalUriHandler
+import com.nuvio.app.core.ui.NuvioToastHost
+import com.nuvio.app.core.ui.rememberSafeUriOpener
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
@@ -397,6 +398,9 @@ fun AuthScreen(
                     .padding(start = 8.dp, top = statusBarTop + 4.dp),
             )
         }
+        // The auth gate sits outside MainAppContent's toast host; host one here so link
+        // fallbacks ("Couldn't open a browser. Link copied: …") are visible on this screen.
+        NuvioToastHost(modifier = Modifier.align(Alignment.TopCenter))
     }
 
     if (
@@ -754,7 +758,7 @@ private fun AuthForm(
     onEmailBoundsChange: (Rect) -> Unit,
     onPasswordBoundsChange: (Rect) -> Unit,
 ) {
-    val uriHandler = LocalUriHandler.current
+    val openUri = rememberSafeUriOpener()
     Column(
         modifier = Modifier.fillMaxWidth(),
     ) {
@@ -816,12 +820,12 @@ private fun AuthForm(
                 checked = signUpEligibilityConfirmed,
                 scale = scale,
                 onCheckedChange = onSignUpEligibilityChange,
-                onTermsClick = { uriHandler.openUri(TUVORA_TERMS_URL) },
+                onTermsClick = { openUri(TUVORA_TERMS_URL) },
             )
             Spacer(modifier = Modifier.height(8.dp * scale))
             AuthSignUpEmailNotice(
                 scale = scale,
-                onPrivacyClick = { uriHandler.openUri(TUVORA_PRIVACY_URL) },
+                onPrivacyClick = { openUri(TUVORA_PRIVACY_URL) },
             )
         }
 

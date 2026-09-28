@@ -3,7 +3,7 @@ package com.nuvio.app.features.announcements.internal
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalUriHandler
+import com.nuvio.app.core.ui.rememberSafeUriOpener
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.contracts.HomeAnnouncementsSection
 import com.nuvio.app.features.announcements.api.Announcements
@@ -23,10 +23,10 @@ internal class AnnouncementsHomeSection(
     override fun Render(modifier: Modifier) {
         val current by announcements.visible.collectAsStateWithLifecycle()
         val announcement = current ?: return
-        val uriHandler = LocalUriHandler.current
+        val openUri = rememberSafeUriOpener()
         AnnouncementCard(
             announcement = announcement,
-            onCtaClick = { url -> runCatching { uriHandler.openUri(url) } },
+            onCtaClick = { url -> openUri(url) },
             onDismiss = { announcements.dismiss(announcement.id) },
             modifier = modifier,
         )

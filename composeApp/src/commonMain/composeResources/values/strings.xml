@@ -2535,4 +2535,5 @@
     <string name="settings_playback_stream_info">Stream info</string>
     <string name="settings_playback_stream_info_description">Briefly show quality, codec and bitrate when playback starts</string>
     <string name="announcement_dismiss">Dismiss announcement</string>
+    <string name="external_link_open_failed_copied">Couldn't open a browser. Link copied: %1$s</string>
 </resources>
