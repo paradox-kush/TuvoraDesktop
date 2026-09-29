@@ -4,7 +4,9 @@ import co.touchlab.kermit.Logger
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
 import com.nuvio.app.core.network.SupabaseProvider
+import com.nuvio.app.features.trakt.TraktPlatformClock
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.postgrest.query.Order
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -19,7 +21,7 @@ import kotlinx.serialization.Serializable
 /**
  * Syncs verified TMDB->stream mappings with the `iptv_tmdb_map` table, mirroring
  * XtreamAccountSyncService's shape. Rows are per user+provider (profiles share them).
- * Pull once per provider per session (LWW merge into the local SQLite mirror); push is
+ * Pull is delta-shaped per MatchMapPullPolicy (LWW merge into the local SQLite mirror); push is
  * a debounced upsert of locally-confirmed rows. Anonymous sessions stay device-local.
  */
 internal object XtreamMatchSyncService {
@@ -46,28 +48,48 @@ internal object XtreamMatchSyncService {
         return s is AuthState.Authenticated && !s.isAnonymous
     }
 
-    /** Merge this provider's remote mappings into the local mirror. No-op after the first call per session. */
+    private fun ownerId(): String? =
+        (AuthRepository.state.value as? AuthState.Authenticated)?.takeIf { !it.isAnonymous }?.userId
+
+    private val remote = MatchMapRemote { provider, sinceMs, offset, limit ->
+        SupabaseProvider.client.postgrest
+            .from("iptv_tmdb_map")
+            .select {
+                filter {
+                    eq("provider_key", provider)
+                    if (sinceMs != null) gte("updated_at_ms", sinceMs)
+                }
+                // Ascending is load-bearing: a pull interrupted between pages leaves the mark at
+                // the newest APPLIED row, and the next delta resumes from there.
+                order("updated_at_ms", Order.ASCENDING)
+                order("content_type", Order.ASCENDING)
+                order("tmdb_id", Order.ASCENDING)
+                range(offset.toLong(), (offset + limit - 1).toLong())
+            }
+            .decodeList<MapRow>()
+            .mapNotNull { row ->
+                val kind = MatchKind.entries.firstOrNull { it.slug == row.contentType } ?: return@mapNotNull null
+                RemoteMapping(kind, row.tmdbId, row.streamId, row.matchedName, row.updatedAtMs)
+            }
+    }
+
+    private val store = object : MatchMapStore {
+        override suspend fun readCursor(owner: String, provider: String) = XtreamMatchIndex.readPullCursor(owner, provider)
+        override suspend fun applyPage(owner: String, provider: String, rows: List<RemoteMapping>, cursor: MatchMapCursor) =
+            XtreamMatchIndex.applyPulledPage(owner, provider, rows, cursor)
+    }
+
+    /**
+     * Merge this provider's remote mappings into the local mirror. At most once per provider per
+     * session, and even then delta-shaped (B78): [MatchMapPullPolicy] fetches only rows newer than
+     * the persisted cursor, or nothing at all when the last pull was recent.
+     */
     suspend fun pullOnce(provider: String) {
-        if (!authed()) return
+        val owner = ownerId() ?: return
         pullMutex.withLock { if (!pulledProviders.add(provider)) return }
         runCatching {
-            val rows = SupabaseProvider.client.postgrest
-                .from("iptv_tmdb_map")
-                .select { filter { eq("provider_key", provider) } }
-                .decodeList<MapRow>()
-            var applied = 0
-            for (row in rows) {
-                val kind = MatchKind.entries.firstOrNull { it.slug == row.contentType } ?: continue
-                val local = XtreamMatchIndex.cachedMapping(provider, kind, row.tmdbId)
-                if (local == null || row.updatedAtMs > local.updatedAtMs) {
-                    XtreamMatchIndex.putMapping(
-                        provider, kind, row.tmdbId, row.streamId, row.matchedName,
-                        synced = true, updatedAtMs = row.updatedAtMs,
-                    )
-                    applied++
-                }
-            }
-            log.i { "pullOnce($provider) — ${rows.size} rows, $applied applied" }
+            val r = MatchMapPuller.pull(owner, provider, TraktPlatformClock.nowEpochMs(), store, remote)
+            log.i { "pullOnce($provider) — full=${r.full} requests=${r.requests} rows=${r.fetched} applied=${r.applied}" }
         }.onFailure { e ->
             pullMutex.withLock { pulledProviders.remove(provider) } // retry next resolve
             log.w(e) { "pullOnce($provider) — FAILED" }

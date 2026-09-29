@@ -171,6 +171,7 @@ internal object XtreamMatchIndex {
         if (version < 2) {
             it.execSQL("DROP TABLE IF EXISTS items"); it.execSQL("DROP TABLE IF EXISTS keys")
             it.execSQL("DROP TABLE IF EXISTS idx_meta"); it.execSQL("DROP TABLE IF EXISTS tmdb_map")
+            it.execSQL("DROP TABLE IF EXISTS tmdb_map_cursor")
             it.execSQL("PRAGMA user_version = 2")
         }
         // v3 (P7, items 4-5): the index becomes the Xtream browse catalog — category_id/epg_id/
@@ -223,6 +224,10 @@ internal object XtreamMatchIndex {
         it.execSQL("CREATE TABLE IF NOT EXISTS keys(provider TEXT NOT NULL, kind TEXT NOT NULL, k TEXT NOT NULL, sid INTEGER NOT NULL, PRIMARY KEY(provider, kind, k, sid)) WITHOUT ROWID")
         it.execSQL("CREATE TABLE IF NOT EXISTS idx_meta(provider TEXT NOT NULL, kind TEXT NOT NULL, built_at INTEGER NOT NULL, item_count INTEGER NOT NULL, last_added_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, kind)) WITHOUT ROWID")
         it.execSQL("CREATE TABLE IF NOT EXISTS tmdb_map(provider TEXT NOT NULL, kind TEXT NOT NULL, tmdb INTEGER NOT NULL, sid INTEGER, matched_name TEXT, updated_at INTEGER NOT NULL, synced INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, kind, tmdb)) WITHOUT ROWID")
+        // B78: the delta-pull cursor for tmdb_map (MatchMapPullPolicy). Lives beside the rows it
+        // describes and is written in the same transaction, so anything that drops or purges
+        // tmdb_map must drop/purge this too — a mirror without its rows must re-bootstrap.
+        it.execSQL("CREATE TABLE IF NOT EXISTS tmdb_map_cursor(owner TEXT NOT NULL, provider TEXT NOT NULL, mark INTEGER NOT NULL, pulled_at INTEGER NOT NULL, full_at INTEGER NOT NULL, PRIMARY KEY(owner, provider)) WITHOUT ROWID")
         // The FIRST identity each live sid was ever seen carrying (INSERT OR IGNORE, never
         // overwritten): a favourite saved as `live:{sid}` meant THAT channel, even if the panel later
         // hands the number to another one. Survives rebuilds; purged only with the account.
@@ -242,7 +247,7 @@ internal object XtreamMatchIndex {
             val c = connection()
             c.execSQL("BEGIN IMMEDIATE")
             try {
-                for (t in listOf("items", "keys", "idx_meta", "tmdb_map", "cats", "live_sid_history")) {
+                for (t in listOf("items", "keys", "idx_meta", "tmdb_map", "tmdb_map_cursor", "cats", "live_sid_history")) {
                     c.prepare("DELETE FROM $t WHERE provider = ?").use { st ->
                         st.bindText(1, provider); st.step()
                     }
@@ -923,6 +928,56 @@ internal object XtreamMatchIndex {
                 st.step()
             }
         }
+    }
+
+    /** B78: this account's delta-pull cursor for [provider] (null = never pulled / wiped / purged). */
+    suspend fun readPullCursor(owner: String, provider: String): MatchMapCursor? = mutex.withLock {
+        connection().prepare("SELECT mark, pulled_at, full_at FROM tmdb_map_cursor WHERE owner = ? AND provider = ?").use { st ->
+            st.bindText(1, owner); st.bindText(2, provider)
+            if (st.step()) MatchMapCursor(markMs = st.getLong(0), lastPullAtMs = st.getLong(1), lastFullPullAtMs = st.getLong(2)) else null
+        }
+    }
+
+    /**
+     * B78: applies one pulled page (last-write-wins per [MatchMapPullPolicy.shouldApply]) and stores
+     * [cursor] in the SAME transaction, so the mark can never claim rows the mirror does not hold.
+     * Two plain statements per row rather than an UPSERT: this is the shared twin of the mobile
+     * file, where Android minSdk 24 framework SQLite predates UPSERT.
+     */
+    suspend fun applyPulledPage(owner: String, provider: String, rows: List<RemoteMapping>, cursor: MatchMapCursor): Int = mutex.withLock {
+        val c = connection()
+        var applied = 0
+        c.execSQL("BEGIN IMMEDIATE")
+        try {
+            val read = c.prepare("SELECT updated_at FROM tmdb_map WHERE provider = ? AND kind = ? AND tmdb = ?")
+            val write = c.prepare("INSERT OR REPLACE INTO tmdb_map(provider, kind, tmdb, sid, matched_name, updated_at, synced) VALUES(?,?,?,?,?,?,1)")
+            try {
+                for (row in rows) {
+                    read.reset()
+                    read.bindText(1, provider); read.bindText(2, row.kind.slug); read.bindLong(3, row.tmdb.toLong())
+                    val local = if (read.step()) read.getLong(0) else null
+                    if (!MatchMapPullPolicy.shouldApply(row.updatedAtMs, local)) continue
+                    write.reset()
+                    write.bindText(1, provider); write.bindText(2, row.kind.slug); write.bindLong(3, row.tmdb.toLong())
+                    if (row.sid != null) write.bindLong(4, row.sid.toLong()) else write.bindNull(4)
+                    if (row.matchedName != null) write.bindText(5, row.matchedName) else write.bindNull(5)
+                    write.bindLong(6, row.updatedAtMs)
+                    write.step()
+                    applied++
+                }
+            } finally {
+                read.close(); write.close()
+            }
+            c.prepare("INSERT OR REPLACE INTO tmdb_map_cursor(owner, provider, mark, pulled_at, full_at) VALUES(?,?,?,?,?)").use { st ->
+                st.bindText(1, owner); st.bindText(2, provider)
+                st.bindLong(3, cursor.markMs); st.bindLong(4, cursor.lastPullAtMs); st.bindLong(5, cursor.lastFullPullAtMs)
+                st.step()
+            }
+            c.execSQL("COMMIT")
+        } catch (t: Throwable) {
+            c.execSQL("ROLLBACK"); throw t
+        }
+        applied
     }
 
     /** Rows not yet pushed to Supabase: (kind, tmdb, sid, matchedName, updatedAtMs). */

@@ -928,6 +928,32 @@ class HomeScreenTest {
         assertEquals(HomeNextUpCandidateMetadataOutcome.Dismissed, decision.outcome)
     }
 
+    @Test
+    fun `B55 next up of a later finished episode beats a stale earlier resume`() {
+        val staleResume = progressEntry(
+            videoId = "show:1:1",
+            title = "Show",
+            episodeNumber = 1,
+            episodeTitle = "Pilot",
+            lastUpdatedEpochMs = 100L,
+        )
+        val nextUp = continueWatchingItem(
+            videoId = "show:1:6",
+            subtitle = "Next Up • S1E6 • Six",
+            episodeNumber = 6,
+            seedEpisodeNumber = 5,
+        )
+
+        val result = buildHomeContinueWatchingItems(
+            visibleEntries = listOf(staleResume),
+            nextUpItemsBySeries = mapOf("show" to (500L to nextUp)),
+            // Production suppresses next up only for a resume NEWER than the latest completion.
+            nextUpSuppressedSeriesIds = emptySet(),
+        )
+
+        assertEquals(listOf("show:1:6"), result.map(ContinueWatchingItem::videoId))
+    }
+
     private fun progressEntry(
         videoId: String,
         title: String,
