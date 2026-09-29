@@ -837,11 +837,23 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
     }
 
     val currentVideoId = activeVideoId ?: return false
+    // Before the first frame the snapshot reads 0, so the request's resume target wins (B59-H1);
+    // after it, the viewer's own position. The recovery baseline must not fall below the reopen
+    // point: a 0 baseline under a resume at 13:42 would count the reopened position as "recovered"
+    // and re-arm the re-mint loop guard on the first snapshot (live keeps its snapshot baseline).
+    val swapStart = PlaybackStartPositionPolicy.targetAfterSourceSwap(
+        isLive = com.nuvio.app.features.streams.normalizeStreamType(activeStreamType) == "live" ||
+            contentType.equals("live", ignoreCase = true),
+        firstFrameShown = resumePlaybackStarted,
+        currentPositionMs = playbackSnapshot.positionMs,
+        requestedStartMs = activeInitialPositionMs,
+        requestedProgressFraction = activeInitialProgressFraction,
+    )
     credentialRefreshAttempts++
-    credentialRefreshBaselinePositionMs = playbackSnapshot.positionMs.coerceAtLeast(0L)
+    credentialRefreshBaselinePositionMs = maxOf(playbackSnapshot.positionMs.coerceAtLeast(0L), swapStart.positionMs)
     removeFailedStreamFromCache()
 
-    val savedPositionMs = playbackSnapshot.positionMs.coerceAtLeast(0L)
+    val savedPositionMs = swapStart.positionMs
     val expectedProviderAddonId = activeProviderAddonId
     val expectedProviderName = activeProviderName
     val expectedStreamTitle = activeStreamTitle
@@ -950,7 +962,7 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
             activeProviderAddonId = stream.addonId
             currentStreamBingeGroup = stream.behaviorHints.bingeGroup
             activeInitialPositionMs = savedPositionMs
-            activeInitialProgressFraction = null
+            activeInitialProgressFraction = swapStart.progressFraction
             showSourcesPanel = false
             controlsVisible = true
         } finally {
