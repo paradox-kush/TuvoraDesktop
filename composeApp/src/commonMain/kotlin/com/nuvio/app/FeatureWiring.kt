@@ -4,46 +4,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import co.touchlab.kermit.Logger
 import com.nuvio.app.features.common.lifecycle.FeatureRegistry
-import com.nuvio.app.core.contracts.MemoryPortAccess
-import com.nuvio.app.core.memory.MemoryPortImpl
 import com.nuvio.app.features.common.lifecycle.LocalRevertFailureSink
-import com.nuvio.app.core.contracts.IptvCatalogAccess
-import com.nuvio.app.core.contracts.IptvContentClassifierAccess
-import com.nuvio.app.features.iptv.XtreamContentClassifier
-import com.nuvio.app.features.iptv.XtreamSyncParticipant
-import com.nuvio.app.features.iptv.overlay.IptvOverlaySyncParticipant
-import com.nuvio.app.features.radar.RadarSyncParticipant
-import com.nuvio.app.core.contracts.SyncParticipantRegistry
-import com.nuvio.app.core.contracts.LocalStateCleanerRegistry
-import com.nuvio.app.features.iptv.XtreamRecentsCleaner
-import com.nuvio.app.features.iptv.XtreamAccountsCleaner
-import com.nuvio.app.core.rec.RecLocalStateCleaner
-import com.nuvio.app.core.contracts.IptvSearchAccess
-import com.nuvio.app.features.iptv.XtreamSearchProvider
-import com.nuvio.app.core.contracts.RecTrackingAccess
-import com.nuvio.app.core.rec.RecPlaybackReporterImpl
-import com.nuvio.app.core.rec.RecSettingsImpl
 import com.nuvio.app.core.contracts.LocalIptvCatalog
 import com.nuvio.app.features.iptv.XtreamRepository
-import com.nuvio.app.core.contracts.ProfileChangeParticipants
-import com.nuvio.app.features.iptv.IptvProfileChange
-import com.nuvio.app.features.radar.RadarProfileChange
 import com.nuvio.app.core.contracts.HomeRecAccess
 import com.nuvio.app.core.rec.HomeRecBinderImpl
 import com.nuvio.app.core.contracts.IptvSettingsSectionAccess
 import com.nuvio.app.features.iptv.IptvSettingsSectionImpl
-import com.nuvio.app.core.contracts.LiveRecentsAccess
-import com.nuvio.app.features.iptv.XtreamLiveRecentsProvider
 import com.nuvio.app.core.contracts.HomeSportsSectionAccess
 import com.nuvio.app.features.radar.RadarHomeSportsSection
-import com.nuvio.app.core.contracts.StreamSourceAccess
-import com.nuvio.app.features.iptv.XtreamStreamSourceProvider
-import com.nuvio.app.core.contracts.MetaSourceAccess
-import com.nuvio.app.features.iptv.XtreamMetaSource
-import com.nuvio.app.core.contracts.PlaybackGateAccess
-import com.nuvio.app.features.iptv.IptvPlaybackGateAdapter
-import com.nuvio.app.core.contracts.LivePlaybackAccess
-import com.nuvio.app.features.iptv.XtreamLivePlaybackProvider
 import com.nuvio.app.core.contracts.IptvHubContentAccess
 import com.nuvio.app.features.iptv.XtreamHubContent
 import com.nuvio.app.core.contracts.SportsHubContentAccess
@@ -81,31 +50,11 @@ private val revertLog = Logger.withTag("EffectScope")
  * NEVER call from a @Composable body (recomposition re-runs it — same crash class).
  */
 fun registerFeatureContributions() {
-    // S10: app-wide memory port (AppMemory + BudgetRegistry) — image loaders, player buffer
-    // sizing, and the platform startup probes size their budgets through this.
-    MemoryPortAccess.register(MemoryPortImpl)
-    // S3a: register the IptvCatalog read port for non-Compose consumers.
-    IptvCatalogAccess.register(XtreamRepository)
-    IptvContentClassifierAccess.register(XtreamContentClassifier)
-    SyncParticipantRegistry.register(XtreamSyncParticipant)
-    SyncParticipantRegistry.register(RadarSyncParticipant)
-    SyncParticipantRegistry.register(IptvOverlaySyncParticipant)
-    LocalStateCleanerRegistry.register(XtreamRecentsCleaner)
-    LocalStateCleanerRegistry.register(RecLocalStateCleaner)
-    LocalStateCleanerRegistry.register(XtreamAccountsCleaner)
-    IptvSearchAccess.register(XtreamSearchProvider)
-    RecTrackingAccess.register(RecPlaybackReporterImpl)
-    RecTrackingAccess.registerSettings(RecSettingsImpl)
-    ProfileChangeParticipants.register(IptvProfileChange)
-    ProfileChangeParticipants.register(RadarProfileChange)
+    registerLogicFeatureContributions()
+    // UI slots: Compose content the fork contributes to shared screens (not compiled on Apple TV).
     HomeRecAccess.register(HomeRecBinderImpl)
     IptvSettingsSectionAccess.register(IptvSettingsSectionImpl)
-    LiveRecentsAccess.register(XtreamLiveRecentsProvider)
     HomeSportsSectionAccess.register(RadarHomeSportsSection)
-    StreamSourceAccess.register(XtreamStreamSourceProvider)
-    MetaSourceAccess.register(XtreamMetaSource)
-    PlaybackGateAccess.register(IptvPlaybackGateAdapter)
-    LivePlaybackAccess.register(XtreamLivePlaybackProvider)
     IptvHubContentAccess.register(XtreamHubContent)
     SportsHubContentAccess.register(RadarHubContent)
     LiveTvContentAccess.register(LiveTvContentImpl)
