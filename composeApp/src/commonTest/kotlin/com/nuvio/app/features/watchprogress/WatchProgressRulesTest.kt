@@ -502,6 +502,25 @@ class WatchProgressRulesTest {
         assertFalse(entry(videoId = "movie-1").isLiveChannelProgress())
     }
 
+    @Test
+    fun `B55 episodes all stopped before the credits surface the latest one`() {
+        // 88% watched each: below the 90% completion threshold, so every episode stays in progress.
+        val episodes = (1..6).map { episode ->
+            entry(
+                videoId = "show:1:$episode",
+                parentMetaId = "show",
+                seasonNumber = 1,
+                episodeNumber = episode,
+                lastUpdatedEpochMs = 1_000L * episode,
+                lastPositionMs = 880_000L,
+            )
+        }
+
+        val result = episodes.reversed().continueWatchingEntries()
+
+        assertEquals(listOf("show:1:6"), result.map { it.videoId })
+    }
+
     private fun entry(
         videoId: String,
         parentMetaId: String = videoId.substringBefore(':'),
