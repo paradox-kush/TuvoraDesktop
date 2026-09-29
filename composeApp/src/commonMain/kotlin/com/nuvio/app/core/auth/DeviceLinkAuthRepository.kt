@@ -4,6 +4,7 @@ import co.touchlab.kermit.Logger
 import com.nuvio.app.core.network.ServerConfiguration
 import com.nuvio.app.core.network.ServerConfigurationRepository
 import com.nuvio.app.core.network.SupabaseProvider
+import com.nuvio.app.core.sync.MOBILE_SYNC_PLATFORM
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.user.UserInfo
 import io.github.jan.supabase.auth.user.UserSession
@@ -29,6 +30,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -104,12 +106,7 @@ object DeviceLinkAuthRepository {
         nonce: String,
         deviceName: String,
     ): DeviceLinkStartResponse {
-        val params = buildJsonObject {
-            put("p_device_nonce", nonce)
-            put("p_redirect_base_url", configuration.deviceLinkUrl())
-            put("p_device_name", deviceName)
-            put("p_device_type", "mobile")
-        }
+        val params = deviceLinkStartParams(nonce, configuration.deviceLinkUrl(), deviceName)
         return SupabaseProvider.client.postgrest
             .rpc("start_device_login_session", params)
             .decodeList<DeviceLinkStartResponse>()
@@ -228,3 +225,12 @@ private class DeviceLinkAuthException(
     val reason: DeviceLinkAuthFailure,
     cause: Throwable? = null,
 ) : Exception(reason.name, cause)
+
+/** start_device_login_session arguments. The device type is this build's platform token ("tvos" on Apple TV). */
+internal fun deviceLinkStartParams(nonce: String, redirectBaseUrl: String, deviceName: String): JsonObject =
+    buildJsonObject {
+        put("p_device_nonce", nonce)
+        put("p_redirect_base_url", redirectBaseUrl)
+        put("p_device_name", deviceName)
+        put("p_device_type", MOBILE_SYNC_PLATFORM)
+    }
