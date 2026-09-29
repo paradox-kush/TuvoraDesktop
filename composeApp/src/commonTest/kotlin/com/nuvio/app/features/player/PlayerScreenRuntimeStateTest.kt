@@ -226,6 +226,40 @@ class PlayerScreenRuntimeStateTest {
         )
     }
 
+    // B59-H1: a manual source switch while a resume is still loading (no first frame yet) reopened
+    // the new source at the snapshot's 0 and dropped a percentage resume.
+    @Test
+    fun manualSwitchBeforeFirstFrameKeepsTheSavedResumePosition() {
+        val runtime = PlayerScreenRuntime(testPlayerScreenArgs())
+        runtime.activeInitialPositionMs = 822_000L
+        runtime.resumePlaybackStarted = false
+        runtime.playbackSnapshot = PlayerPlaybackSnapshot(isLoading = true, positionMs = 0L)
+
+        assertEquals(SourceSwapStart(positionMs = 822_000L, progressFraction = null), runtime.sourceSwapStart())
+    }
+
+    @Test
+    fun manualSwitchBeforeFirstFrameKeepsTheSavedResumeFraction() {
+        val runtime = PlayerScreenRuntime(testPlayerScreenArgs())
+        runtime.activeInitialPositionMs = 0L
+        runtime.activeInitialProgressFraction = 0.4f
+        runtime.resumePlaybackStarted = false
+        runtime.playbackSnapshot = PlayerPlaybackSnapshot(isLoading = true, positionMs = 0L)
+
+        assertEquals(SourceSwapStart(positionMs = 0L, progressFraction = 0.4f), runtime.sourceSwapStart())
+    }
+
+    @Test
+    fun manualSwitchAfterFirstFrameKeepsTheCurrentPosition() {
+        val runtime = PlayerScreenRuntime(testPlayerScreenArgs())
+        runtime.activeInitialPositionMs = 822_000L
+        runtime.activeInitialProgressFraction = 0.4f
+        runtime.resumePlaybackStarted = true
+        runtime.playbackSnapshot = PlayerPlaybackSnapshot(positionMs = 10_000L, durationMs = 2_000_000L)
+
+        assertEquals(SourceSwapStart(positionMs = 10_000L, progressFraction = null), runtime.sourceSwapStart())
+    }
+
     private fun testPlayerScreenArgs() = PlayerScreenArgs(
         profileId = 1,
         title = "Title",

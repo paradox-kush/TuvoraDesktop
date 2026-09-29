@@ -157,6 +157,21 @@ internal fun PlayerScreenRuntime.saveP2pStreamForReuse(
     )
 }
 
+/**
+ * Where the next source should open when this one is swapped out — a manual source pick or the IPTV
+ * credential refresh. Before the first frame the snapshot reads 0, so the request's resume target
+ * (position or fraction) wins; after it, the viewer's own position (B59-H1, [PlaybackStartPositionPolicy]).
+ */
+internal fun PlayerScreenRuntime.sourceSwapStart(): SourceSwapStart =
+    PlaybackStartPositionPolicy.targetAfterSourceSwap(
+        isLive = com.nuvio.app.features.streams.normalizeStreamType(activeStreamType) == "live" ||
+            contentType.equals("live", ignoreCase = true),
+        firstFrameShown = resumePlaybackStarted,
+        currentPositionMs = playbackSnapshot.positionMs,
+        requestedStartMs = activeInitialPositionMs,
+        requestedProgressFraction = activeInitialProgressFraction,
+    )
+
 internal fun PlayerScreenRuntime.switchToP2pSourceStream(stream: StreamItem) {
     val infoHash = stream.p2pInfoHash ?: return
     if (!P2pSettingsRepository.isVisible) return
@@ -164,7 +179,7 @@ internal fun PlayerScreenRuntime.switchToP2pSourceStream(stream: StreamItem) {
         pendingP2pSwitch = PendingPlayerP2pSwitch(stream = stream, episode = null, isAutoPlay = false)
         return
     }
-    val currentPositionMs = playbackSnapshot.positionMs.coerceAtLeast(0L)
+    val swapStart = sourceSwapStart()
     flushWatchProgress()
     stopActiveP2pStream()
     saveP2pStreamForReuse(
@@ -189,8 +204,8 @@ internal fun PlayerScreenRuntime.switchToP2pSourceStream(stream: StreamItem) {
     activeProviderName = stream.addonName
     activeProviderAddonId = stream.addonId
     currentStreamBingeGroup = stream.behaviorHints.bingeGroup
-    activeInitialPositionMs = currentPositionMs
-    activeInitialProgressFraction = null
+    activeInitialPositionMs = swapStart.positionMs
+    activeInitialProgressFraction = swapStart.progressFraction
     showSourcesPanel = false
     controlsVisible = true
     PlayerStreamsRepository.pauseSearchForPlayback()
@@ -263,7 +278,7 @@ internal fun PlayerScreenRuntime.switchToSource(stream: StreamItem) {
         activeSourceIdentityKey = sourceIdentityKey ?: activeSourceIdentityKey
         return
     }
-    val currentPositionMs = playbackSnapshot.positionMs.coerceAtLeast(0L)
+    val swapStart = sourceSwapStart()
     flushWatchProgress()
     stopActiveP2pStream()
     val currentVideoId = activeVideoId
@@ -282,8 +297,8 @@ internal fun PlayerScreenRuntime.switchToSource(stream: StreamItem) {
     activeProviderName = stream.addonName
     activeProviderAddonId = stream.addonId
     currentStreamBingeGroup = stream.behaviorHints.bingeGroup
-    activeInitialPositionMs = currentPositionMs
-    activeInitialProgressFraction = null
+    activeInitialPositionMs = swapStart.positionMs
+    activeInitialProgressFraction = swapStart.progressFraction
     showSourcesPanel = false
     controlsVisible = true
     PlayerStreamsRepository.pauseSearchForPlayback()
