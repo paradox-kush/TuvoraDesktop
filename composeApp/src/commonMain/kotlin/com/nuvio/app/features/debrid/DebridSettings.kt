@@ -3,6 +3,11 @@ package com.nuvio.app.features.debrid
 import kotlinx.serialization.Serializable
 
 data class DebridSettings(
+    /**
+     * False in store builds ([com.nuvio.app.core.build.AppFeaturePolicy.debridEnabled]): the saved
+     * keys stay (and keep syncing), but nothing resolves links or opens the cloud library with them.
+     */
+    val featureAvailable: Boolean = true,
     val enabled: Boolean = false,
     val cloudLibraryEnabled: Boolean = true,
     val providerApiKeys: Map<String, String> = emptyMap(),
@@ -43,7 +48,7 @@ data class DebridSettings(
         get() = activeResolverCredential != null
 
     val linkResolvingEnabled: Boolean
-        get() = enabled
+        get() = featureAvailable && enabled
 
     val canResolvePlayableLinks: Boolean
         get() = linkResolvingEnabled && hasResolverProvider
@@ -52,8 +57,11 @@ data class DebridSettings(
         get() = DebridProviders.configuredServices(this)
             .any { credential -> credential.provider.supports(DebridProviderCapability.CloudLibrary) }
 
+    val cloudLibraryActive: Boolean
+        get() = featureAvailable && cloudLibraryEnabled
+
     val canUseCloudLibrary: Boolean
-        get() = cloudLibraryEnabled && hasCloudLibraryProvider
+        get() = cloudLibraryActive && hasCloudLibraryProvider
 
     val hasCustomStreamFormatting: Boolean
         get() = DebridStreamFormatterDefaults.NAME_TEMPLATE.isNotBlank() ||

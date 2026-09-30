@@ -11,6 +11,8 @@ expect object AppFeaturePolicy {
     val notificationsEnabled: Boolean
     /** Stremio-style addon system (user-installable catalog/stream sources). Off in store builds. */
     val addonsEnabled: Boolean
+    /** Debrid services + their cloud library. Off in store builds; saved keys are kept and still sync. */
+    val debridEnabled: Boolean
     val supportersContributorsPageEnabled: Boolean
     val donationActionsEnabled: Boolean
     val donationProgressEnabled: Boolean

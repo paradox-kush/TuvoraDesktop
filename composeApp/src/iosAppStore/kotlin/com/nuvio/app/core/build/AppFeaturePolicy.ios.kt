@@ -6,6 +6,8 @@ actual object AppFeaturePolicy {
     actual val notificationsEnabled: Boolean = true
     // Store builds hide the addon system: pure BYO-IPTV player posture.
     actual val addonsEnabled: Boolean = false
+    // Debrid is a torrent-cache service: same store posture as addons and P2P (Apple 5.2.3).
+    actual val debridEnabled: Boolean = false
     actual val supportersContributorsPageEnabled: Boolean = false
     actual val donationActionsEnabled: Boolean = false
     actual val donationProgressEnabled: Boolean = true
