@@ -4,6 +4,7 @@ import co.touchlab.kermit.Logger
 import com.nuvio.app.core.network.SupabaseProvider
 import com.nuvio.app.core.sync.SyncSession
 import com.nuvio.app.features.addons.encodeUnsafeHttpUrlCharacters
+import com.nuvio.app.features.addons.AddonSyncMerge
 import com.nuvio.app.features.addons.httpGetText
 import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.tmdb.TmdbService
@@ -14,6 +15,7 @@ import io.github.jan.supabase.postgrest.rpc
 import kotlinx.atomicfu.atomic
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -121,6 +123,7 @@ actual object PluginRepository {
     actual suspend fun pullFromServer(profileId: Int) {
         val effectiveProfileId = resolveEffectiveProfileId(profileId)
         ensureStateLoadedForProfile(effectiveProfileId)
+        var mergePushNeeded = false
         runCatching {
             val rows = SupabaseProvider.client.postgrest
                 .from("plugins")
@@ -130,7 +133,18 @@ actual object PluginRepository {
                 }
                 .decodeList<PluginRow>()
 
-            val urls = dedupeManifestUrls(rows.map { it.url })
+            // Repos added or removed while a push couldn't land (signed out, a token gap, offline)
+            // are merged up instead of being overwritten by the server's list — see AddonSyncMerge.
+            val remoteUrls = dedupeManifestUrls(rows.map { it.url })
+            val merge = AddonSyncMerge.merge(
+                local = dedupeManifestUrls(_uiState.value.repositories.map { it.manifestUrl }),
+                remote = remoteUrls,
+                lastSynced = PluginStorage.loadSyncedRepositoryUrls(effectiveProfileId)?.let(::dedupeManifestUrls),
+            )
+            val urls = merge.urls
+            if (merge.pushNeeded) {
+                log.i { "pullFromServer — local plugin repo edits never reached the server; pushing the merged list (${urls.size} repos)" }
+            }
             val existingState = _uiState.value
             val existingReposByUrl = existingState.repositories.associateBy { it.manifestUrl }
             val nowEpochMs = currentEpochMillis()
@@ -171,8 +185,22 @@ actual object PluginRepository {
             }
 
             initialized = true
+            if (merge.pushNeeded) {
+                mergePushNeeded = true
+            } else {
+                PluginStorage.saveSyncedRepositoryUrls(effectiveProfileId, urls)
+            }
         }.onFailure { error ->
+            if (error is CancellationException) throw error
             log.e(error) { "pullFromServer failed" }
+        }
+        if (mergePushNeeded) {
+            // Awaited: a failure leaves the last-synced list as it was, so the next pull merges again.
+            runCatching { sendToServer(effectiveProfileId, pushItemsFor(_uiState.value.repositories)) }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                    log.e(error) { "pullFromServer merge push failed; will retry on the next pull" }
+                }
         }
     }
 
@@ -510,29 +538,38 @@ actual object PluginRepository {
                 // Install/remove/refresh all reach here, and the plugins screen works signed out
                 // — so without this the RPC goes out as `anon` and comes back 42501, once per
                 // edit. Nothing is lost by refusing: the repo list was already persist()ed
-                // locally, and pullFromServer() migrates it up on the next sign-in.
+                // locally, and the next pullFromServer() merges it up (AddonSyncMerge).
                 if (!SyncSession.canPush()) {
                     log.d { "pushToServer skipped, no signed-in session" }
                     return@runCatching
                 }
-                val repos = _uiState.value.repositories.mapIndexed { index, repo ->
-                    PluginPushItem(
-                        url = repo.manifestUrl,
-                        name = repo.name,
-                        enabled = true,
-                        sortOrder = index,
-                    )
-                }
-
-                val params = buildJsonObject {
-                    put("p_profile_id", currentProfileId)
-                    put("p_plugins", json.encodeToJsonElement(repos))
-                }
-                SupabaseProvider.client.postgrest.rpc("sync_push_plugins", params)
+                sendToServer(currentProfileId, pushItemsFor(_uiState.value.repositories))
             }.onFailure { error ->
+                // Not retried here: the last-synced list is unchanged, so the next pull merges
+                // this edit up instead of overwriting it.
                 log.e(error) { "pushToServer failed" }
             }
         }
+    }
+
+    private fun pushItemsFor(repositories: List<PluginRepositoryItem>): List<PluginPushItem> =
+        repositories.mapIndexed { index, repo ->
+            PluginPushItem(
+                url = repo.manifestUrl,
+                name = repo.name,
+                enabled = true,
+                sortOrder = index,
+            )
+        }
+
+    /** Full-replace push; on success records [repos] as the list this device and the server agree on. */
+    private suspend fun sendToServer(profileId: Int, repos: List<PluginPushItem>) {
+        val params = buildJsonObject {
+            put("p_profile_id", profileId)
+            put("p_plugins", json.encodeToJsonElement(repos))
+        }
+        SupabaseProvider.client.postgrest.rpc("sync_push_plugins", params)
+        PluginStorage.saveSyncedRepositoryUrls(profileId, repos.map { it.url })
     }
 
     private fun persist() {

@@ -36,6 +36,18 @@ internal object PluginStorage {
         )
     }
 
+    /** The repo list this device and the server last agreed on, or null if it never synced. See AddonSyncMerge. */
+    fun loadSyncedRepositoryUrls(profileId: Int): List<String>? =
+        NSUserDefaults.standardUserDefaults.stringForKey("synced_plugin_urls_$profileId")
+            ?.lines()?.map { it.trim() }?.filter { it.isNotEmpty() }
+
+    fun saveSyncedRepositoryUrls(profileId: Int, urls: List<String>) {
+        NSUserDefaults.standardUserDefaults.setObject(
+            urls.joinToString(separator = "\n"),
+            forKey = "synced_plugin_urls_$profileId",
+        )
+    }
+
     fun hasScraperCode(profileId: Int, scraperId: String): Boolean =
         NSFileManager.defaultManager.fileExistsAtPath(scraperCodePath(profileId, scraperId))
 

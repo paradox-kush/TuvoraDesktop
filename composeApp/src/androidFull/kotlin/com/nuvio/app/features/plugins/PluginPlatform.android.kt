@@ -26,6 +26,15 @@ internal object PluginStorage {
             ?.apply()
     }
 
+    /** The repo list this device and the server last agreed on, or null if it never synced. See AddonSyncMerge. */
+    fun loadSyncedRepositoryUrls(profileId: Int): List<String>? =
+        preferences?.getString("synced_plugin_urls_$profileId", null)
+            ?.lines()?.map { it.trim() }?.filter { it.isNotEmpty() }
+
+    fun saveSyncedRepositoryUrls(profileId: Int, urls: List<String>) {
+        preferences?.edit()?.putString("synced_plugin_urls_$profileId", urls.joinToString(separator = "\n"))?.apply()
+    }
+
     fun hasScraperCode(profileId: Int, scraperId: String): Boolean =
         scraperCodeStore?.contains(profileId, scraperId) == true
 

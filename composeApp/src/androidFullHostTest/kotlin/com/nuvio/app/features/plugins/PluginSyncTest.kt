@@ -1,10 +1,10 @@
 package com.nuvio.app.features.plugins
 
-import com.nuvio.app.core.network.ServerCapabilities
-import com.nuvio.app.core.network.ServerConfiguration
-import com.nuvio.app.core.network.ServerConfigurationRepository
-import com.nuvio.app.core.network.ServerConfigurationStorage
 import com.nuvio.app.core.network.SupabaseProvider
+import com.nuvio.app.core.network.SyncBackendConfig
+import com.nuvio.app.core.network.SyncBackendDefaults
+import com.nuvio.app.core.network.SyncBackendRepository
+import com.nuvio.app.core.network.SyncBackendStorage
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.AddonStorage
 import com.russhwolf.settings.SettingsInitializer
@@ -40,35 +40,37 @@ class PluginSyncTest {
         SettingsInitializer().create(context)
         PluginStorage.initialize(context)
         AddonStorage.initialize(context)
-        ServerConfigurationStorage.initialize(context)
+        SyncBackendStorage.initialize(context)
         PluginRepository.clearLocalState()
         AddonRepository.clearLocalState()
         server.start()
-        assertTrue(
-            ServerConfigurationRepository.saveCustom(
-                ServerConfiguration(
-                    backendUrl = server.url("/").toString(),
-                    publishableKey = "test-key",
-                    capabilities = ServerCapabilities(emailPasswordAuth = true, tvLogin = false),
-                    isCustom = true,
-                ),
+        // Point the Supabase client at the mock server (held in memory; only the id is persisted).
+        SyncBackendRepository.applyBackendAfterLogout(
+            SyncBackendConfig(
+                id = "test",
+                displayName = "Test",
+                supabaseUrl = server.url("/").toString(),
+                anonKey = "test-key",
+                avatarPublicBaseUrl = server.url("/").toString(),
             ),
+            revision = "test",
         )
-        SupabaseProvider.reset()
+        SupabaseProvider.rebuildClient()
     }
 
     @After
     fun tearDown(): Unit = runBlocking {
         PluginRepository.clearLocalState()
         AddonRepository.clearLocalState()
-        SupabaseProvider.reset()
-        ServerConfigurationRepository.useOfficial()
+        SyncBackendRepository.applyBackendAfterLogout(SyncBackendDefaults.hosted(), revision = "")
+        SupabaseProvider.rebuildClient()
         server.shutdown()
     }
 
     @Test
     fun emptyRemoteRemovesCachedPluginsWithoutUploadingAndStaysEmptyAfterReload(): Unit = runBlocking {
-        seedPlugins()
+        // A device that last agreed with the server on this list: the server's delete-all must stick.
+        seedPlugins(synced = true)
         PluginRepository.initialize()
         assertEquals(1, PluginRepository.uiState.value.repositories.size)
         respond("[]")
@@ -92,7 +94,7 @@ class PluginSyncTest {
     @Test
     fun nonemptyRemoteRemovesOnlyDeletedPluginsWithoutUploading(): Unit = runBlocking {
         val retainedUrl = server.url("/retained/manifest.json").toString()
-        seedPlugins(listOf(manifestUrl, retainedUrl))
+        seedPlugins(listOf(manifestUrl, retainedUrl), synced = true)
         respond("""[{"url":"$retainedUrl"}]""")
 
         PluginRepository.pullFromServer(1)
@@ -136,23 +138,64 @@ class PluginSyncTest {
     }
 
     @Test
-    fun explicitRemovalStillUploadsTheUpdatedPlugins(): Unit = runBlocking {
-        seedPlugins()
-        respond("{}")
+    fun removalWhileSignedOutIsNotUploadedButTheNextPullCarriesItToTheServer(): Unit = runBlocking {
+        // B79: an edit whose push is refused (no session) used to be overwritten by the next pull.
+        seedPlugins(synced = true)
 
         PluginRepository.removeRepository(manifestUrl)
+        assertNull(server.takeRequest(750, TimeUnit.MILLISECONDS))
 
-        val request = assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
-        assertEquals("POST", request.method)
-        assertEquals("/rest/v1/rpc/sync_push_plugins", request.requestUrl?.encodedPath)
-        assertTrue(request.body.readUtf8().contains("\"p_plugins\":[]"))
+        respond("""[{"url":"$manifestUrl"}]""")
+        respond("")
+        PluginRepository.pullFromServer(1)
+
         assertTrue(PluginRepository.uiState.value.repositories.isEmpty())
+        assertEquals("GET", assertNotNull(server.takeRequest(5, TimeUnit.SECONDS)).method)
+        val push = assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        assertEquals("/rest/v1/rpc/sync_push_plugins", push.requestUrl?.encodedPath)
+        assertTrue(push.body.readUtf8().contains("\"p_plugins\":[]"))
+        assertEquals(emptyList(), PluginStorage.loadSyncedRepositoryUrls(1))
+    }
+
+    @Test
+    fun aNeverSyncedDeviceKeepsItsPluginsOnAnEmptyServerAndUploadsThem(): Unit = runBlocking {
+        seedPlugins()
+        respond("[]")
+        respond("")
+
+        PluginRepository.pullFromServer(1)
+
+        assertEquals(listOf(manifestUrl), PluginRepository.uiState.value.repositories.map { it.manifestUrl })
+        assertEquals("GET", assertNotNull(server.takeRequest(5, TimeUnit.SECONDS)).method)
+        val push = assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        assertEquals("/rest/v1/rpc/sync_push_plugins", push.requestUrl?.encodedPath)
+        assertTrue(push.body.readUtf8().contains(manifestUrl))
+        assertEquals(listOf(manifestUrl), PluginStorage.loadSyncedRepositoryUrls(1))
+    }
+
+    @Test
+    fun aNeverSyncedDeviceKeepsItsAddonsOnAnEmptyServerAndUploadsThem(): Unit = runBlocking {
+        // The B79 field report: desktop addons never reached the account, and the pull wiped them.
+        AddonStorage.saveInstalledAddonUrls(1, listOf(manifestUrl))
+        AddonRepository.initialize()
+        respond("[]")
+        respond("")
+
+        AddonRepository.pullFromServer(1)
+
+        assertEquals(listOf(manifestUrl), AddonRepository.uiState.value.addons.map { it.manifestUrl })
+        assertEquals("GET", assertNotNull(server.takeRequest(5, TimeUnit.SECONDS)).method)
+        val push = assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        assertEquals("/rest/v1/rpc/sync_push_addons", push.requestUrl?.encodedPath)
+        assertTrue(push.body.readUtf8().contains(manifestUrl))
+        assertEquals(listOf(manifestUrl), AddonStorage.loadSyncedAddonUrls(1))
     }
 
     @Test
     fun emptyRemoteRemovesCachedAddonsWithoutUploadingAndStaysEmptyAfterReload(): Unit = runBlocking {
         AddonStorage.saveInstalledAddonUrls(1, listOf(manifestUrl))
         AddonStorage.saveAddonEnabledStates(1, mapOf(manifestUrl to false))
+        AddonStorage.saveSyncedAddonUrls(1, listOf(manifestUrl))
         AddonRepository.initialize()
         assertEquals(1, AddonRepository.uiState.value.addons.size)
         respond("[]")
@@ -171,7 +214,8 @@ class PluginSyncTest {
         assertPullsOnly("addons", count = 2)
     }
 
-    private fun seedPlugins(urls: List<String> = listOf(manifestUrl)) {
+    private fun seedPlugins(urls: List<String> = listOf(manifestUrl), synced: Boolean = false) {
+        if (synced) PluginStorage.saveSyncedRepositoryUrls(1, urls)
         val state = PluginsUiState(
             repositories = urls.map { url ->
                 PluginRepositoryItem(
