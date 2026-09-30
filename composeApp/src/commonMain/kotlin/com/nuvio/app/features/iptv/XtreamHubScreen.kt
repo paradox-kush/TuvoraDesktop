@@ -45,7 +45,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.nuvio.app.core.ui.NuvioDropdownChip
 import com.nuvio.app.core.ui.NuvioDropdownOption
 import com.nuvio.app.core.ui.NuvioPosterCard
@@ -120,9 +123,14 @@ fun XtreamHubScreen(
     val localLibraryItems by LibraryRepository.localItems.collectAsStateWithLifecycle()
     val liveRecents by XtreamLiveRecents.recents.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) {
-        XtreamHubRepository.ensureLoaded()
         LibraryRepository.ensureLoaded()
         XtreamLiveRecents.ensureLoaded()
+    }
+    // The tab stays composed after its first visit, so a one-shot load here went stale (a playlist
+    // added in Settings never showed until restart). Follow the playlist store while visible instead.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) { XtreamHubRepository.followAccounts() }
     }
 
     // Only a LOADED empty list means "no playlists": the first composition happens before the

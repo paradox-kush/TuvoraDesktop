@@ -56,3 +56,16 @@ internal fun resolveStickyAccount(
  */
 internal fun resolveStickySection(remembered: String?, fallback: XtreamHubSection): XtreamHubSection =
     XtreamHubSection.entries.firstOrNull { it.name == remembered } ?: fallback
+
+/**
+ * Whether the hub's account snapshot has fallen behind the playlist store and must re-sync.
+ *
+ * The hub copies the ENABLED playlists into its own state; it never read the store again, and since
+ * the root tab host keeps a visited tab composed (upstream "reduce root tab switch stalls"), the
+ * screen's one-shot load no longer re-ran on return — so a playlist added from Settings (or
+ * removed, or synced in) stayed invisible until an app restart. True when the hub was never loaded
+ * or was reset (a removal wipes it), or the enabled list differs; false when nothing changed, so a
+ * repeat emission never re-drives the hub.
+ */
+internal fun hubNeedsAccountSync(hub: XtreamHubUiState, playlists: List<XtreamAccount>): Boolean =
+    !hub.accountsLoaded || hub.accounts != playlists.filter { it.enabled }
