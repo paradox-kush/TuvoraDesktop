@@ -1,5 +1,6 @@
 package com.nuvio.app.features.iptv
 
+import com.nuvio.app.features.iptv.content.IptvContentDb
 import com.nuvio.app.features.iptv.match.XtreamMatchIndex
 import com.nuvio.app.features.iptv.match.XtreamTmdbResolver
 import com.nuvio.app.features.library.LibraryRepository
@@ -482,31 +483,76 @@ object XtreamRepository : IptvCatalog {
     }
 
     fun remove(id: String) {
-        val removed = _uiState.value.accounts.firstOrNull { it.id == id }
         recordPending { ops -> ops.recordDelete(id) }
         _uiState.update { it.copy(accounts = it.accounts.filterNot { acc -> acc.id == id }, saveWarnings = it.saveWarnings - id) }
-        // Caches keyed by this id leak otherwise (match db rows survive forever); saved
-        // refs would be dead ids (phantom favorites / continue-watching rows).
-        XtreamItemRegistry.resetForProfile()
-        XtreamHubRepository.resetForProfile()
-        XtreamSearchIndex.resetForProfile()
-        scope.launch { runCatching { XtreamMatchIndex.purge(id) } }
-        com.nuvio.app.features.iptv.overlay.IptvOverlayRepository.onPlaylistRemoved(id)
-        scope.launch { runCatching { com.nuvio.app.features.epg.EpgMirrorDb.purgeProvider(id) } }
-        val prefix = XtreamItemRegistry.accountPrefix(id)
-        LibraryRepository.migrateIdPrefix(prefix, null)
-        WatchProgressRepository.migrateIdPrefix(prefix, null)
-        WatchedRepository.migrateIdPrefix(prefix, null)
-        XtreamLiveRecents.migrateIdPrefix(prefix, null)
-        // Free the parsed catalog rows + EPG for a removed M3U playlist (can be hundreds of MB of DB),
-        // and drop a file playlist's saved local copy. Stalker rides the same clear: its bulk EPG
-        // now lives in the same per-playlist tables (P5 streamed ingest), and clearing a playlist
-        // with no catalog rows is a no-op for the other tables.
-        if (removed != null && (removed.sourceType.isM3u() || removed.sourceType == SOURCE_TYPE_STALKER)) scope.launch {
-            M3UClient.clear(removed)
-            if (removed.sourceType == SOURCE_TYPE_M3U_FILE) deleteM3UFile(removed.id)
-        }
+        // Everything keyed by this id leaks otherwise: caches and indexes sit on disk forever (a
+        // parsed M3U catalog can be hundreds of MB), and saved refs would be dead ids (phantom
+        // favorites / continue-watching rows). What goes is decided by PlaylistRemovalCleanup.
+        purgeRemovedPlaylists(listOf(id), PlaylistRemovalOrigin.UserDelete)
         persist()
+    }
+
+    /**
+     * Executes [PlaylistRemovalCleanup]'s plan for playlists that left this profile's list. Every step
+     * is isolated — one store failing never stops the rest. In-memory and prefs steps run on the
+     * caller's thread (the same one that just mutated the account list); the disk purges run on
+     * [scope] so a large catalog delete never blocks it.
+     */
+    private fun purgeRemovedPlaylists(ids: List<String>, origin: PlaylistRemovalOrigin) {
+        if (ids.isEmpty()) return
+        val plan = PlaylistRemovalCleanup.plan(origin)
+        val profileId = currentProfileId
+        // Session caches are shared across playlists — one reset covers every removed id.
+        if (PlaylistRemovalTarget.SessionCaches in plan) runCatching {
+            XtreamItemRegistry.resetForProfile()
+            XtreamHubRepository.resetForProfile()
+            XtreamSearchIndex.resetForProfile()
+        }
+        for (id in ids) {
+            val prefix = XtreamItemRegistry.accountPrefix(id)
+            for (target in plan) runCatching {
+                when (target) {
+                    PlaylistRemovalTarget.RefreshStamp -> IptvRefreshScheduler.forget(profileId, id)
+                    PlaylistRemovalTarget.CatchUp -> CatchUpEpgRepository.forget(id)
+                    PlaylistRemovalTarget.HubSelection -> forgetHubSelection(profileId, id)
+                    PlaylistRemovalTarget.Overlay ->
+                        com.nuvio.app.features.iptv.overlay.IptvOverlayRepository.onPlaylistRemoved(id)
+                    PlaylistRemovalTarget.LiveChannels -> XtreamLiveRecents.migrateIdPrefix(prefix, null)
+                    PlaylistRemovalTarget.SavedRefs -> {
+                        // Live favourites are library entries here, so they ride this step.
+                        LibraryRepository.migrateIdPrefix(prefix, null)
+                        WatchProgressRepository.migrateIdPrefix(prefix, null)
+                        WatchedRepository.migrateIdPrefix(prefix, null)
+                    }
+                    // On disk — below, off the caller's thread. SessionCaches ran once above.
+                    PlaylistRemovalTarget.ContentDb, PlaylistRemovalTarget.MatchIndex,
+                    PlaylistRemovalTarget.EpgMirror, PlaylistRemovalTarget.M3uFileCopy,
+                    PlaylistRemovalTarget.SessionCaches -> Unit
+                }
+            }
+            scope.launch {
+                for (target in plan) runCatching {
+                    when (target) {
+                        // Every source type: Xtream fills the per-playlist EPG tables too (xmltv
+                        // store lane + catch-up refills), not just M3U/Stalker catalogs.
+                        PlaylistRemovalTarget.ContentDb -> IptvContentDb.clear(id)
+                        PlaylistRemovalTarget.MatchIndex -> XtreamMatchIndex.purge(id)
+                        PlaylistRemovalTarget.EpgMirror ->
+                            com.nuvio.app.features.epg.EpgMirrorRepository.purgeProvider(id)
+                        // No-op unless this was a file playlist with a saved copy.
+                        PlaylistRemovalTarget.M3uFileCopy -> deleteM3UFile(id)
+                        else -> Unit
+                    }
+                }
+            }
+        }
+    }
+
+    /** Forget the hub's remembered provider when it is the removed playlist (keeps the tab). */
+    private fun forgetHubSelection(profileId: Int, removedId: String) {
+        val stored = parseHubSelection(XtreamAccountStorage.loadHubSelectionJson(profileId)) ?: return
+        if (!PlaylistRemovalCleanup.dropsHubSelection(stored.accountId, removedId)) return
+        XtreamAccountStorage.saveHubSelectionJson(profileId, encodeHubSelection(stored.copy(accountId = null)))
     }
 
     /** Drop credential-bearing in-memory state after sign-out or account deletion. */
@@ -543,12 +589,12 @@ object XtreamRepository : IptvCatalog {
             XtreamItemRegistry.resetForProfile()
             XtreamHubRepository.resetForProfile()
             XtreamSearchIndex.resetForProfile()
-            val remaining = accounts.map { it.id }.toSet()
-            before.filter { it.id !in remaining }
-                .forEach { gone ->
-                    scope.launch { runCatching { XtreamMatchIndex.purge(gone.id) } }
-                    scope.launch { runCatching { com.nuvio.app.features.epg.EpgMirrorDb.purgeProvider(gone.id) } }
-                }
+            // Deleted on another device: the same cache purge as a local delete, but never the user's
+            // own data — a pull can be transient (see PlaylistRemovalOrigin.SyncPull).
+            purgeRemovedPlaylists(
+                PlaylistRemovalCleanup.removedIds(before.map { it.id }, accounts.map { it.id }),
+                PlaylistRemovalOrigin.SyncPull,
+            )
         }
         // An account added on another device should index here before its first play.
         XtreamTmdbResolver.warmUp(accounts)

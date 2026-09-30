@@ -632,12 +632,16 @@ internal object IptvContentDb {
         }
     }
 
-    /** Drops every row for a playlist (used when an M3U account is removed/edited to a new URL). */
+    /**
+     * Drops every row for a playlist (used when a playlist is removed, or an M3U account is edited to a
+     * new URL) — including the EPG shadow a refresh in flight at that moment had staged, which would
+     * otherwise sit on disk until the same id is re-added.
+     */
     suspend fun clear(playlistId: String) = mutex.withLock {
         val c = connection()
         c.execSQL("BEGIN IMMEDIATE")
         try {
-            for (table in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta", "epg_programmes", "epg_meta", "epg_channel_fetch")) {
+            for (table in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta", "epg_programmes", "epg_meta", "epg_channel_fetch", EPG_SHADOW)) {
                 c.prepare("DELETE FROM $table WHERE playlist_id = ?").use { st -> st.bindText(1, playlistId); st.step() }
             }
             c.execSQL("COMMIT")

@@ -95,6 +95,13 @@ object IptvRefreshScheduler {
             xtreamState[acc.id] ?: 0L
         }
 
+    /** A removed playlist's "last checked" stamp — dropped so the per-profile map never leaks dead ids. */
+    fun forget(profileId: Int, playlistId: String) {
+        val state = loadXtreamRefreshState(profileId)
+        val next = PlaylistRemovalCleanup.withoutPlaylist(state, playlistId)
+        if (next !== state) saveXtreamRefreshState(profileId, next)
+    }
+
     private fun loadXtreamRefreshState(profileId: Int): Map<String, Long> {
         val stored = XtreamAccountStorage.loadRefreshStateJson(profileId) ?: return emptyMap()
         return runCatching { json.decodeFromString(refreshStateSerializer, stored) }.getOrDefault(emptyMap())
