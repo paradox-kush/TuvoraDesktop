@@ -5,6 +5,10 @@ internal expect object AddonStorage {
     fun saveInstalledAddonUrls(profileId: Int, urls: List<String>)
     fun loadAddonEnabledStates(profileId: Int): Map<String, Boolean>
     fun saveAddonEnabledStates(profileId: Int, states: Map<String, Boolean>)
+
+    /** The list this device and the server last agreed on, or null if it never synced. See [AddonSyncMerge]. */
+    fun loadSyncedAddonUrls(profileId: Int): List<String>?
+    fun saveSyncedAddonUrls(profileId: Int, urls: List<String>)
 }
 
 data class RawHttpResponse(

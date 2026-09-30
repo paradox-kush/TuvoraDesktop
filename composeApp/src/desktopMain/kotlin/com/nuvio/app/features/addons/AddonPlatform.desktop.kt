@@ -47,6 +47,14 @@ internal actual object AddonStorage {
     actual fun saveAddonEnabledStates(profileId: Int, states: Map<String, Boolean>) {
         store.putString("addon_enabled_states_$profileId", json.encodeToString(states))
     }
+
+    actual fun loadSyncedAddonUrls(profileId: Int): List<String>? =
+        store.getString("synced_addon_urls_$profileId")
+            ?.let { payload -> runCatching { json.decodeFromString<List<String>>(payload) }.getOrNull() }
+
+    actual fun saveSyncedAddonUrls(profileId: Int, urls: List<String>) {
+        store.putString("synced_addon_urls_$profileId", json.encodeToString(urls))
+    }
 }
 
 private val desktopHttpClient = OkHttpClient.Builder()

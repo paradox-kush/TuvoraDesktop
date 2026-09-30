@@ -35,6 +35,7 @@ actual object AddonStorage {
     private const val preferencesName = "nuvio_addons"
     private const val addonUrlsKey = "installed_manifest_urls"
     private const val addonEnabledStatesKey = "installed_manifest_enabled_states"
+    private const val syncedAddonUrlsKey = "synced_manifest_urls"
 
     private var preferences: SharedPreferences? = null
 
@@ -73,6 +74,21 @@ actual object AddonStorage {
         preferences
             ?.edit()
             ?.putString("${addonEnabledStatesKey}_$profileId", payload)
+            ?.apply()
+    }
+
+    actual fun loadSyncedAddonUrls(profileId: Int): List<String>? =
+        preferences
+            ?.getString("${syncedAddonUrlsKey}_$profileId", null)
+            ?.lineSequence()
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.toList()
+
+    actual fun saveSyncedAddonUrls(profileId: Int, urls: List<String>) {
+        preferences
+            ?.edit()
+            ?.putString("${syncedAddonUrlsKey}_$profileId", urls.joinToString(separator = "\n"))
             ?.apply()
     }
 }

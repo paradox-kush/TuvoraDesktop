@@ -112,12 +112,14 @@ object AddonRepository {
 
     suspend fun pullFromServer(profileId: Int) {
         currentProfileId = resolveEffectiveProfileId(profileId)
+        val pullProfileId = currentProfileId
         log.i { "pullFromServer() — profileId=$profileId, initialized=$initialized" }
+        var mergePushNeeded = false
         runCatching {
             val rows = SupabaseProvider.client.postgrest
                 .from("addons")
                 .select {
-                    filter { eq("profile_id", currentProfileId) }
+                    filter { eq("profile_id", pullProfileId) }
                     order("sort_order", Order.ASCENDING)
                 }
                 .decodeList<AddonRow>()
@@ -130,10 +132,29 @@ object AddonRepository {
                 }
             }
 
-            val urls = rowsByUrl.keys.toList()
+            val remoteUrls = rowsByUrl.keys.toList()
             log.i { "pullFromServer() — server returned ${rows.size} addons" }
-            urls.forEachIndexed { i, u -> log.d { "  server[$i]: $u" } }
+            remoteUrls.forEachIndexed { i, u -> log.d { "  server[$i]: $u" } }
 
+            // Read the device's list from storage, not _uiState: a pull can land before
+            // initialize() has loaded the profile, and an empty in-memory list would read as
+            // "the user removed everything". Every edit persist()s, so storage is current.
+            val merge = if (isUsingPrimaryAddonsFromSecondaryProfile()) {
+                // This profile can't edit the primary's addons, so it has nothing of its own to merge.
+                AddonSyncMerge.Outcome(urls = remoteUrls, pushNeeded = false)
+            } else {
+                AddonSyncMerge.merge(
+                    local = dedupeManifestUrls(AddonStorage.loadInstalledAddonUrls(pullProfileId)),
+                    remote = remoteUrls,
+                    lastSynced = AddonStorage.loadSyncedAddonUrls(pullProfileId)?.let(::dedupeManifestUrls),
+                )
+            }
+            val urls = merge.urls
+            if (merge.pushNeeded) {
+                log.i { "pullFromServer() — local addon edits never reached the server; pushing the merged list (${urls.size} addons)" }
+            }
+
+            val localEnabledByUrl = loadLocalEnabledStates()
             val existingByUrl = _uiState.value.addons.associateBy(ManagedAddon::manifestUrl)
             _uiState.value = AddonsUiState(
                 addons = urls.map { url ->
@@ -141,7 +162,7 @@ object AddonRepository {
                     existingByUrl[url].toPendingAddon(
                         manifestUrl = url,
                         userSetName = row?.name?.takeIf { it.isNotBlank() },
-                        enabled = row?.enabled,
+                        enabled = row?.enabled ?: localEnabledByUrl[url],
                     )
                 },
             )
@@ -154,9 +175,24 @@ object AddonRepository {
                 }
             }
             initialized = true
+            if (merge.pushNeeded) {
+                mergePushNeeded = true
+            } else {
+                AddonStorage.saveSyncedAddonUrls(pullProfileId, urls)
+            }
             log.i { "pullFromServer() — applied ${urls.size} addons to state" }
         }.onFailure { e ->
+            if (e is CancellationException) throw e
             log.e(e) { "pullFromServer() — FAILED" }
+        }
+        if (mergePushNeeded) {
+            // Awaited, not debounced: the sync pipeline runs the next steps against this list.
+            // A failure leaves the last-synced list untouched, so the next pull merges again.
+            runCatching { sendToServer(pullProfileId, pushItemsFor(_uiState.value.addons)) }
+                .onFailure { e ->
+                    if (e is CancellationException) throw e
+                    log.e(e) { "pullFromServer() — merge push FAILED; will retry on the next pull" }
+                }
         }
     }
 
@@ -344,13 +380,36 @@ object AddonRepository {
         // Add/remove/reorder/enable all reach here, and the addon manager works fine
         // signed out — so without this the RPC goes out as `anon` and comes back
         // 42501, once per edit. Nothing is lost by refusing: the list was already
-        // persist()ed locally, and pullFromServer() migrates it up on the next sign-in.
+        // persist()ed locally, and the next pullFromServer() merges it up (AddonSyncMerge).
         if (!SyncSession.canPush()) {
             log.d { "pushToServer() — skipped, no signed-in session" }
             return
         }
         val profileId = currentProfileId
-        val addons = _uiState.value.addons
+        val addons = pushItemsFor(_uiState.value.addons)
+        pushJobsByProfile[profileId]?.cancel()
+        var pushJob: Job? = null
+        pushJob = scope.launch {
+            try {
+                delay(ADDON_PUSH_DEBOUNCE_MS)
+                sendToServer(profileId, addons)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                // Not retried here: the last-synced list is unchanged, so the next pull merges
+                // this edit up instead of overwriting it.
+                log.e(error) { "pushToServer() — FAILED" }
+            } finally {
+                if (pushJobsByProfile[profileId] === pushJob) {
+                    pushJobsByProfile.remove(profileId)
+                }
+            }
+        }
+        pushJobsByProfile[profileId] = pushJob
+    }
+
+    private fun pushItemsFor(addons: List<ManagedAddon>): List<AddonPushItem> =
+        addons
             .distinctBy { it.manifestUrl }
             .mapIndexed { index, addon ->
                 AddonPushItem(
@@ -360,30 +419,18 @@ object AddonRepository {
                     sortOrder = index,
                 )
             }
-        pushJobsByProfile[profileId]?.cancel()
-        var pushJob: Job? = null
-        pushJob = scope.launch {
-            try {
-                delay(ADDON_PUSH_DEBOUNCE_MS)
-                log.d { "pushToServer() — profileId=$profileId, pushing ${addons.size} addons" }
-                val params = buildJsonObject {
-                    put("p_profile_id", profileId)
-                    put("p_addons", json.encodeToJsonElement(addons))
-                    putSyncOriginClientId()
-                }
-                SupabaseProvider.client.postgrest.rpc("sync_push_addons", params)
-                log.d { "pushToServer() — success" }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Throwable) {
-                log.e(error) { "pushToServer() — FAILED" }
-            } finally {
-                if (pushJobsByProfile[profileId] === pushJob) {
-                    pushJobsByProfile.remove(profileId)
-                }
-            }
+
+    /** Full-replace push; on success records [addons] as the list this device and the server agree on. */
+    private suspend fun sendToServer(profileId: Int, addons: List<AddonPushItem>) {
+        log.d { "pushToServer() — profileId=$profileId, pushing ${addons.size} addons" }
+        val params = buildJsonObject {
+            put("p_profile_id", profileId)
+            put("p_addons", json.encodeToJsonElement(addons))
+            putSyncOriginClientId()
         }
-        pushJobsByProfile[profileId] = pushJob
+        SupabaseProvider.client.postgrest.rpc("sync_push_addons", params)
+        AddonStorage.saveSyncedAddonUrls(profileId, addons.map { it.url })
+        log.d { "pushToServer() — success" }
     }
 
     private fun markRefreshing(manifestUrl: String) {
