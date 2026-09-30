@@ -13,6 +13,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
@@ -166,6 +169,25 @@ object XtreamHubRepository {
             showSection(selected, section)
             maybePrefetch(selected)
         }
+    }
+
+    /**
+     * Keeps the hub in step with the playlist store while it is on screen — the screen runs this
+     * under `repeatOnLifecycle(RESUMED)`, so it never works for a tab nobody is looking at.
+     *
+     * The root tab host keeps a visited tab composed, so a one-shot load on first composition went
+     * stale: a playlist added in Settings stayed invisible here until an app restart, and a removal
+     * (which wipes this state via [resetForProfile]) left a blank tab. This re-syncs on entry and on
+     * every change to the store's playlist list or a reset of the hub, and [hubNeedsAccountSync]
+     * keeps an unchanged emission a no-op. Event-driven, local-only: it never polls or fetches by
+     * itself — [ensureLoaded] only fetches what a newly shown provider needs.
+     */
+    suspend fun followAccounts() {
+        combine(
+            XtreamRepository.uiState.map { it.accounts }.distinctUntilChanged(),
+            _uiState.map { it.accountsLoaded }.distinctUntilChanged(),
+        ) { playlists, _ -> playlists }
+            .collect { playlists -> if (hubNeedsAccountSync(_uiState.value, playlists)) ensureLoaded() }
     }
 
     fun selectAccount(accountId: String) {
