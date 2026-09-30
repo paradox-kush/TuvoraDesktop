@@ -22,8 +22,8 @@ import kotlin.test.assertTrue
 /** The pure "what to purge for a removed playlist" plan. Twin of NuvioTV's PlaylistRemovalCleanupTest. */
 class PlaylistRemovalCleanupTest {
 
-    private val caches = setOf(ContentDb, MatchIndex, EpgMirror, RefreshStamp, M3uFileCopy, CatchUp, SessionCaches, HubSelection)
-    private val userData = setOf(Overlay, LiveChannels, SavedRefs)
+    private val caches = setOf(ContentDb, MatchIndex, EpgMirror, RefreshStamp, CatchUp, SessionCaches, HubSelection)
+    private val userData = setOf(Overlay, LiveChannels, SavedRefs, M3uFileCopy)
 
     @Test
     fun `a user delete clears every store keyed by the playlist`() {
@@ -50,6 +50,15 @@ class PlaylistRemovalCleanupTest {
         // so the content DB clear is not an M3U-only step.
         assertTrue(ContentDb in PlaylistRemovalCleanup.plan(UserDelete))
         assertTrue(ContentDb in PlaylistRemovalCleanup.plan(SyncPull))
+    }
+
+    @Test
+    fun `a sync pull keeps the saved copy of a file playlist and only a user delete removes it`() {
+        // The copy holds bytes from a document the user picked — the original may be gone, so it cannot
+        // rebuild. A transient pull (B24) must not destroy it; if the playlist comes back, it re-ingests.
+        assertTrue(M3uFileCopy.userData, "the M3U file copy is user data")
+        assertFalse(M3uFileCopy in PlaylistRemovalCleanup.plan(SyncPull), "a sync pull keeps the file copy")
+        assertTrue(M3uFileCopy in PlaylistRemovalCleanup.plan(UserDelete), "a user delete removes the file copy")
     }
 
     @Test

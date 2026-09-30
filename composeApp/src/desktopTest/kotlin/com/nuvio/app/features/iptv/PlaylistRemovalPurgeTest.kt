@@ -26,6 +26,8 @@ import kotlin.test.assertTrue
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.File
+import java.nio.file.Files
 
 /**
  * Regression: removing a playlist left its on-device data behind.
@@ -38,6 +40,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * Red on the old code: an XTREAM playlist's guide rows (xmltv store lane + catch-up refills live in
  * the same per-playlist EPG tables) were only cleared for M3U/Stalker; the EPG-mirror schedule meta
  * was never dropped; and a sync-pull removal skipped the content DB entirely.
+ *
+ * The saved M3U file copy is user data (the picked original may be gone): a pull keeps it, a delete
+ * removes it.
  */
 class PlaylistRemovalPurgeTest {
 
@@ -51,8 +56,12 @@ class PlaylistRemovalPurgeTest {
 
     private fun programme(start: Long) = EpgProgrammeRow("bbc.uk", start, start + 1_000L, "Show $start", null)
 
+    private lateinit var playlistsDir: File
+
     @BeforeTest
     fun setUp() {
+        playlistsDir = Files.createTempDirectory("playlists").toFile()
+        m3uPlaylistsDirForTests = playlistsDir
         IptvContentDbDriver.openForTests = { BundledSQLiteDriver().open(":memory:") }
         MatchDbDriver.openForTests = { BundledSQLiteDriver().open(":memory:") }
         EpgMirrorDbDriver.openForTests = { BundledSQLiteDriver().open(":memory:") }
@@ -62,6 +71,8 @@ class PlaylistRemovalPurgeTest {
     @AfterTest
     fun tearDown() {
         XtreamRepository.installAccountsForTest(emptyList())
+        m3uPlaylistsDirForTests = null
+        playlistsDir.deleteRecursively()
     }
 
     private suspend fun seed(acc: XtreamAccount) {
@@ -83,6 +94,8 @@ class PlaylistRemovalPurgeTest {
         // Canonical-EPG mirror mapping + its schedule meta.
         EpgMirrorDb.replaceMapping(id, listOf(EpgMappingRow(1, "BBCOne.uk", "exact")))
         EpgMirrorDb.setMeta("acct_attempt_ms:$id", "123")
+        // The saved local copy of a file playlist (user data: the picked original may be gone).
+        copyM3UFileToStorage(id, PickedM3UFile("$id.m3u") { "#EXTM3U\n".encodeToByteArray() })
         // Personalization overlay (user data).
         val profile = ProfileRepository.activeProfileId
         IptvOverlayStore.setChannel(profile, "chan:$id", id, ChannelOverlay(hidden = true), 1L)
@@ -109,6 +122,8 @@ class PlaylistRemovalPurgeTest {
         assertEquals("123", EpgMirrorDb.meta("acct_attempt_ms:$id"), "survivor keeps its mirror meta")
     }
 
+    private fun hasFileCopy(id: String) = fileExists(m3uFileStoragePath(id))
+
     private suspend fun overlayHas(id: String): Boolean {
         val snap = IptvOverlayStore.snapshot(ProfileRepository.activeProfileId)
         return "chan:$id" in snap.channels && "cat:$id" in snap.categories
@@ -125,8 +140,8 @@ class PlaylistRemovalPurgeTest {
     }
 
     /** The purge runs on the repository's background scope — poll until it lands (or give up). */
-    private suspend fun eventually(condition: suspend () -> Boolean): Boolean =
-        withTimeoutOrNull(3_000L) {
+    private suspend fun eventually(timeoutMs: Long = 3_000L, condition: suspend () -> Boolean): Boolean =
+        withTimeoutOrNull(timeoutMs) {
             while (!condition()) delay(20L)
             true
         } ?: false
@@ -145,6 +160,8 @@ class PlaylistRemovalPurgeTest {
         assertFalse(inFlightGuideSurvived(doomed.id), "the in-flight EPG shadow rows are purged too")
         assertCachesIntact(keeper.id)
         assertTrue(overlayHas(keeper.id), "survivor keeps its overlay")
+        assertTrue(eventually { !hasFileCopy(doomed.id) }, "an explicit delete removes the M3U file copy")
+        assertTrue(hasFileCopy(keeper.id), "survivor keeps its M3U file copy")
     }
 
     @Test
@@ -161,5 +178,9 @@ class PlaylistRemovalPurgeTest {
         assertCachesIntact(keeper.id)
         // A pull can be transient (B24): synced user data is never dropped on its say-so.
         assertTrue(overlayHas(doomed.id), "a pull removal leaves the overlay (user data) alone")
+        // The file copy holds bytes the user picked; if the playlist comes back it re-ingests from it.
+        // The purge runs on a background scope: give a (wrong) delete time to land before trusting "kept".
+        assertFalse(eventually(500L) { !hasFileCopy(doomed.id) }, "a pull removal keeps the M3U file copy")
+        assertTrue(hasFileCopy(keeper.id), "survivor keeps its M3U file copy")
     }
 }

@@ -18,7 +18,11 @@ import java.util.zip.GZIPInputStream
  * macOS/Windows); the picked file's bytes are copied under `<app-data>/playlists/{id}.m3u`, and the
  * ingest streams that local copy — mirroring the Android ACTION_OPEN_DOCUMENT implementation.
  */
+/** Test seam: host tests point the saved-copy directory at a temp dir (null in production). */
+internal var m3uPlaylistsDirForTests: File? = null
+
 private fun playlistsDir(): File {
+    m3uPlaylistsDirForTests?.let { return it.apply { mkdirs() } }
     val dir = DesktopStorage.rootDir.resolve("playlists")
     Files.createDirectories(dir)
     return dir.toFile()

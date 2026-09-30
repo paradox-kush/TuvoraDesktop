@@ -83,10 +83,14 @@ object M3UFilePicker {
     }.getOrNull()
 
     internal fun playlistsDir(): File {
+        m3uPlaylistsDirForTests?.let { return it.apply { mkdirs() } }
         val ctx = checkNotNull(appContext) { "M3UFilePicker.initialize(context) not called" }
         return File(ctx.filesDir, "playlists").apply { mkdirs() }
     }
 }
+
+/** Test seam: host tests point the saved-copy directory at a temp dir (null in production). */
+internal var m3uPlaylistsDirForTests: File? = null
 
 actual fun pickM3UFile(onPicked: (PickedM3UFile?) -> Unit) = M3UFilePicker.launch(onPicked)
 
