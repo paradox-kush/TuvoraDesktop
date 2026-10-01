@@ -37,10 +37,10 @@ internal fun optionEditNeedsSync(old: XtreamAccount, new: XtreamAccount): Boolea
     playlistSyncKey(old) != playlistSyncKey(new)
 
 /**
- * What a v2 sync applies locally for a pulled/reconciled set: this device's file-playlist ids kept
- * ([reconcileLocalIds]) and its local-only catch-up / guide preferences carried across
- * ([preserveDeviceLocalPrefs]) — the same treatment the v1 pull always gave them. Without it every v2
- * apply reset those preferences on every row.
+ * What a v2 sync applies locally for a pulled/reconciled set: this device's local-only catch-up /
+ * guide preferences carried across ([preserveDeviceLocalPrefs]) — the same treatment the v1 pull
+ * always gave them. Without it every v2 apply reset those preferences on every row. Ids were already
+ * reconciled with this device's by [PlaylistKeyAdoption] when the set was pulled (Step 0).
  */
 internal fun v2ApplyLocal(pulled: List<XtreamAccount>, local: List<XtreamAccount>): List<XtreamAccount> =
-    preserveDeviceLocalPrefs(reconcileLocalIds(pulled, local), local)
+    preserveDeviceLocalPrefs(pulled, local)

@@ -252,6 +252,8 @@ object XtreamRepository : IptvCatalog {
      */
     private fun addFileFromForm(input: XtreamFormInput, existingId: String?, onResult: (Boolean) -> Unit) {
         val account = m3uFileAccountFromForm(input, existingId = existingId, uniqueSuffix = TraktPlatformClock.nowEpochMs())
+            // Step 0: an edit keeps the playlist's (not-on-the-form) backup list.
+            ?.let { acc -> _uiState.value.accounts.firstOrNull { it.id == existingId }?.let { acc.copy(backupUrls = it.backupUrls) } ?: acc }
         if (account == null) {
             _uiState.update { it.copy(error = "Choose an M3U file to import") }
             onResult(false)
@@ -372,13 +374,15 @@ object XtreamRepository : IptvCatalog {
 
     /**
      * Checks the edited connection live, then swaps the account in place (keeping its
-     * position + enabled flag) and re-runs the discovery cycle. Saved items (library,
-     * watch progress, watched marks, recent channels) follow the account when it's still
-     * the same playlist; a completely different playlist purges them instead.
+     * position + enabled flag) and re-runs the discovery cycle.
+     *
+     * Step 0: the playlist KEEPS ITS ID whatever was edited (server, username, password, MAC, URL).
+     * The id is the permanent key everything the user made hangs off — library, progress, watched,
+     * recents, and the overlay's hashed hidden/pinned channel keys, which cannot be re-keyed at all —
+     * so re-deriving it from the new address (the old behaviour) orphaned all of it on a domain move.
      *
      * B60: a failed check never discards the edit — it is saved and the reason shown on the row
-     * ([PlaylistEditVerifyPolicy]). An id-changing edit is recorded as ONE v2 replace, not an update
-     * (which the reconcile dropped, snapping the edit back) — see [recordReplace].
+     * ([PlaylistEditVerifyPolicy]).
      */
     private fun verifyAndReplace(
         oldId: String,
@@ -395,7 +399,7 @@ object XtreamRepository : IptvCatalog {
         }
         // A credential/URL edit must not wipe the playlist options — but provider-specific
         // ones only carry when the edit still targets the same playlist (see carryPlaylistOptions).
-        val account = carryPlaylistOptions(old, candidate, keepCandidateFormOptions)
+        val account = carryPlaylistOptions(old, candidate, keepCandidateFormOptions).copy(id = oldId)
         val profileAtStart = currentProfileId
         scope.launch {
             _uiState.update { it.copy(isValidating = true, error = null) }
@@ -414,40 +418,94 @@ object XtreamRepository : IptvCatalog {
             }
             _uiState.update { st ->
                 st.copy(
-                    // Replace in place; drop any pre-existing duplicate of the new identity.
-                    accounts = st.accounts
-                        .filterNot { it.id == account.id && it.id != oldId }
-                        .map { if (it.id == oldId) account else it },
+                    // Replace in place — same id (Step 0), so nothing else in the list moves.
+                    accounts = st.accounts.map { if (it.id == oldId) account else it },
                     isValidating = false,
-                    saveWarnings = (st.saveWarnings - oldId - account.id) +
+                    saveWarnings = (st.saveWarnings - oldId) +
                         (outcome.warning?.let { mapOf(account.id to it) } ?: emptyMap()),
                 )
             }
-            if (account.id != oldId) migrateSavedData(old, account)
-            // A changed M3U URL invalidates the old catalog rows — drop them.
-            if (old.sourceType == SOURCE_TYPE_M3U_URL && old.id != account.id) M3UClient.clear(old)
+            // A changed M3U URL invalidates the old catalog rows (same id, other source) — drop them.
+            if (old.sourceType == SOURCE_TYPE_M3U_URL && old.baseUrl != account.baseUrl) M3UClient.clear(old)
             // Re-run the discovery cycle: drop caches/URLs built with the old server/creds.
             XtreamItemRegistry.resetForProfile()
             XtreamHubRepository.resetForProfile()
             XtreamSearchIndex.resetForProfile()
             XtreamTmdbResolver.warmUp(listOf(account))
-            // B24 v2: durable "user edited this playlist" intent. An id change is ONE replace (B60).
-            recordPending {
-                if (account.id != oldId) it.recordReplace(oldId, account, base = old)
-                else it.recordUpdate(account, base = old)
-            }
+            // B24 v2: durable "user edited this playlist" intent — always an update now (Step 0: the
+            // id never changes on edit, so the B60 replace op is only replayed from older pending logs).
+            recordPending { it.recordUpdate(account, base = old) }
             persistAndReport(onResult)
         }
     }
 
     /**
-     * Same playlist (same server or same username, e.g. a panel that moved domains or
-     * rotated creds) -> rewrite saved xtream content ids to the new account id. A completely
-     * different playlist -> the old ids point at content that no longer exists, so drop them.
+     * Step 0 — adopts the server's playlist keys for a pulled set ([PlaylistKeyAdoption]) and executes
+     * every re-key it decides, BEFORE the pulled set is applied. Returns the rows as they should be
+     * applied. A no-op (no store touched) when every id already matches — so a repeated pull is free.
      */
-    private fun migrateSavedData(old: XtreamAccount, new: XtreamAccount) {
-        val oldPrefix = XtreamItemRegistry.accountPrefix(old.id)
-        val newPrefix = if (samePlaylist(old, new)) XtreamItemRegistry.accountPrefix(new.id) else null
+    internal fun adoptFromPull(profileId: Int, pulled: List<PulledPlaylist>): PlaylistKeyAdoption.Result {
+        val result = PlaylistKeyAdoption.resolve(pulled, _uiState.value.accounts)
+        adoptPlaylistKeys(profileId, result.rekeys)
+        return result
+    }
+
+    /**
+     * Step 0 — moves each local playlist id in [rekeys] onto its server key, once:
+     *  - the account (and its row warning) is renamed in place and stored locally — no push echo, the
+     *    pull that decided this already carries the key;
+     *  - the durable v2 pending log is rewritten onto the new id, so a not-yet-synced edit still lands;
+     *  - the prefix-keyed user data follows ([rekeySavedData] — the same prefix rewrite an id-changing
+     *    edit used to do; see it for the synced writes it produces);
+     *  - a file playlist's saved copy is moved to the new id's path (its storage is keyed by id);
+     *  - caches built under the old id are purged ([PlaylistRemovalOrigin.SyncPull]: caches only, never
+     *    user data) and rebuild under the new one.
+     * The overlay (hidden/pinned channels) cannot follow: its keys hash the old id (accepted, Step 0).
+     */
+    internal fun adoptPlaylistKeys(profileId: Int, rekeys: List<PlaylistKeyAdoption.Rekey>) {
+        if (rekeys.isEmpty() || profileId != currentProfileId) return
+        val map = rekeys.associate { it.oldId to it.newId }
+        _uiState.update { st ->
+            st.copy(
+                accounts = st.accounts.map { acc -> map[acc.id]?.let { acc.copy(id = it) } ?: acc },
+                saveWarnings = st.saveWarnings.mapKeys { (id, _) -> map[id] ?: id },
+            )
+        }
+        if (!damaged) {
+            val merged = mergePlaylistJson(json, lastStoredRaw, _uiState.value.accounts)
+            val wrote = runCatching {
+                persistWriteForTest?.invoke(profileId, merged) ?: XtreamAccountStorage.saveAccountsJson(profileId, merged)
+            }.isSuccess
+            if (wrote) lastStoredRaw = merged
+        }
+        val st = decodePlaylistSyncState(XtreamAccountStorage.loadPlaylistSyncStateJson(profileId))
+        if (st.pending.isNotEmpty()) {
+            XtreamAccountStorage.savePlaylistSyncStateJson(
+                profileId,
+                encodePlaylistSyncState(st.copy(pending = PlaylistKeyAdoption.rewritePending(st.pending, rekeys))),
+            )
+        }
+        for (rekey in rekeys) {
+            runCatching { rekeySavedData(rekey.oldId, rekey.newId) }
+            runCatching { moveM3UFile(rekey.oldId, rekey.newId) }
+        }
+        purgeRemovedPlaylists(rekeys.map { it.oldId }, PlaylistRemovalOrigin.SyncPull)
+    }
+
+    /**
+     * Rewrites every saved `xtream:{oldId}:…` id to `xtream:{newId}:…` — library (incl. live
+     * favourites), watch progress, watched marks, recent channels. Synced writes this produces, per
+     * store (each is the repository's own migrateIdPrefix, unchanged from the old edit path):
+     *  - library: one delta push — upsert of every moved item under the new id + delete of the old ids;
+     *  - watch progress: a delete of every old entry + a scrobble (upsert) of every moved entry;
+     *  - watched: a delete of every old mark + an upsert (pushMarks) of every moved mark;
+     *  - recents: device-local, nothing synced.
+     * Nothing is dropped: every entry under the old prefix is re-written, never deleted without its
+     * replacement. A store with nothing under the old prefix makes no write at all.
+     */
+    private fun rekeySavedData(oldId: String, newId: String) {
+        val oldPrefix = XtreamItemRegistry.accountPrefix(oldId)
+        val newPrefix = XtreamItemRegistry.accountPrefix(newId)
         LibraryRepository.migrateIdPrefix(oldPrefix, newPrefix)
         WatchProgressRepository.migrateIdPrefix(oldPrefix, newPrefix)
         WatchedRepository.migrateIdPrefix(oldPrefix, newPrefix)
@@ -707,6 +765,8 @@ internal fun carryPlaylistOptions(
             else -> null
         },
         categorySelections = if (same) old.categorySelections else CategorySelections(),
+        // Step 0: client-owned, not on the edit form (no UI yet) — an edit must not clear it.
+        backupUrls = old.backupUrls,
     )
 }
 

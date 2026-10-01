@@ -227,6 +227,12 @@ data class XtreamAccount(
      * one shifts what the guide believes about when programmes air.
      */
     val guideEpgCorrectionMinutes: Int = 0,
+    /**
+     * Step 0 — the playlist's alternate server addresses, in failover order (max 5). Client-owned and
+     * synced (`iptv_playlists.backup_urls`); this build only round-trips it (no UI yet), so a push
+     * never clears what another client or the web wrote.
+     */
+    val backupUrls: List<String> = emptyList(),
 )
 
 /** The manual correction, clamped to the range the settings UI offers, as milliseconds. */

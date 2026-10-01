@@ -120,6 +120,16 @@ actual fun deleteM3UFile(playlistId: String) {
     }
 }
 
+@OptIn(ExperimentalForeignApi::class)
+actual fun moveM3UFile(oldId: String, newId: String) {
+    val fm = NSFileManager.defaultManager
+    val from = storagePath(oldId)
+    if (!fm.fileExistsAtPath(from)) return
+    val to = storagePath(newId)
+    if (fm.fileExistsAtPath(to)) fm.removeItemAtPath(to, error = null)
+    check(fm.moveItemAtPath(from, toPath = to, error = null)) { "Could not move the playlist file" }
+}
+
 /**
  * Streams a local file's lines (gzip-aware) with bounded memory. NSData maps the file; we scan bytes
  * for newlines and hand out one decoded line at a time. A gzip-magic file is inflated first — iOS EPG
