@@ -36,6 +36,14 @@ internal interface IptvSettingsSection {
     /** Header-title override for the reused Add/Edit playlist page, or null to use the static title res. */
     @Composable
     fun headerTitleOrNull(page: SettingsPage): String?
+
+    /**
+     * The same override, resolved composably but READ AT NAVIGATION TIME (UX19): the page's add/edit
+     * mode is chosen in the click handler right before navigating, after composition captured the
+     * static titles — so the navigator must ask this resolver, not a pre-built title map.
+     */
+    @Composable
+    fun rememberNavigationTitleOverride(): (SettingsPage) -> String?
 }
 
 internal object IptvSettingsSectionAccess {

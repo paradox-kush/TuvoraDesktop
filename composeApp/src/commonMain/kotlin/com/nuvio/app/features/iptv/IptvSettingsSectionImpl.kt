@@ -13,6 +13,13 @@ import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.compose_settings_page_iptv_edit_playlist
 import org.jetbrains.compose.resources.stringResource
 
+/**
+ * UX19 — "Edit Playlist" for the reused Add-Playlist page while editing. [isEditing] is read on every
+ * call, never captured: navigation asks right after the click handler switched the page to edit mode.
+ */
+internal fun playlistFormTitleOverride(editTitle: String, isEditing: () -> Boolean): (SettingsPage) -> String? =
+    { page -> if (page == SettingsPage.IptvAddPlaylist && isEditing()) editTitle else null }
+
 /** Opaque carrier so shared settings code never names [XtreamUiState]. */
 private class IptvSettingsStateHandle(val xtream: XtreamUiState) : IptvSettingsState
 
@@ -33,12 +40,14 @@ internal object IptvSettingsSectionImpl : IptvSettingsSection {
     }
 
     @Composable
-    override fun headerTitleOrNull(page: SettingsPage): String? =
-        if (page == SettingsPage.IptvAddPlaylist && XtreamAddPage.isEdit) {
-            stringResource(Res.string.compose_settings_page_iptv_edit_playlist)
-        } else {
-            null
-        }
+    override fun headerTitleOrNull(page: SettingsPage): String? = rememberNavigationTitleOverride()(page)
+
+    @Composable
+    override fun rememberNavigationTitleOverride(): (SettingsPage) -> String? =
+        playlistFormTitleOverride(
+            editTitle = stringResource(Res.string.compose_settings_page_iptv_edit_playlist),
+            isEditing = { XtreamAddPage.isEdit },
+        )
 
     override fun LazyListScope.renderPage(
         page: SettingsPage,
