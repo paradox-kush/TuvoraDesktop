@@ -1,6 +1,7 @@
 package com.nuvio.app.features.settings
 
 import androidx.compose.foundation.lazy.LazyListScope
+import com.nuvio.app.core.build.AppFeaturePolicy
 import nuvio.composeapp.generated.resources.compose_settings_page_debrid
 import nuvio.composeapp.generated.resources.compose_settings_page_iptv
 import nuvio.composeapp.generated.resources.Res
@@ -40,13 +41,16 @@ internal fun LazyListScope.integrationsContent(
                     isTablet = isTablet,
                     onClick = onMdbListClick,
                 )
-                SettingsGroupDivider(isTablet = isTablet)
-                SettingsNavigationRow(
-                    title = stringResource(Res.string.compose_settings_page_debrid),
-                    description = stringResource(Res.string.settings_integrations_debrid_description),
-                    isTablet = isTablet,
-                    onClick = onDebridClick,
-                )
+                // Store builds ship without debrid (AppFeaturePolicy.debridEnabled) — skip the row.
+                if (AppFeaturePolicy.debridEnabled) {
+                    SettingsGroupDivider(isTablet = isTablet)
+                    SettingsNavigationRow(
+                        title = stringResource(Res.string.compose_settings_page_debrid),
+                        description = stringResource(Res.string.settings_integrations_debrid_description),
+                        isTablet = isTablet,
+                        onClick = onDebridClick,
+                    )
+                }
                 SettingsGroupDivider(isTablet = isTablet)
                 SettingsNavigationRow(
                     title = stringResource(Res.string.compose_settings_page_iptv),

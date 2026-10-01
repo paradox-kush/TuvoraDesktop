@@ -283,7 +283,8 @@ object LiveTvData {
         val facts = CatchUpEpgRepository.panelFacts(account)
         return CatchUpDialectWalk.Request(
             accountId = account.id,
-            baseUrl = account.baseUrl,
+            // Catch-up never fails over itself — it replays from the playlist's ACTIVE server (Step 0.3).
+            baseUrl = com.nuvio.app.features.iptv.PlaylistServerFailover.activeAccount(account).baseUrl,
             username = account.username,
             password = account.password,
             streamId = streamId,

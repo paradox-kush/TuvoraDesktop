@@ -79,8 +79,13 @@ internal fun xtreamAccountFromForm(input: XtreamFormInput): XtreamAccount? {
         epgUrl = input.epgUrl?.trim()?.takeIf { it.isNotEmpty() },
         dnsProvider = input.dnsProvider,
         autoRefreshHours = input.autoRefreshHours,
+        backupUrls = validBackups(SOURCE_TYPE_XTREAM, base.baseUrl, input),
     )
 }
+
+/** Step 0.3: the form's backup rows, validated + normalized; rows with a problem are dropped. */
+private fun validBackups(sourceType: String, main: String, input: XtreamFormInput): List<String> =
+    BackupServerValidation.validate(sourceType, main, input.backupUrls).urls
 
 /**
  * Builds an M3U-URL playlist account from the "Add Playlist" form. The M3U URL IS the identity —
@@ -105,6 +110,7 @@ internal fun m3uAccountFromForm(input: XtreamFormInput): XtreamAccount? {
         dnsProvider = input.dnsProvider,
         autoRefreshHours = input.autoRefreshHours,
         userAgent = input.userAgent?.trim()?.takeIf { it.isNotEmpty() },
+        backupUrls = validBackups(SOURCE_TYPE_M3U_URL, withScheme, input),
     )
 }
 
@@ -133,6 +139,9 @@ internal fun recogniseXtreamPanelInM3uField(input: XtreamFormInput): XtreamAccou
         dnsProvider = input.dnsProvider,
         autoRefreshHours = input.autoRefreshHours,
         userAgent = input.userAgent?.trim()?.takeIf { it.isNotEmpty() },
+        // The backup rows were typed as playlist URLs of the same panel elsewhere — as an Xtream
+        // account they reduce to those hosts' base URLs (Step 0.3).
+        backupUrls = validBackups(SOURCE_TYPE_XTREAM, parsed.baseUrl, input),
     )
 }
 
@@ -170,6 +179,7 @@ internal fun stalkerAccountFromForm(input: XtreamFormInput): XtreamAccount? {
         serialNumber = input.serialNumber?.trim()?.takeIf { it.isNotEmpty() },
         deviceId = input.deviceId?.trim()?.takeIf { it.isNotEmpty() },
         sendDeviceId = input.sendDeviceId,
+        backupUrls = validBackups(SOURCE_TYPE_STALKER, base, input),
     )
 }
 

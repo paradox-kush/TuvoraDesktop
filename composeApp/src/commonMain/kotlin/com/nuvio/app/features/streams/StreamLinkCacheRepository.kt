@@ -1,5 +1,7 @@
 package com.nuvio.app.features.streams
 
+import com.nuvio.app.core.build.AppFeaturePolicy
+import com.nuvio.app.features.addons.AddonSourcePolicy
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -123,6 +125,11 @@ object StreamLinkCacheRepository {
             return null
         }
         if (entry.url.isBlank() && entry.infoHash.isNullOrBlank()) {
+            StreamLinkCacheStorage.removeEntry(hashedKey(contentKey))
+            return null
+        }
+        // Store builds never play from add-ons, including a link cached before that rule applied.
+        if (!AddonSourcePolicy.cachedLinkUsable(entry.addonId, AppFeaturePolicy.addonStreamSourcesEnabled, ::isIptvAddon)) {
             StreamLinkCacheStorage.removeEntry(hashedKey(contentKey))
             return null
         }

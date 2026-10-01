@@ -8,6 +8,8 @@ import com.nuvio.app.features.iptv.PanelHostGuard
 import com.nuvio.app.features.iptv.XtreamAccount
 import com.nuvio.app.features.iptv.guardedPanelRequest
 import io.ktor.http.encodeURLParameter
+import com.nuvio.app.features.iptv.FailoverInvalidResponseException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -16,9 +18,10 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import com.nuvio.app.features.addons.awaitingLocally
+import com.nuvio.app.features.addons.withoutHttpHeadersSignal
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -167,6 +170,27 @@ internal class StalkerSession(
         return retried
     }
 
+    /**
+     * The failover race's validation probe (Step 0.3b): a Stalker portal is VALID when this session can
+     * authenticate (probe endpoint + handshake token + get_profile) — exactly [ensureAuthenticated], so
+     * the real request that follows on the winner reuses the token and never handshakes again. An
+     * already-authenticated session must still prove the portal is alive: one harmless `get_events`
+     * ping (a fresh handshake would rotate the MAC's token), whose `{"js": …}` envelope must be there —
+     * a parked domain's HTML is not. A portal that answers but is not a Stalker portal throws
+     * [FailoverInvalidResponseException] (fails over); a device rejection ([StalkerAuthException],
+     * refusal exceptions) is the same on every portal and surfaces. Cancellation discards a half-built
+     * session ([doHandshakeAndProfile]).
+     */
+    suspend fun probe() {
+        val warm = token != null
+        ensureAuthenticated()
+        if (!warm) return
+        val envelope = rawRequest(StalkerWatchdogPolicy.pingParams(init = false)) as? JsonObject
+        if (envelope == null || "js" !in envelope) {
+            throw FailoverInvalidResponseException("Stalker probe: ${account.name} did not answer like a portal")
+        }
+    }
+
     /** Force re-auth on the next call (used when a create_link/browse hits a hard failure). */
     fun invalidate() { token = null }
 
@@ -194,7 +218,7 @@ internal class StalkerSession(
     ) {
         ensureAuthenticated()
         val staleToken = token
-        val first = runCatching { rawRequestStream(params, onChunk) }
+        val first = runCatchingCancellable { rawRequestStream(params, onChunk) }
         if (first.isSuccess && first.getOrThrow()) {
             lastFailedReauthAtMs = 0L
             return
@@ -209,7 +233,7 @@ internal class StalkerSession(
         }
         reauthenticate(staleToken)
         onRestart()
-        val retried = runCatching { rawRequestStream(params, onChunk) }
+        val retried = runCatchingCancellable { rawRequestStream(params, onChunk) }
         if (retried.isFailure || !retried.getOrThrow()) {
             lastFailedReauthAtMs = now
             throw StalkerSessionUnavailableException("Stalker portal returned no data for ${params["action"]} — the session is in use elsewhere")
@@ -248,7 +272,7 @@ internal class StalkerSession(
         // rejection sentinel throws from inside the block, which classifies as HTTP_RESPONSE —
         // body bytes arrived, so the host is alive and the record clears.
         panelGuard.guardedPanelRequest(url) {
-            gate.withPermit {
+            gate.withPermitAsLocalWait {
                 httpStream(url, headers) { line ->
                     sawBytes = sawBytes || line.isNotEmpty()
                     if (sniffing) {
@@ -296,16 +320,34 @@ internal class StalkerSession(
         }
     }
 
-    /** Probe endpoints (if not resolved), handshake for a token, then get_profile to activate. */
+    /**
+     * Probe endpoints (if not resolved), handshake for a token, then get_profile to activate.
+     *
+     * Step 0.3b: this runs inside a failover race attempt that may be CANCELLED half-way (it lost to a
+     * faster server). A session left with a token but no completed profile would read as "stale" on its
+     * next use and trigger a re-handshake — a re-mint that rotates the MAC's token on a portal nobody
+     * chose. So a cancellation anywhere in here discards the half-built session (token back to null: the
+     * next use does one ordinary first handshake) and is never swallowed by a `runCatching`. The
+     * handshake traffic is also not "the answer" of a racing attempt — only the browse request after it is.
+     */
     private suspend fun doHandshakeAndProfile() {
+        try {
+            withoutHttpHeadersSignal { handshakeAndProfile() }
+        } catch (c: CancellationException) {
+            token = null
+            throw c
+        }
+    }
+
+    private suspend fun handshakeAndProfile() {
         val endpoint = resolvedEndpoint ?: probeEndpoint().also { resolvedEndpoint = it }
         val handshakeJs = rawRequestAt(
             endpoint,
             mapOf("type" to "stb", "action" to "handshake", "token" to "", "prehash" to "0"),
             tokenOverride = ""
-        ).jsOrNull() ?: error("Stalker handshake failed for ${account.name}")
+        ).jsOrNull() ?: throw FailoverInvalidResponseException("Stalker handshake failed for ${account.name}")
         val newToken = (handshakeJs as? JsonObject)?.str("token")
-            ?: error("Stalker handshake returned no token for ${account.name}")
+            ?: throw FailoverInvalidResponseException("Stalker handshake returned no token for ${account.name}")
         token = newToken
 
         // get_profile activates the session. Non-fatal if it errors (some portals authorise on
@@ -313,7 +355,7 @@ internal class StalkerSession(
         // The ONE failure we must not shrug off is an identity rejection: a portal provisioned for a
         // different box answers the plain text "Authorization failed." here, and every later content
         // call then returns nothing. Left swallowed, that reads as an empty portal.
-        val profileOutcome = runCatching {
+        val profileOutcome = runCatchingCancellable {
             rawRequestAt(endpoint, profileParams(authSecondStep = false))
         }
 
@@ -329,7 +371,7 @@ internal class StalkerSession(
         val nextPreset = StalkerMagPresets.next(magPreset) ?: throw rejection
         magPreset = nextPreset
         token = null
-        doHandshakeAndProfile()
+        handshakeAndProfile()
     }
 
     /** The full MAG profile params. [authSecondStep] is set ONLY by the post-do_auth retry —
@@ -388,7 +430,7 @@ internal class StalkerSession(
         for (step in steps) {
             when (step) {
                 StalkerBootstrapPolicy.Step.DO_AUTH -> {
-                    val authed = runCatching {
+                    val authed = runCatchingCancellable {
                         rawRequestAt(
                             endpoint,
                             mapOf(
@@ -402,7 +444,7 @@ internal class StalkerSession(
                     // The portal's own client re-fetches the profile with auth_second_step=1 after
                     // a successful do_auth (c/xpcom.common.js) — ONLY that retry sets the flag.
                     if (authed) {
-                        secondStepJs = runCatching {
+                        secondStepJs = runCatchingCancellable {
                             rawRequestAt(endpoint, profileParams(authSecondStep = true))
                         }.getOrNull()?.jsOrNull() as? JsonObject
                         // A refusal on the retry is as final as one on the first profile.
@@ -410,7 +452,7 @@ internal class StalkerSession(
                     }
                 }
                 StalkerBootstrapPolicy.Step.GET_MODULES -> {
-                    runCatching { rawRequestAt(endpoint, mapOf("type" to "stb", "action" to "get_modules")) }
+                    runCatchingCancellable { rawRequestAt(endpoint, mapOf("type" to "stb", "action" to "get_modules")) }
                 }
             }
         }
@@ -430,7 +472,7 @@ internal class StalkerSession(
             watchdogTimeoutSeconds = profileJs?.str("watchdog_timeout")?.trim()?.toDoubleOrNull()?.toLong(),
             timeslotSeconds = profileJs?.str("timeslot")?.trim()?.toDoubleOrNull(),
         )
-        runCatching { rawRequest(StalkerWatchdogPolicy.pingParams(init = true)) }
+        runCatchingCancellable { rawRequest(StalkerWatchdogPolicy.pingParams(init = true)) }
         watchdogJob?.cancel()
         watchdogJob = watchdogScope.launch {
             delay(StalkerWatchdogPolicy.initialPeriodicDelayMs(timing))
@@ -467,7 +509,7 @@ internal class StalkerSession(
     private suspend fun probeEndpoint(): String {
         var lastError: Throwable? = null
         for (candidate in StalkerProtocol.ENDPOINT_CANDIDATES) {
-            val ok = runCatching {
+            val ok = runCatchingCancellable {
                 (rawRequestAt(
                     candidate,
                     mapOf("type" to "stb", "action" to "handshake", "token" to "", "prehash" to "0"),
@@ -477,7 +519,8 @@ internal class StalkerSession(
             }.onFailure { lastError = it }.getOrDefault(false)
             if (ok) return candidate
         }
-        throw (lastError ?: IllegalStateException("No Stalker endpoint responded for ${account.name}"))
+        // Every candidate answered with something that is not a Stalker handshake (a parked domain, a CDN page).
+        throw (lastError ?: FailoverInvalidResponseException("No Stalker endpoint responded for ${account.name}"))
     }
 
     // --- HTTP -----------------------------------------------------------------
@@ -520,7 +563,7 @@ internal class StalkerSession(
         // permit, it is answering a screen nobody is on — drop it instead of spending the
         // throttled host's budget on it (see StalkerPlaybackTraffic.browseEpoch).
         val enqueueEpoch = StalkerPlaybackTraffic.browseEpoch
-        awaitPlaybackTraffic(action)
+        awaitingLocally { awaitPlaybackTraffic(action) }   // a local wait: not the portal being slow (failover race clock)
         val query = (params + ("JsHttpRequest" to "1-xml")).entries.joinToString("&") { (k, v) ->
             "${k.encodeURLParameter()}=${v.encodeURLParameter()}"
         }
@@ -550,7 +593,7 @@ internal class StalkerSession(
         // that are busy timing out, and its refusal (PanelHostFastFailException — never an auth
         // type, and worded to read as a connection-level failure) propagates without re-auth.
         val body = panelGuard.guardedPanelRequest(url, discovery) {
-            gate.withPermit {
+            gate.withPermitAsLocalWait {
                 // Checked with the permit in hand — the whole wait is the window a switch can
                 // land in. Thrown INSIDE the guard so the breaker ignores it (an abandoned call
                 // is not a panel failure); callers treat it like any transport failure.
@@ -618,5 +661,29 @@ internal class StalkerSession(
             "get_events"
         )
         private val JSON = Json { ignoreUnknownKeys = true; isLenient = true }
+    }
+}
+
+/** [runCatching] that never swallows a cancellation (a lost failover race must unwind, not read as a failure). */
+internal inline fun <T> runCatchingCancellable(block: () -> T): Result<T> =
+    try {
+        Result.success(block())
+    } catch (c: CancellationException) {
+        throw c
+    } catch (t: Throwable) {
+        Result.failure(t)
+    }
+
+/**
+ * [kotlinx.coroutines.sync.withPermit], with the queueing for the permit reported as a LOCAL wait
+ * (Step 0.3b): a request stuck behind its own siblings is not the portal being slow, and must not make
+ * a failover race hand it to a backup portal.
+ */
+private suspend inline fun <T> Semaphore.withPermitAsLocalWait(action: () -> T): T {
+    awaitingLocally { acquire() }
+    try {
+        return action()
+    } finally {
+        release()
     }
 }

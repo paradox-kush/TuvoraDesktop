@@ -1,5 +1,6 @@
 package com.nuvio.app.features.addons
 
+import com.nuvio.app.core.build.AppFeaturePolicy
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.network.SupabaseProvider
 import com.nuvio.app.core.sync.SyncSession
@@ -283,7 +284,7 @@ object AddonRepository {
                 AddonManifestParser.parse(
                     manifestUrl = manifestUrl,
                     payload = payload,
-                )
+                ).let { AddonSourcePolicy.manifestForBuild(it, AppFeaturePolicy.addonStreamSourcesEnabled) }
             }
         } catch (error: Throwable) {
             return AddAddonResult.Error(error.message ?: getString(Res.string.addon_load_manifest_failed))
@@ -395,7 +396,7 @@ object AddonRepository {
                     AddonManifestParser.parse(
                         manifestUrl = manifestUrl,
                         payload = payload,
-                    )
+                    ).let { AddonSourcePolicy.manifestForBuild(it, AppFeaturePolicy.addonStreamSourcesEnabled) }
                 }
 
                 _uiState.update { current ->

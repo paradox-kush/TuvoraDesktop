@@ -1,8 +1,6 @@
 package com.nuvio.app.features.iptv
 
 import com.nuvio.app.features.addons.EmptyResponseBodyException
-import com.nuvio.app.features.addons.httpGetText
-import com.nuvio.app.features.addons.httpStreamLines
 import com.nuvio.app.features.iptv.match.IndexedItem
 import com.nuvio.app.features.iptv.match.TitleNormalizer
 import com.nuvio.app.features.iptv.match.XtreamCatalogIndexParser
@@ -38,9 +36,13 @@ object XtreamClient : IptvClient {
      * is a credential rejection.
      */
     override suspend fun verify(acc: XtreamAccount): Result<Unit> = call {
+        // Through the backup-server walk (Step 0.3); a panel that answered "no" (empty body, auth != 1,
+        // or a definitive refusal on every server) is a credential rejection, transport failures propagate.
         val body = try {
-            panelGetText(playerApi(acc), acc.dnsProvider)
+            loginText(acc)
         } catch (e: EmptyResponseBodyException) {
+            throw XtreamAuthRejectedException()
+        } catch (e: FailoverAuthRejectedException) {
             throw XtreamAuthRejectedException()
         }
         val info = runCatching { json.parseToJsonElement(body).jsonObject["user_info"] as? JsonObject }.getOrNull()
@@ -53,7 +55,7 @@ object XtreamClient : IptvClient {
 
     /** Live account status: active/expired, trial flag, expiry, and current vs max connections. */
     override suspend fun accountInfo(acc: XtreamAccount): Result<XtreamAccountInfo?> = call {
-        val info = userInfo(playerApi(acc), acc.dnsProvider) ?: return@call null
+        val info = userInfo(acc) ?: return@call null
         XtreamAccountInfo(
             status = info["status"].asStringOrNull(),
             isTrial = info["is_trial"].asStringOrNull() == "1",
@@ -63,9 +65,22 @@ object XtreamClient : IptvClient {
         )
     }
 
-    /** `user_info` object from the no-action player_api call, parsed loosely. */
-    private suspend fun userInfo(url: String, dnsProvider: String?): JsonObject? =
-        runCatching { json.parseToJsonElement(panelGetText(url, dnsProvider)).jsonObject["user_info"] as? JsonObject }.getOrNull()
+    /**
+     * `user_info` object from the no-action player_api call (the login/account call — fails over to a
+     * backup server, Step 0.3), parsed loosely. Any failure still reads as null, as it always has.
+     */
+    private suspend fun userInfo(acc: XtreamAccount): JsonObject? =
+        runCatching { json.parseToJsonElement(loginText(acc)).jsonObject["user_info"] as? JsonObject }.getOrNull()
+
+    /** The raw no-action player_api body, from whichever server answers (Step 0.3). */
+    private suspend fun loginText(acc: XtreamAccount): String = panelText(acc) { a -> playerApi(a) }
+
+    /**
+     * One whole-body fail-over-able panel request (Step 0.3): [url] is rebuilt for each server the
+     * [PlaylistServerFailover] walk tries, so the request lands on that server with the same path.
+     */
+    private suspend fun panelText(acc: XtreamAccount, url: (XtreamAccount) -> String): String =
+        PlaylistServerFailover.run(acc, probe = ::failoverProbe) { a -> panelGetText(url(a), a.dnsProvider) }
 
     override suspend fun liveCategories(acc: XtreamAccount) = categories(acc, "get_live_categories")
     override suspend fun vodCategories(acc: XtreamAccount) = categories(acc, "get_vod_categories")
@@ -77,7 +92,8 @@ object XtreamClient : IptvClient {
     // onnipsite sends `rating` as `0`, not `"0"`). A strict decode throws on the FIRST such
     // field and loses the ENTIRE catalog, so the provider's index silently never builds.
     override suspend fun liveChannels(acc: XtreamAccount, categoryId: String?): Result<List<XtreamChannel>> = call {
-        streamArray(acc, playerApi(acc, "get_live_streams", categoryId)) { o ->
+        // The stream URLs are built on the server that served THIS list (Step 0.3).
+        streamArray(acc, { a -> playerApi(a, "get_live_streams", categoryId) }) { a, o ->
             val id = o["stream_id"].asIntOrNull() ?: return@streamArray null
             XtreamChannel(
                 streamId = id,
@@ -88,17 +104,17 @@ object XtreamClient : IptvClient {
                 hasArchive = (o["tv_archive"].asIntOrNull() ?: 0) > 0,
                 // String on exactly the archive-bearing rows in the field — asIntOrNull is lenient.
                 catchUpDays = (o["tv_archive_duration"].asIntOrNull() ?: 0).coerceAtLeast(0),
-                streamUrl = streamUrl(acc, "live", id, "ts")
+                streamUrl = streamUrl(a, "live", id, "ts")
             )
         }
     }
 
     override suspend fun vodMovies(acc: XtreamAccount, categoryId: String?): Result<List<XtreamMovie>> = call {
-        streamArray(acc, playerApi(acc, "get_vod_streams", categoryId)) { o -> parseVodItem(acc, o) }
+        streamArray(acc, { a -> playerApi(a, "get_vod_streams", categoryId) }) { a, o -> parseVodItem(a, o) }
     }
 
     override suspend fun series(acc: XtreamAccount, categoryId: String?): Result<List<XtreamSeriesItem>> = call {
-        streamArray(acc, playerApi(acc, "get_series", categoryId)) { o -> parseSeriesItem(o) }
+        streamArray(acc, { a -> playerApi(a, "get_series", categoryId) }) { _, o -> parseSeriesItem(o) }
     }
 
     /**
@@ -111,12 +127,12 @@ object XtreamClient : IptvClient {
      * devices right after a playlist was added.
      */
     internal suspend fun vodIndexItems(acc: XtreamAccount): Result<List<IndexedItem>> = call {
-        streamArray(acc, playerApi(acc, "get_vod_streams")) { o -> parseVodIndexItem(o) }
+        streamArray(acc, { a -> playerApi(a, "get_vod_streams") }) { _, o -> parseVodIndexItem(o) }
     }
 
     /** Series half of [vodIndexItems]. */
     internal suspend fun seriesIndexItems(acc: XtreamAccount): Result<List<IndexedItem>> = call {
-        streamArray(acc, playerApi(acc, "get_series")) { o -> parseSeriesIndexItem(o) }
+        streamArray(acc, { a -> playerApi(a, "get_series") }) { _, o -> parseSeriesIndexItem(o) }
     }
 
     /**
@@ -127,12 +143,12 @@ object XtreamClient : IptvClient {
      * variant) on a truncated body, so a partial catalog can't finalize a sync.
      */
     internal suspend fun vodIndexItemsInto(acc: XtreamAccount, onItem: (IndexedItem) -> Unit): Result<Int> = call {
-        streamArrayInto(acc, playerApi(acc, "get_vod_streams"), { o -> parseVodIndexItem(o) }, onItem)
+        streamArrayInto(acc, { a -> playerApi(a, "get_vod_streams") }, { o -> parseVodIndexItem(o) }, onItem)
     }
 
     /** Series half of [vodIndexItemsInto]. */
     internal suspend fun seriesIndexItemsInto(acc: XtreamAccount, onItem: (IndexedItem) -> Unit): Result<Int> = call {
-        streamArrayInto(acc, playerApi(acc, "get_series"), { o -> parseSeriesIndexItem(o) }, onItem)
+        streamArrayInto(acc, { a -> playerApi(a, "get_series") }, { o -> parseSeriesIndexItem(o) }, onItem)
     }
 
     /** One VOD list entry -> index row, skipping the domain model entirely. internal for tests. */
@@ -168,7 +184,7 @@ object XtreamClient : IptvClient {
 
     /** Live half of [vodIndexItemsInto]. */
     internal suspend fun liveIndexItemsInto(acc: XtreamAccount, onItem: (IndexedItem) -> Unit): Result<Int> = call {
-        streamArrayInto(acc, playerApi(acc, "get_live_streams"), { o -> parseLiveIndexItem(o) }, onItem)
+        streamArrayInto(acc, { a -> playerApi(a, "get_live_streams") }, { o -> parseLiveIndexItem(o) }, onItem)
     }
 
     /** One series list entry -> index row. internal for tests. */
@@ -188,11 +204,10 @@ object XtreamClient : IptvClient {
     }
 
     override suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int): Result<List<XtreamProgram>> = call {
-        val url = playerApi(acc, "get_short_epg") + "&stream_id=$streamId&limit=$limit"
-        // panelGetText stays OUTSIDE the runCatching so a transport error propagates to call{}
+        // panelText stays OUTSIDE the runCatching so a transport error propagates to call{}
         // and becomes Result.failure — the shape vodInfo/seriesInfo already use. Inlining it here
         // turned every timeout into Result.success(emptyList()), i.e. "the panel has no EPG".
-        val text = panelGetText(url, acc.dnsProvider)
+        val text = panelText(acc) { a -> playerApi(a, "get_short_epg") + "&stream_id=$streamId&limit=$limit" }
         val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return@call emptyList()
         val rows = (root["epg_listings"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
         // Epoch-skew gate (XtreamEpochSkew): the manual per-playlist offset wins outright, and the
@@ -254,16 +269,24 @@ object XtreamClient : IptvClient {
         catchUpDays: Int,
         onProgramme: (XtreamProgram) -> Unit,
     ): Int {
-        val url = playerApi(acc, "get_simple_data_table") + "&stream_id=$streamId"
         // The stream parse can't suspend mid-body, so the clock pair is resolved up front when
         // auto-detection could need it (manual unset). Session-memoized in XtreamPanelClock —
         // usually already seeded by a liar short-EPG response or a replay's panelFacts.
         val manualOffsetMs = acc.guideEpgCorrectionMs()
         val clockPairOffsetMs = if (manualOffsetMs == null) XtreamPanelClock.measuredOffsetMs(acc) else null
         val parser = XtreamEpgTableParser(json, nowMs, catchUpDays, manualOffsetMs, clockPairOffsetMs, onProgramme)
-        // Guarded like every other panel request (WP6) so the breaker counts it exactly once.
-        IptvPanelGuard.guard.guardedPanelRequest(url) {
-            httpStreamLines(url, userAgent = null, dnsProvider = acc.dnsProvider) { parser.feed(it) }
+        // Guarded like every other panel request (WP6) so the breaker counts it exactly once. Fails
+        // over (Step 0.3) only until the first line reached the parser — rows already handed to
+        // [onProgramme] must never be spliced with another server's.
+        var delivered = false
+        PlaylistServerFailover.run(acc, canRetry = { !delivered }, probe = ::failoverProbe) { a ->
+            val url = playerApi(a, "get_simple_data_table") + "&stream_id=$streamId"
+            IptvPanelGuard.guard.guardedPanelRequest(url) {
+                IptvTransport.current.streamLines(url, userAgent = null, dnsProvider = a.dnsProvider) {
+                    delivered = true
+                    parser.feed(it)
+                }
+            }
         }
         return parser.finish()
     }
@@ -281,7 +304,7 @@ object XtreamClient : IptvClient {
      * throwing on one of them would lose the clock pair too.
      */
     internal suspend fun serverClockOffsetMs(acc: XtreamAccount): Long? = runCatching {
-        val root = json.parseToJsonElement(panelGetText(playerApi(acc), acc.dnsProvider)).jsonObject
+        val root = json.parseToJsonElement(loginText(acc)).jsonObject
         val server = root["server_info"] as? JsonObject ?: return@runCatching null
         val timestampNow = server["timestamp_now"].asStringOrNull()?.toLongOrNull() ?: return@runCatching null
         ServerClockOffset.offsetMs(server["time_now"].asStringOrNull(), timestampNow)
@@ -294,7 +317,7 @@ object XtreamClient : IptvClient {
      * path rather than an edge case — null here means exactly that.
      */
     internal suspend fun allowedOutputFormats(acc: XtreamAccount): List<String>? = runCatching {
-        val root = json.parseToJsonElement(panelGetText(playerApi(acc), acc.dnsProvider)).jsonObject
+        val root = json.parseToJsonElement(loginText(acc)).jsonObject
         val server = root["server_info"] as? JsonObject ?: return@runCatching null
         (server["allowed_output_formats"] as? JsonArray)
             ?.mapNotNull { it.asStringOrNull() }
@@ -306,7 +329,7 @@ object XtreamClient : IptvClient {
      * panel sends `info: []` — a known quirk — so callers fall back to bare Xtream metadata.
      */
     override suspend fun vodInfo(acc: XtreamAccount, vodId: Int): Result<XtreamVodDetail?> = call {
-        val text = panelGetText(playerApi(acc, "get_vod_info") + "&vod_id=$vodId", acc.dnsProvider)
+        val text = panelText(acc) { a -> playerApi(a, "get_vod_info") + "&vod_id=$vodId" }
         val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return@call null
         val info = root["info"] as? JsonObject   // null when the panel sends info: []
         val movieData = root["movie_data"] as? JsonObject
@@ -326,7 +349,7 @@ object XtreamClient : IptvClient {
      * list ships empty stream_icons. null = the panel has no art for it either.
      */
     suspend fun vodArtwork(acc: XtreamAccount, vodId: Int): Result<String?> = call {
-        val text = panelGetText(playerApi(acc, "get_vod_info") + "&vod_id=$vodId", acc.dnsProvider)
+        val text = panelText(acc) { a -> playerApi(a, "get_vod_info") + "&vod_id=$vodId" }
         val info = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()?.get("info") as? JsonObject
         info?.get("movie_image").asStringOrNull()?.takeIf { it.isNotBlank() }
             ?: info?.get("cover_big").asStringOrNull()?.takeIf { it.isNotBlank() }
@@ -334,7 +357,7 @@ object XtreamClient : IptvClient {
 
     /** Series half of [vodArtwork] (get_series_info `info.cover`). */
     suspend fun seriesArtwork(acc: XtreamAccount, seriesId: Int): Result<String?> = call {
-        val text = panelGetText(playerApi(acc, "get_series_info") + "&series_id=$seriesId", acc.dnsProvider)
+        val text = panelText(acc) { a -> playerApi(a, "get_series_info") + "&series_id=$seriesId" }
         val info = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()?.get("info") as? JsonObject
         info?.get("cover").asStringOrNull()?.takeIf { it.isNotBlank() }
     }
@@ -346,7 +369,7 @@ object XtreamClient : IptvClient {
      * decode throws on the first `info: []` and loses every episode — so we walk the JSON instead.
      */
     override suspend fun seriesInfo(acc: XtreamAccount, seriesId: Int): Result<XtreamSeriesDetail?> = call {
-        val text = panelGetText(playerApi(acc, "get_series_info") + "&series_id=$seriesId", acc.dnsProvider)
+        val text = panelText(acc) { a -> playerApi(a, "get_series_info") + "&series_id=$seriesId" }
         val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return@call null
         val info = root["info"] as? JsonObject
         val episodes = (root["episodes"] as? JsonObject).orEmptyEntries().flatMap { (seasonKey, seasonEps) ->
@@ -380,8 +403,12 @@ object XtreamClient : IptvClient {
 
     // --- public stream-url builders (used by the registry / short-circuits) --
 
-    override fun movieStreamUrl(acc: XtreamAccount, streamId: Int, ext: String): String = streamUrl(acc, "movie", streamId, ext.ifBlank { "mp4" })
-    override fun liveStreamUrl(acc: XtreamAccount, streamId: Int): String = streamUrl(acc, "live", streamId, "ts")
+    // Stream/catch-up URLs are built on the playlist's ACTIVE server (Step 0.3) and never fail over
+    // themselves: a playback failure says nothing about which server should serve the catalog.
+    override fun movieStreamUrl(acc: XtreamAccount, streamId: Int, ext: String): String =
+        streamUrl(PlaylistServerFailover.activeAccount(acc), "movie", streamId, ext.ifBlank { "mp4" })
+    override fun liveStreamUrl(acc: XtreamAccount, streamId: Int): String =
+        streamUrl(PlaylistServerFailover.activeAccount(acc), "live", streamId, "ts")
 
     /**
      * Catch-up (tv_archive) replay URL — XUI's standard timeshift path form (the first entry of
@@ -406,7 +433,7 @@ object XtreamClient : IptvClient {
         containerExtension: String? = null,
         serverOffsetMs: Long? = null,
     ): List<String> = XtreamCatchUp.candidateUrls(
-        baseUrl = acc.baseUrl,
+        baseUrl = PlaylistServerFailover.activeAccount(acc).baseUrl,
         username = acc.username,
         password = acc.password,
         streamId = streamId,
@@ -417,7 +444,7 @@ object XtreamClient : IptvClient {
     )
 
     override fun episodeStreamUrl(acc: XtreamAccount, episodeId: String, ext: String): String {
-        val base = acc.baseUrl.trimEnd('/')
+        val base = PlaylistServerFailover.activeAccount(acc).baseUrl.trimEnd('/')
         return "$base/series/${acc.username.encodeURLPathPart()}/${acc.password.encodeURLPathPart()}/$episodeId.${ext.ifBlank { "mp4" }}"
     }
 
@@ -430,12 +457,32 @@ object XtreamClient : IptvClient {
      * distinct [PanelHostFastFailException] before any bytes move.
      */
     private suspend fun panelGetText(url: String, dnsProvider: String?): String =
-        IptvPanelGuard.guard.guardedPanelRequest(url) { httpGetText(url, dnsProvider) }
+        IptvPanelGuard.guard.guardedPanelRequest(url) { IptvTransport.current.getText(url, dnsProvider) }
+
+    /**
+     * The failover race's validation probe (Step 0.3b): the no-action `player_api.php` login on server [a].
+     * Returns normally only for a VALID answer — JSON with `user_info` and `server_info` and auth=1 on a
+     * live account. A 200 that is not the panel (parked domain, CDN error page, blank body) throws
+     * [FailoverInvalidResponseException] (fails over); auth=0 / Expired / Banned / Disabled throws
+     * [FailoverAuthRejectedException] (the same on every server: surfaced, never failed over). Goes
+     * through the same breaker-guarded transport as every panel request.
+     *
+     * The body is the very `user_info` [accountInfo] parses (status, exp_date, is_trial,
+     * max_connections, active_cons), so the expiry reminder can reuse that mapping on it later.
+     */
+    internal suspend fun failoverProbe(a: XtreamAccount) {
+        val body = try {
+            panelGetText(playerApi(a), a.dnsProvider)
+        } catch (e: com.nuvio.app.features.addons.EmptyResponseBodyException) {
+            throw FailoverInvalidResponseException("Xtream login probe: empty body")
+        }
+        FailoverProbePolicy.toFailure(FailoverProbePolicy.xtreamLogin(body), "Xtream login probe")?.let { throw it }
+    }
 
     private fun String.splitCsv(): List<String> = split(",").mapNotNull { it.trim().ifBlank { null } }
 
     private suspend fun categories(acc: XtreamAccount, action: String): Result<List<XtreamCategory>> = call {
-        streamArray(acc, playerApi(acc, action)) { o ->
+        streamArray(acc, { a -> playerApi(a, action) }) { _, o ->
             val id = o["category_id"].asStringOrNull() ?: return@streamArray null
             XtreamCategory(id, o["category_name"].asStringOrNull() ?: "")
         }
@@ -486,30 +533,45 @@ object XtreamClient : IptvClient {
      */
     private suspend fun <T> streamArray(
         acc: XtreamAccount,
-        url: String,
-        map: (JsonObject) -> T?,
-    ): List<T> {
-        val parser = XtreamCatalogIndexParser(json, map)
-        // Guarded like panelGetText (WP6). A parser throw classifies as HTTP_RESPONSE — body
-        // bytes arrived, which is all the breaker measures.
-        IptvPanelGuard.guard.guardedPanelRequest(url) {
-            httpStreamLines(url, userAgent = null, dnsProvider = acc.dnsProvider) { parser.accept(it) }
+        url: (XtreamAccount) -> String,
+        map: (XtreamAccount, JsonObject) -> T?,
+    ): List<T> =
+        // A catalog call fails over (Step 0.3). The list is collected by a fresh parser per server,
+        // so a body that died part-way can safely be fetched whole from the next one; [map] gets the
+        // server that answered, so URLs built from a row point at it.
+        PlaylistServerFailover.run(acc, probe = ::failoverProbe) { a ->
+            val parser = XtreamCatalogIndexParser(json, { o: JsonObject -> map(a, o) })
+            val u = url(a)
+            // Guarded like panelGetText (WP6). A parser throw classifies as HTTP_RESPONSE — body
+            // bytes arrived, which is all the breaker measures.
+            IptvPanelGuard.guard.guardedPanelRequest(u) {
+                IptvTransport.current.streamLines(u, userAgent = null, dnsProvider = a.dnsProvider) { parser.accept(it) }
+            }
+            parser.finish()
         }
-        return parser.finish()
-    }
 
-    /** [streamArray] in sink mode: rows go to [onItem] as they parse; returns the count. */
+    /**
+     * [streamArray] in sink mode: rows go to [onItem] as they parse; returns the count. Fails over
+     * only until the first line arrived — rows already in the caller's sink can't be taken back.
+     */
     private suspend fun <T> streamArrayInto(
         acc: XtreamAccount,
-        url: String,
+        url: (XtreamAccount) -> String,
         map: (JsonObject) -> T?,
         onItem: (T) -> Unit,
     ): Int {
-        val parser = XtreamCatalogIndexParser(json, map, sink = onItem)
-        IptvPanelGuard.guard.guardedPanelRequest(url) {
-            httpStreamLines(url, userAgent = null, dnsProvider = acc.dnsProvider) { parser.accept(it) }
+        var delivered = false
+        return PlaylistServerFailover.run(acc, canRetry = { !delivered }, probe = ::failoverProbe) { a ->
+            val parser = XtreamCatalogIndexParser(json, map, sink = onItem)
+            val u = url(a)
+            IptvPanelGuard.guard.guardedPanelRequest(u) {
+                IptvTransport.current.streamLines(u, userAgent = null, dnsProvider = a.dnsProvider) {
+                    delivered = true
+                    parser.accept(it)
+                }
+            }
+            parser.finishCount()
         }
-        return parser.finishCount()
     }
 
     private fun playerApi(acc: XtreamAccount, action: String? = null, categoryId: String? = null): String {

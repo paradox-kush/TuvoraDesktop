@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.StateFlow
@@ -67,6 +68,14 @@ object XtreamRepository : IptvCatalog {
     override val servedStreamTypes: StateFlow<Set<String>> = uiState
         .map { servedStreamTypesOf(it.accounts) }
         .stateIn(scope, SharingStarted.Eagerly, emptySet())
+
+    /**
+     * Step 0.3: playlist key -> active backup index, for playlists NOT on their main server (drives the
+     * "Using backup server N" row note). Re-read when the accounts or any failover state change.
+     */
+    val activeServers: StateFlow<Map<String, Int>> = combine(uiState.map { it.accounts }, PlaylistServerFailover.version) { accounts, _ ->
+        PlaylistServerFailover.activeIndexes(accounts)
+    }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     private var loaded = false
 
@@ -414,6 +423,10 @@ object XtreamRepository : IptvCatalog {
         // ones only carry when the edit still targets the same playlist (see carryPlaylistOptions).
         val account = carryPlaylistOptions(old, candidate, keepCandidateFormOptions).copy(id = oldId)
         val profileAtStart = currentProfileId
+        // Step 0.3: an edited server list (main or backups) starts over on the main server — the old
+        // active index may now name a different server or none. Before the verify below, which itself
+        // may legitimately land on a backup.
+        if (serverListChanged(old, account)) PlaylistServerFailover.reset(oldId)
         scope.launch {
             _uiState.update { it.copy(isValidating = true, error = null) }
             // Options-only edit (name/EPG/DNS/refresh) — nothing about how we reach the provider
@@ -587,6 +600,7 @@ object XtreamRepository : IptvCatalog {
                 when (target) {
                     PlaylistRemovalTarget.RefreshStamp -> IptvRefreshScheduler.forget(profileId, id)
                     PlaylistRemovalTarget.CatchUp -> CatchUpEpgRepository.forget(id)
+                    PlaylistRemovalTarget.ServerFailover -> PlaylistServerFailover.forget(profileId, id)
                     PlaylistRemovalTarget.HubSelection -> forgetHubSelection(profileId, id)
                     PlaylistRemovalTarget.Overlay ->
                         com.nuvio.app.features.iptv.overlay.IptvOverlayRepository.onPlaylistRemoved(id)
@@ -678,6 +692,12 @@ object XtreamRepository : IptvCatalog {
         currentProfileId = profileId
         val before = _uiState.value.accounts
         _uiState.update { it.copy(accounts = accounts) }
+        // Step 0.3: a server list changed on another device restarts this device on the main server.
+        val beforeById = before.associateBy { it.id }
+        for (acc in accounts) {
+            val prior = beforeById[acc.id] ?: continue
+            if (serverListChanged(prior, acc)) PlaylistServerFailover.reset(acc.id)
+        }
         // The server carries only known columns, so a pull's blob has no unknown keys to preserve.
         val encoded = json.encodeToString(accounts)
         XtreamAccountStorage.saveAccountsJson(profileId, encoded)
@@ -806,10 +826,15 @@ internal fun carryPlaylistOptions(
             else -> null
         },
         categorySelections = if (same) old.categorySelections else CategorySelections(),
-        // Step 0: client-owned, not on the edit form (no UI yet) — an edit must not clear it.
-        backupUrls = old.backupUrls,
+        // Step 0.3: the full form shows the backup list, so its candidate wins; every other edit
+        // path (paste-URL / manual fields) doesn't carry it and must not clear it.
+        backupUrls = if (keepCandidateFormOptions) candidate.backupUrls else old.backupUrls,
     )
 }
+
+/** Step 0.3: whether an edit/pull changed which servers a playlist is reached on (main or backups). */
+internal fun serverListChanged(old: XtreamAccount, new: XtreamAccount): Boolean =
+    old.baseUrl != new.baseUrl || old.backupUrls != new.backupUrls
 
 /** Stremio content types the enabled accounts serve through the IPTV source lane (live is not a VOD source). */
 internal fun servedStreamTypesOf(accounts: List<XtreamAccount>): Set<String> =

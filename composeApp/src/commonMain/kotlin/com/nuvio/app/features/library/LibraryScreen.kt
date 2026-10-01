@@ -128,8 +128,10 @@ fun LibraryScreen(
     val networkStatusUiState by NetworkStatusRepository.uiState.collectAsStateWithLifecycle()
     var observedOfflineState by remember { mutableStateOf(false) }
     var sourceModeName by rememberSaveable { mutableStateOf(LibraryViewMode.Saved.name) }
-    val sourceMode = remember(sourceModeName) {
+    // The Cloud view is the debrid cloud library; store builds have no debrid, so it is Saved only.
+    val sourceMode = remember(sourceModeName, cloudSettings.featureAvailable) {
         runCatching { LibraryViewMode.valueOf(sourceModeName) }.getOrDefault(LibraryViewMode.Saved)
+            .takeIf { cloudSettings.featureAvailable } ?: LibraryViewMode.Saved
     }
     var selectedProviderId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedTypeName by rememberSaveable { mutableStateOf<String?>(null) }
@@ -340,13 +342,15 @@ fun LibraryScreen(
                                 }
                             },
                         )
-                        LibrarySourceSwitch(
-                            selectedMode = sourceMode,
-                            onModeSelected = { mode ->
-                                sourceModeName = mode.name
-                            },
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                        )
+                        if (cloudSettings.featureAvailable) {
+                            LibrarySourceSwitch(
+                                selectedMode = sourceMode,
+                                onModeSelected = { mode ->
+                                    sourceModeName = mode.name
+                                },
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                            )
+                        }
                         Spacer(modifier = Modifier.height(6.dp))
                     }
                 }

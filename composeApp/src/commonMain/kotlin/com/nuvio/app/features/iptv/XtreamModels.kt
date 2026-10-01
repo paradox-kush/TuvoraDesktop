@@ -229,8 +229,9 @@ data class XtreamAccount(
     val guideEpgCorrectionMinutes: Int = 0,
     /**
      * Step 0 — the playlist's alternate server addresses, in failover order (max 5). Client-owned and
-     * synced (`iptv_playlists.backup_urls`); this build only round-trips it (no UI yet), so a push
-     * never clears what another client or the web wrote.
+     * synced (`iptv_playlists.backup_urls`). Step 0.3: edited on the Add/Edit form (validated by
+     * [BackupServerValidation]) and walked by [PlaylistServerFailover]; which one is ACTIVE is
+     * device-local and never synced.
      */
     val backupUrls: List<String> = emptyList(),
 )

@@ -1,7 +1,6 @@
 package com.nuvio.app.features.iptv
 
 import co.touchlab.kermit.Logger
-import com.nuvio.app.features.addons.httpStreamLines
 import com.nuvio.app.features.iptv.epg.XmltvClient
 import com.nuvio.app.features.iptv.content.IngestMeta
 import com.nuvio.app.features.iptv.content.IptvCategoryRow
@@ -32,6 +31,7 @@ object M3UClient : IptvClient {
     private val ingesting = mutableSetOf<String>()
 
     private const val CHUNK = 5_000
+    private const val M3U_PROBE_BYTES = 1024
     /** How long a stored catalog is considered fresh before a browse re-ingests it. */
     private const val REFRESH_TTL_MS = 12L * 60 * 60 * 1000
 
@@ -104,8 +104,30 @@ object M3UClient : IptvClient {
             streamFileLines(path, onLine)
         } else {
             // dnsProvider (P3) routes the M3U fetch through the playlist's DoH resolver on Android.
-            httpStreamLines(url, acc.userAgent(), acc.dnsProvider, onLine = onLine)
+            // Step 0.3: the download fails over to the playlist's backup URLs — but only until the
+            // first line reached the parser: rows already chunk-inserted can't be taken back, so a
+            // body that dies part-way surfaces as the failure it is instead of splicing two hosts.
+            var delivered = false
+            PlaylistServerFailover.run(acc, canRetry = { !delivered }, probe = ::failoverProbe) { a ->
+                IptvTransport.current.streamLines(a.baseUrl, acc.userAgent(), acc.dnsProvider) { line ->
+                    delivered = true
+                    onLine(line)
+                }
+            }
         }
+    }
+
+    /**
+     * The failover race's validation probe (Step 0.3b): `GET` with `Range: bytes=0-1023`, at most ~1 KB
+     * read and the call closed even if the server ignored Range and is streaming the whole playlist.
+     * VALID = the first non-BOM/whitespace bytes are `#EXTM3U`; anything else (HTML from a parked domain,
+     * a JSON error, nothing) is [FailoverInvalidResponseException] and fails over.
+     */
+    internal suspend fun failoverProbe(a: XtreamAccount) {
+        val prefix = IptvTransport.current.readPrefix(
+            a.baseUrl, a.userAgent(), a.dnsProvider, mapOf("Range" to "bytes=0-${M3U_PROBE_BYTES - 1}"), M3U_PROBE_BYTES,
+        )
+        FailoverProbePolicy.toFailure(FailoverProbePolicy.m3uPrefix(prefix), "M3U probe")?.let { throw it }
     }
 
     /**

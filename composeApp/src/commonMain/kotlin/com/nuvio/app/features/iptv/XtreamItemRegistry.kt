@@ -90,7 +90,20 @@ object XtreamItemRegistry {
 
     fun registerSeries(accountId: String, series: XtreamSeriesItem) = register(resolvedSeries(accountId, series))
 
-    fun get(contentId: String): XtreamResolvedItem? = synchronized(itemsLock) { items[contentId] }
+    fun get(contentId: String): XtreamResolvedItem? =
+        synchronized(itemsLock) { items[contentId] }?.let(::onActiveServer)
+
+    /**
+     * Step 0.3: a registered item keeps the stream URL of the server that served its catalog at the
+     * time; playback must use the playlist's ACTIVE server now, so an Xtream URL is moved there on the
+     * way out (no-op for playlists without backups, M3U and Stalker).
+     */
+    private fun onActiveServer(item: XtreamResolvedItem): XtreamResolvedItem {
+        val url = item.streamUrl ?: return item
+        val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == item.accountId } ?: return item
+        val rebased = PlaylistServerFailover.rebaseStreamUrl(account, url)
+        return if (rebased == url) item else item.copy(streamUrl = rebased)
+    }
 
     /**
      * [get] with a cold-start fallback (item 5): a map miss rebuilds the item from the LOCAL
