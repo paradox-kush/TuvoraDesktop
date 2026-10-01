@@ -272,7 +272,10 @@ object ProviderCredentialSync {
             if (baseline == snapshot) return@withLock
 
             try {
-                pushSnapshot(snapshot)
+                // Only what changed: a full snapshot carries this device's stale blank placeholders and
+                // would overwrite keys set on another device (B82).
+                val changed = snapshot.changedSince(baseline)
+                if (changed.values.isNotEmpty()) pushSnapshot(changed)
                 synchronized(stateLock) {
                     baselineSnapshots[credentialScope] = snapshot
                 }
