@@ -26,7 +26,10 @@ import com.nuvio.app.features.watchprogress.CurrentDateProvider
 import kotlinx.coroutines.CancellationException
 import com.nuvio.app.core.contracts.IptvSearchAccess
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -36,6 +39,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlin.concurrent.Volatile
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.getString
 
@@ -70,7 +74,25 @@ object SearchRepository {
 
     private var activeJob: Job? = null
     private var activeDiscoverJob: Job? = null
-    private var lastRequestKey: String? = null
+    private var lastRequestKey: IptvSearchRefreshPolicy.RequestKey? = null
+
+    // UX15: the IPTV lane runs beside the add-on run, so a settings change can replace just it.
+    private class IptvLane(val rows: Deferred<List<HomeCatalogSection>>)
+    private class AddonRunResult(
+        val sections: List<HomeCatalogSection>,
+        val firstFailure: String?,
+        val allAddonsFailed: Boolean,
+        val hasPendingAddonManifests: Boolean,
+    )
+    // Written on the caller's (main) thread, read by the search coroutines on Dispatchers.Default.
+    @Volatile private var iptvLane: IptvLane? = null
+    private var iptvRefreshJob: Job? = null
+    /** The finished add-on half of the shown search, recomposed with fresh IPTV rows on a refresh. */
+    @Volatile private var completedAddonRun: AddonRunResult? = null
+    @Volatile private var searchGeneration = 0L
+    /** The last search requested, so a source-set change can re-ask it ([followIptvSourceChanges]). */
+    private var lastSearchQuery: String? = null
+    private var lastSearchAddons: List<ManagedAddon> = emptyList()
     private var discoverSources: List<DiscoverCatalogOption> = emptyList()
     private var lastDiscoverRequestKey: DiscoverRequestKey? = null
 
@@ -88,6 +110,8 @@ object SearchRepository {
         val iptvCatalog = IptvCatalogAccess.catalogOrNull
         iptvCatalog?.ensureLoaded()
         val xtreamEnabled = iptvCatalog?.hasEnabledAccounts() == true
+        lastSearchQuery = normalizedQuery
+        lastSearchAddons = addons
         // Upstream: addon manifests still loading => loading state, not "no addons". No early return
         // here — Xtream can carry search on its own (the fork's IPTV lane), handled below.
         val enabledAddons = addons.enabledAddons()
@@ -103,6 +127,8 @@ object SearchRepository {
         // Xtream can carry search on its own (the dev build often has no addons installed).
         if (requests.isEmpty() && !xtreamEnabled) {
             activeJob?.cancel()
+            cancelIptvLane()
+            completedAddonRun = null
             lastRequestKey = null
             _uiState.value = SearchUiState(
                 isLoading = hasPendingAddonManifests,
@@ -117,7 +143,7 @@ object SearchRepository {
             return
         }
 
-        val requestKey = buildString {
+        val searchKey = buildString {
             append(normalizedQuery.lowercase())
             append('|')
             append(HomeCatalogSettingsRepository.snapshot().hideUnreleasedContent)
@@ -132,20 +158,33 @@ object SearchRepository {
                 },
             )
         }
-        if (canReuseRequestState(forceRefresh, requestKey, lastRequestKey)) return
+        // UX15: what IPTV can return is part of the request — a changed content type, category
+        // selection or hidden item must not reuse the old IPTV rows.
+        val iptvSignature = if (xtreamEnabled) {
+            runCatching { IptvSearchAccess.providerOrNull?.sourceSignature() }.getOrNull()
+        } else {
+            null
+        }
+        val requestKey = IptvSearchRefreshPolicy.RequestKey(searchKey, iptvSignature)
+        when (IptvSearchRefreshPolicy.decide(requestKey, lastRequestKey, forceRefresh)) {
+            IptvSearchRefreshPolicy.Action.REUSE -> return
+            IptvSearchRefreshPolicy.Action.REFRESH_IPTV_ROWS -> {
+                lastRequestKey = requestKey
+                refreshIptvRows(normalizedQuery)
+                return
+            }
+            IptvSearchRefreshPolicy.Action.RUN_SEARCH -> Unit
+        }
         lastRequestKey = requestKey
 
         activeJob?.cancel()
+        cancelIptvLane()
+        completedAddonRun = null
+        val generation = ++searchGeneration
         _uiState.value = SearchUiState(isLoading = true)
+        if (xtreamEnabled) startIptvLane(normalizedQuery)
 
         activeJob = scope.launch {
-            val xtreamDeferred = async {
-                if (xtreamEnabled) {
-                    runCatching { IptvSearchAccess.provider.search(normalizedQuery) }.getOrDefault(emptyList())
-                } else {
-                    emptyList()
-                }
-            }
             val resultChannel = Channel<IndexedSearchResult>(Channel.UNLIMITED)
             val jobs = requests.mapIndexed { index, request ->
                 launch {
@@ -194,36 +233,128 @@ object SearchRepository {
             }
 
             val completedResults = results.filterNotNull()
-            val addonSections = results.orderedSections()
-            val xtreamSections = xtreamDeferred.await()
-            val sections = addonSections + xtreamSections
-            val firstFailure = completedResults.firstNotNullOfOrNull { it.error?.message }
-            val allAddonsFailed = completedResults.isNotEmpty() && completedResults.all { it.error != null }
-
-            _uiState.value = SearchUiState(
-                isLoading = sections.isEmpty() && hasPendingAddonManifests,
-                sections = sections,
-                emptyStateReason = when {
-                    sections.isNotEmpty() -> null
-                    hasPendingAddonManifests -> null
-                    allAddonsFailed -> SearchEmptyStateReason.RequestFailed
-                    else -> SearchEmptyStateReason.NoResults
-                },
-                errorMessage = if (allAddonsFailed && xtreamSections.isEmpty()) firstFailure else null,
+            val addonRun = AddonRunResult(
+                sections = results.orderedSections(),
+                firstFailure = completedResults.firstNotNullOfOrNull { it.error?.message },
+                allAddonsFailed = completedResults.isNotEmpty() && completedResults.all { it.error != null },
+                hasPendingAddonManifests = hasPendingAddonManifests,
             )
+            val xtreamSections = awaitCurrentIptvRows()
+            if (generation != searchGeneration) return@launch
+            completedAddonRun = addonRun
+            _uiState.value = settledState(addonRun, xtreamSections)
+        }
+    }
+
+    private fun settledState(addonRun: AddonRunResult, xtreamSections: List<HomeCatalogSection>): SearchUiState {
+        val sections = addonRun.sections + xtreamSections
+        return SearchUiState(
+            isLoading = sections.isEmpty() && addonRun.hasPendingAddonManifests,
+            sections = sections,
+            emptyStateReason = when {
+                sections.isNotEmpty() -> null
+                addonRun.hasPendingAddonManifests -> null
+                addonRun.allAddonsFailed -> SearchEmptyStateReason.RequestFailed
+                else -> SearchEmptyStateReason.NoResults
+            },
+            errorMessage = if (addonRun.allAddonsFailed && xtreamSections.isEmpty()) addonRun.firstFailure else null,
+        )
+    }
+
+    /** Starts the IPTV half of a search; a newer lane replaces (and cancels) this one. */
+    private fun startIptvLane(query: String): IptvLane {
+        iptvLane?.rows?.cancel()
+        val lane = IptvLane(
+            scope.async {
+                try {
+                    IptvSearchAccess.providerOrNull?.search(query).orEmpty()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    emptyList()
+                }
+            },
+        )
+        iptvLane = lane
+        return lane
+    }
+
+    private fun cancelIptvLane() {
+        iptvRefreshJob?.cancel()
+        iptvRefreshJob = null
+        iptvLane?.rows?.cancel()
+        iptvLane = null
+    }
+
+    /** The current lane's rows — following a lane that a settings change swapped in meanwhile. */
+    private suspend fun awaitCurrentIptvRows(): List<HomeCatalogSection> {
+        while (true) {
+            val lane = iptvLane ?: return emptyList()
+            val rows = try {
+                lane.rows.await()
+            } catch (e: CancellationException) {
+                currentCoroutineContext().ensureActive()
+                if (iptvLane === lane) return emptyList()
+                continue
+            }
+            if (iptvLane === lane) return rows
+        }
+    }
+
+    /**
+     * UX15: only what IPTV can return changed — fetch the shown query's IPTV rows again and swap them
+     * in beside the add-on rows already shown (no add-on refetch, no loading flash). A run still in
+     * flight picks the new lane up itself; this also publishes once that run has settled.
+     */
+    private fun refreshIptvRows(query: String) {
+        val lane = startIptvLane(query)
+        val run = activeJob
+        val generation = searchGeneration
+        iptvRefreshJob?.cancel()
+        iptvRefreshJob = scope.launch {
+            run?.join()
+            val rows = try {
+                lane.rows.await()
+            } catch (e: CancellationException) {
+                currentCoroutineContext().ensureActive()
+                return@launch
+            }
+            if (iptvLane !== lane || generation != searchGeneration) return@launch
+            val addonRun = completedAddonRun ?: return@launch
+            _uiState.value = settledState(addonRun, rows)
+        }
+    }
+
+    /**
+     * UX15: while the Search screen is shown, re-asks the shown search whenever IPTV's source set
+     * settles on a new value (a burst of toggles is one refresh). The request key decides what that
+     * costs: nothing when the set is unchanged, the IPTV rows alone when only it changed.
+     */
+    suspend fun followIptvSourceChanges() {
+        val provider = IptvSearchAccess.providerOrNull ?: return
+        IptvSearchRefreshPolicy.refreshTicks(provider.sourceSignatureChanges()).collect {
+            val query = lastSearchQuery ?: return@collect
+            search(query = query, addons = lastSearchAddons)
         }
     }
 
     fun clear() {
         activeJob?.cancel()
+        cancelIptvLane()
+        completedAddonRun = null
         lastRequestKey = null
+        lastSearchQuery = null
         _uiState.value = SearchUiState()
     }
 
     fun reset() {
         activeJob?.cancel()
         activeDiscoverJob?.cancel()
+        cancelIptvLane()
+        completedAddonRun = null
         lastRequestKey = null
+        lastSearchQuery = null
+        lastSearchAddons = emptyList()
         discoverSources = emptyList()
         lastDiscoverRequestKey = null
         _uiState.value = SearchUiState()

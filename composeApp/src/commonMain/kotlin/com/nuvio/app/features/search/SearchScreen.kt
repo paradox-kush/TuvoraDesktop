@@ -179,6 +179,13 @@ fun SearchScreen(
         }
     }
 
+    // UX15: a playlist's content settings or hidden items changed while a search is shown (or while
+    // the viewer was away in Settings) — refresh its IPTV rows. Bound to the screen being shown.
+    ScreenActivityEffect { screenActive ->
+        if (!screenActive) return@ScreenActivityEffect
+        SearchRepository.followIptvSourceChanges()
+    }
+
     ScreenActivityEffect(listState, query, discoverUiState.canLoadMore, discoverUiState.isLoading) { screenActive ->
         if (!screenActive || query.isNotBlank()) return@ScreenActivityEffect
 
