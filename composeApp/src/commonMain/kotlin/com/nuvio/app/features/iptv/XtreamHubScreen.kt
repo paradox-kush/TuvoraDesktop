@@ -41,6 +41,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,8 +76,11 @@ import com.nuvio.app.features.home.components.rememberHomeSkeletonBrush
 import com.nuvio.app.features.library.LibraryRepository
 import com.nuvio.app.features.library.toMetaPreview
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
+import org.jetbrains.compose.resources.getString
 import kotlinx.coroutines.flow.emptyFlow
 import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.iptv_group_hidden_toast
 import nuvio.composeapp.generated.resources.action_retry
 import nuvio.composeapp.generated.resources.compose_iptv_hub_add_provider
 import nuvio.composeapp.generated.resources.compose_iptv_hub_empty_message
@@ -203,6 +207,7 @@ fun XtreamHubScreen(
     }
     val displayedCategories = liveSpecialCategories + renderableCategories
     var openCategoryId by remember(state.selectedAccountId, state.section) { mutableStateOf<String?>(null) }
+    val toastScope = rememberCoroutineScope()
     val openCategory = openCategoryId?.let { id -> displayedCategories.firstOrNull { it.id == id } }
 
     val tokens = MaterialTheme.nuvio
@@ -232,12 +237,14 @@ fun XtreamHubScreen(
                     ) {
                         {
                             XtreamHubRepository.hideCategory(openCategory.id)?.let { name ->
-                                NuvioToastController.show(
-                                    "“$name” hidden. Unhide it in Settings → Integrations → IPTV → ${account.name}.",
-                                    durationMillis = 4000L,
-                                    // UX35: at the top it covered the Live TV / Movies / Series tabs.
-                                    placement = NuvioToastPlacement.Bottom,
-                                )
+                                toastScope.launch {
+                                    NuvioToastController.show(
+                                        getString(Res.string.iptv_group_hidden_toast, name, account.name),
+                                        durationMillis = 4000L,
+                                        // UX35: at the top it covered the Live TV / Movies / Series tabs.
+                                        placement = NuvioToastPlacement.Bottom,
+                                    )
+                                }
                             }
                             openCategoryId = null
                         }

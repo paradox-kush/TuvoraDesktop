@@ -2562,4 +2562,7 @@
     <string name="iptv_channel_hidden_toast_generic">“%1$s” hidden. Unhide it in Settings → Integrations → IPTV playlists.</string>
     <string name="iptv_toast_undo">Undo</string>
     <!-- /wave2 k6 -->
+    <!-- wave2 k9 -->
+    <string name="iptv_group_hidden_toast">“%1$s” hidden. Unhide it in Settings → Integrations → IPTV playlists → %2$s.</string>
+    <!-- /wave2 k9 -->
 </resources>
