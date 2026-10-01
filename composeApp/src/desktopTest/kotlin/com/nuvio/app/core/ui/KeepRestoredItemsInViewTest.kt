@@ -1,6 +1,5 @@
 package com.nuvio.app.core.ui
 
-import android.app.Application
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
@@ -14,9 +13,6 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
 import org.junit.Rule
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
 import kotlin.test.Test
 
 /**
@@ -26,8 +22,6 @@ import kotlin.test.Test
  * so the restored card was inserted one slot off-screen to the left. Red without
  * [KeepRestoredItemsInView] (the restored card is not displayed).
  */
-@RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = Application::class)
 class KeepRestoredItemsInViewTest {
     @get:Rule
     val compose = createComposeRule()
