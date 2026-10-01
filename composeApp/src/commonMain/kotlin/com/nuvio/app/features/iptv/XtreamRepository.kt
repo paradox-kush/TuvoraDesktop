@@ -61,6 +61,9 @@ object XtreamRepository : IptvCatalog {
     // --- IptvCatalog read port (S3a) ---
     override fun hasEnabledAccounts(): Boolean = _uiState.value.accounts.any { it.enabled }
     override val enabledAccountCount: Int get() = _uiState.value.accounts.count { it.enabled }
+    override val hasAnyPlaylist: StateFlow<Boolean> = uiState
+        .map { it.accounts.isNotEmpty() }
+        .stateIn(scope, SharingStarted.Eagerly, false)
     override val servedStreamTypes: StateFlow<Set<String>> = uiState
         .map { servedStreamTypesOf(it.accounts) }
         .stateIn(scope, SharingStarted.Eagerly, emptySet())
