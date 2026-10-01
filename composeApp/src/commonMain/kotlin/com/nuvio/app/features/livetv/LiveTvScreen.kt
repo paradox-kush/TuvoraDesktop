@@ -120,6 +120,8 @@ fun LiveTvScreen(
     initialLogo: String?,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** UX36: the long-press menu's Favourite — the same library toggle the IPTV hub uses. */
+    onFavoriteChannel: (String) -> Unit = {},
     /** Set when the launch replays one programme (a Sports Centre replay): the screen begins the
      *  catch-up walk from these bounds instead of tuning the channel live. */
     initialReplay: LiveReplayLaunch? = null,
@@ -201,6 +203,8 @@ fun LiveTvScreen(
     val dialectWalk = remember { CatchUpDialectWalk(LiveTvData.winnerMemory()) }
     var catchUp by remember { mutableStateOf<CatchUpSession?>(null) }
     var sheetTarget by remember { mutableStateOf<ProgrammeSheetTarget?>(null) }
+    // UX36: the channel a long-press menu (Favourite / Hide) is open for.
+    var channelMenu by remember { mutableStateOf<LiveGuideChannel?>(null) }
     var catchUpNotice by remember { mutableStateOf<CatchUpNotice?>(null) }
     val isCatchUp = catchUp != null
 
@@ -755,15 +759,24 @@ fun LiveTvScreen(
                     programmesOf = { programmes[it] },
                     onNeedProgrammes = onNeedProgrammes,
                     onSelectChannel = ::switchTo,
-                    onLongPressChannel = { ch ->
-                        val acc = com.nuvio.app.features.iptv.XtreamItemRegistry.parseId(ch.contentId)?.accountId
-                        com.nuvio.app.features.iptv.overlay.IptvOverlayRepository.toggleChannelHidden(ch.entityId, acc)
-                    },
+                    // UX36: long-press opens Favourite / Hide (it used to hide instantly, silently).
+                    onLongPressChannel = { ch -> channelMenu = ch },
                     onProgrammeAction = ::onProgrammeAction,
                     onTravel = { guideAnchorMs = it },
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
             }
+        }
+
+        channelMenu?.let { ch ->
+            com.nuvio.app.features.iptv.IptvLiveChannelMenu(
+                channel = com.nuvio.app.core.ui.LiveRecentActionTarget(contentId = ch.contentId, name = ch.name, logo = ch.logo),
+                hideTarget = com.nuvio.app.features.iptv.overlay.IptvChannelQuickActionsPolicy.hideTarget(
+                    ch.entityId, com.nuvio.app.features.iptv.XtreamItemRegistry.parseId(ch.contentId)?.accountId,
+                ),
+                onToggleFavorite = { onFavoriteChannel(ch.contentId) },
+                onDismiss = { channelMenu = null },
+            )
         }
 
         sheetTarget?.let { target ->

@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material3.TextButton
+import com.nuvio.app.core.ui.LiveRecentActionTarget
 import com.nuvio.app.core.ui.NuvioToastController
+import com.nuvio.app.core.ui.NuvioToastPlacement
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -149,8 +151,10 @@ fun XtreamHubScreen(
     } else {
         onPosterClick
     }
-    val onTileLongClick: ((MetaPreview) -> Unit)? = if (isLive) {
-        { meta -> onFavoriteLiveChannel(meta.id) }
+    // UX36: long-press on a channel opens the same Favourite / Hide menu as the Live TV guide.
+    var channelMenu by remember { mutableStateOf<ChannelMenuTarget?>(null) }
+    fun longClickFor(categoryId: String): ((MetaPreview) -> Unit)? = if (isLive) {
+        { meta -> channelMenu = ChannelMenuTarget(meta, inPersonalRail = categoryId.startsWith(SPECIAL_CATEGORY_PREFIX)) }
     } else {
         null
     }
@@ -219,7 +223,7 @@ fun XtreamHubScreen(
                     sectionPadding = sectionPadding,
                     onBack = { openCategoryId = null },
                     onPosterClick = onTileClick,
-                    onPosterLongClick = onTileLongClick,
+                    onPosterLongClick = longClickFor(openCategory.id),
                     loadFromRepository = !openCategory.id.startsWith(SPECIAL_CATEGORY_PREFIX),
                     onHideGroup = if (account != null && !openCategory.id.startsWith(SPECIAL_CATEGORY_PREFIX) &&
                         !XtreamHubRepository.isCustomGroupRow(openCategory.id)
@@ -229,6 +233,8 @@ fun XtreamHubScreen(
                                 NuvioToastController.show(
                                     "“$name” hidden. Unhide it in Settings → Integrations → IPTV → ${account.name}.",
                                     durationMillis = 4000L,
+                                    // UX35: at the top it covered the Live TV / Movies / Series tabs.
+                                    placement = NuvioToastPlacement.Bottom,
                                 )
                             }
                             openCategoryId = null
@@ -336,7 +342,7 @@ fun XtreamHubScreen(
                                 epg = if (isLive) epgMap else emptyMap(),
                                 sectionPadding = sectionPadding,
                                 onPosterClick = onTileClick,
-                                onPosterLongClick = onTileLongClick,
+                                onPosterLongClick = longClickFor(category.id),
                                 onViewAll = { openCategoryId = category.id },
                             )
                         }
@@ -344,8 +350,24 @@ fun XtreamHubScreen(
                 }
             }
         }
+
+        channelMenu?.let { target ->
+            val meta = target.meta
+            IptvLiveChannelMenu(
+                channel = LiveRecentActionTarget(contentId = meta.id, name = meta.name, logo = meta.logo ?: meta.poster),
+                hideTarget = com.nuvio.app.features.iptv.overlay.IptvChannelQuickActionsPolicy.hubHideTarget(
+                    XtreamHubRepository.hideTargetFor(meta.id),
+                    inPersonalRail = target.inPersonalRail,
+                ),
+                onToggleFavorite = { onFavoriteLiveChannel(meta.id) },
+                onDismiss = { channelMenu = null },
+            )
+        }
     }
 }
+
+/** The live card a long-press menu is open for, and whether it sits on a Favorites/Recent rail. */
+private data class ChannelMenuTarget(val meta: MetaPreview, val inPersonalRail: Boolean)
 
 // --- header chrome ---------------------------------------------------------------
 

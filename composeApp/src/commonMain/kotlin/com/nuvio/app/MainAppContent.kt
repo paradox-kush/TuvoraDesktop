@@ -1549,26 +1549,7 @@ internal fun MainAppContent(
                                         ),
                                     )
                                 },
-                                onIptvFavoriteChannel = { contentId ->
-                                    com.nuvio.app.core.contracts.LivePlaybackAccess.current().channelInfoFor(contentId)?.let { item ->
-                                        // Live favorites belong to Tuvora's own synced library even
-                                        // when Movies/Series are sourced from Trakt or Simkl.
-                                        LibraryRepository.toggleLocalSaved(
-                                            LibraryItem(
-                                                id = contentId,
-                                                type = "tv",
-                                                name = item.name,
-                                                poster = item.logo ?: item.poster,
-                                                logo = item.logo,
-                                                posterShape = PosterShape.Landscape,
-                                                savedAtEpochMs = 0L, // set by LibraryRepository.save()
-                                            )
-                                        )
-                                        NuvioToastController.show(
-                                            if (LibraryRepository.isLocalSaved(contentId, "tv")) "Added to Library" else "Removed from Library"
-                                        )
-                                    }
-                                },
+                                onIptvFavoriteChannel = ::toggleLiveChannelFavorite,
                                 onLibraryPosterClick = { item ->
                                     openPosterOrPlayLive(item.id, item.type, item.name, item.logo ?: item.poster)
                                 },
@@ -1830,6 +1811,8 @@ internal fun MainAppContent(
                         initialLogo = launch.logo,
                         initialReplay = launch.liveReplay,
                         onBack = onBack,
+                        // UX36: the guide's long-press menu favourites through the same path as the hub.
+                        onFavoriteChannel = ::toggleLiveChannelFavorite,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -2345,4 +2328,26 @@ internal fun MainAppContent(
 
             }
         }
+}
+
+/** Live favourites (the IPTV hub's long-press and the Live TV guide's menu) toggle one synced library entry. */
+private fun toggleLiveChannelFavorite(contentId: String) {
+    com.nuvio.app.core.contracts.LivePlaybackAccess.current().channelInfoFor(contentId)?.let { item ->
+        // Live favorites belong to Tuvora's own synced library even
+        // when Movies/Series are sourced from Trakt or Simkl.
+        LibraryRepository.toggleLocalSaved(
+            LibraryItem(
+                id = contentId,
+                type = "tv",
+                name = item.name,
+                poster = item.logo ?: item.poster,
+                logo = item.logo,
+                posterShape = PosterShape.Landscape,
+                savedAtEpochMs = 0L, // set by LibraryRepository.save()
+            )
+        )
+        NuvioToastController.show(
+            if (LibraryRepository.isLocalSaved(contentId, "tv")) "Added to Library" else "Removed from Library"
+        )
+    }
 }
