@@ -24,13 +24,16 @@ internal interface IptvSettingsSection {
     /**
      * Render [page] into the settings list if it is one of the IPTV pages. Returns true when it
      * handled [page]; false to let the caller fall through. [state] is the handle from [rememberState];
-     * [isTablet] selects the phone vs tablet row styling; [onPageChange] performs settings navigation.
+     * [isTablet] selects the phone vs tablet row styling; [onPageChange] opens a page (forward);
+     * [onNavigateBack] leaves the current page for its parent — a pop on a real nav stack (B103: a
+     * finished form must go back, never push its parent on top of itself).
      */
     fun LazyListScope.renderPage(
         page: SettingsPage,
         isTablet: Boolean,
         state: IptvSettingsState,
         onPageChange: (SettingsPage) -> Unit,
+        onNavigateBack: () -> Unit,
     ): Boolean
 
     /** Header-title override for the reused Add/Edit playlist page, or null to use the static title res. */
