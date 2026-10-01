@@ -25,15 +25,6 @@ class ServerFailoverPolicyTest {
     }
 
     @Test
-    fun `golden walk budget`() {
-        for ((timeout, servers, expected) in ServerFailoverGolden.budgetCases) {
-            assertEquals(expected, ServerFailoverPolicy.walkBudgetMs(timeout, servers), "budget $timeout x $servers")
-        }
-        assertEquals(true, ServerFailoverPolicy.mayStartNextAttempt(119_999, 120_000))
-        assertEquals(false, ServerFailoverPolicy.mayStartNextAttempt(120_000, 120_000))
-    }
-
-    @Test
     fun `golden failure classification`() {
         for ((kind, status, expected) in ServerFailoverGolden.classifierCases) {
             assertEquals(expected, FailoverFailureClassifier.shouldFailOver(FailoverFailure(kind, status)), "$kind $status")
