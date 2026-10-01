@@ -165,11 +165,22 @@ internal interface PlaylistSyncTransport {
     ): PlaylistPushResponse
 }
 
-internal data class PlaylistPullResponse(val revision: Long, val accounts: List<XtreamAccount>, val generation: Long = 0)
+internal data class PlaylistPullResponse(
+    val revision: Long,
+    val accounts: List<XtreamAccount>,
+    val generation: Long = 0,
+    /** Step 0: ids of [accounts] that are the server's stored `playlist_key` (not a local derivation). */
+    val keyedIds: Set<String> = emptySet(),
+)
 
 internal sealed interface PlaylistPushResponse {
     data class Ok(val revision: Long, val deduped: Boolean = false) : PlaylistPushResponse
-    data class Conflict(val currentRevision: Long, val currentRows: List<XtreamAccount>) : PlaylistPushResponse
+    data class Conflict(
+        val currentRevision: Long,
+        val currentRows: List<XtreamAccount>,
+        /** Step 0: ids of [currentRows] that are the server's stored `playlist_key`. */
+        val currentKeyedIds: Set<String> = emptySet(),
+    ) : PlaylistPushResponse
     /** Rejected by the server for a reason that is NOT a revision conflict (e.g. empty-without-delete-all,
      *  mutation-id reuse) — surfaced, never retried blindly, never downgraded to v1. */
     data class Rejected(val reason: String) : PlaylistPushResponse
@@ -205,6 +216,14 @@ internal class PlaylistV2SyncEngine(
     private val maxConflictRetries: Int = 5,
     /** The value two rows must share to count as "in sync": everything the server stores for a row. */
     private val syncedKey: (XtreamAccount) -> Any = ::playlistSyncKey,
+    /**
+     * Step 0 — reconciles this device's playlist ids with a pulled set BEFORE anything compares or
+     * reconciles against it ([PlaylistKeyAdoption]): re-keys local ids onto server keys (moving their
+     * prefix-keyed data, once) and returns the pulled rows as they should be applied. Runs before the
+     * sync state is loaded, so pending ops it rewrites are the ones this sync replays.
+     */
+    private val adoptKeys: (profileId: Int, pulled: List<XtreamAccount>, keyedIds: Set<String>) -> PlaylistKeyAdoption.Result =
+        { _, pulled, _ -> PlaylistKeyAdoption.Result(pulled, emptyList()) },
 ) {
     /**
      * One full sync for [profileId]: pull authoritative rows+revision, reconcile pending intent onto
@@ -213,8 +232,9 @@ internal class PlaylistV2SyncEngine(
      */
     suspend fun sync(profileId: Int): PlaylistSyncOutcome {
         // 1. Pull authoritatively. A failure is Indeterminate — abort, wipe nothing.
-        val pull = runCatching { transport.pull(profileId) }.getOrNull() ?: return PlaylistSyncOutcome.PULL_FAILED
+        val rawPull = runCatching { transport.pull(profileId) }.getOrNull() ?: return PlaylistSyncOutcome.PULL_FAILED
         if (!stillActive(profileId)) return PlaylistSyncOutcome.PULL_FAILED
+        val pull = rawPull.copy(accounts = adoptKeys(profileId, rawPull.accounts, rawPull.keyedIds).accounts)
 
         var state = loadState(profileId)
         // Generation reset (B24 profile-recreation safety): if the server reports a newer generation
@@ -234,10 +254,10 @@ internal class PlaylistV2SyncEngine(
         // The exact pending entries this sync will push. On commit we remove ONLY these, so an edit
         // recorded DURING the push (a newer pending entry) is preserved, never acknowledged with the
         // request that did not carry it (B24 §3).
-        val ackedPending: List<PendingOpDto> = state.pending
+        var ackedPending: List<PendingOpDto> = state.pending
 
         // 2. Decide the ops to replay and the starting expected revision.
-        val pending: List<PendingPlaylistOp>
+        var pending: List<PendingPlaylistOp>
         var expected: Long?
         when {
             recorded.isNotEmpty() -> {
@@ -313,7 +333,14 @@ internal class PlaylistV2SyncEngine(
                         saveState(profileId, state.copy(revision = resp.currentRevision))
                         return PlaylistSyncOutcome.CONFLICT_EXHAUSTED
                     }
-                    baseRows = resp.currentRows
+                    val adopted = adoptKeys(profileId, resp.currentRows, resp.currentKeyedIds)
+                    baseRows = adopted.accounts
+                    // A re-key here also rewrote the durable pending log; replay (and later ack) the
+                    // same rewritten entries, or an edit recorded under the old id would be dropped.
+                    if (adopted.rekeys.isNotEmpty()) {
+                        pending = PlaylistKeyAdoption.rewriteOps(pending, adopted.rekeys)
+                        ackedPending = PlaylistKeyAdoption.rewritePending(ackedPending, adopted.rekeys)
+                    }
                     expected = resp.currentRevision
                     baselineRevision = resp.currentRevision
                     state = state.copy(revision = expected)
@@ -330,7 +357,7 @@ internal class PlaylistV2SyncEngine(
 }
 
 /** Order-independent comparison of what the server stores for each row (the payload's order is
- *  positional, not content). Ids are not on the wire; the connection fields that derive them are. */
+ *  positional, not content). The id rides the wire as `playlist_key` (Step 0). */
 private fun sameSyncedSet(a: List<XtreamAccount>, b: List<XtreamAccount>, key: (XtreamAccount) -> Any): Boolean =
     a.size == b.size && a.groupingBy(key).eachCount() == b.groupingBy(key).eachCount()
 

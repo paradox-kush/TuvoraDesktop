@@ -220,19 +220,19 @@ class XtreamPlaylistModelTest {
     }
 
     @Test
-    fun reconcileKeepsTheLocalFilePlaylistId() {
+    fun anUnkeyedPullKeepsTheLocalFilePlaylistId() {
         val local = XtreamAccount(
             id = "m3u_file|tv.m3u|1719000000", name = "tv", baseUrl = "",
             username = "", password = "", sourceType = SOURCE_TYPE_M3U_FILE, fileName = "tv.m3u",
         )
-        val pulled = PlaylistRow(sourceType = "m3u_file", fileName = "tv.m3u", dnsProvider = "quad9").toAccount()!!
-        val reconciled = reconcileLocalIds(listOf(pulled), listOf(local)).single()
-        // The local id (and with it the local file copy + saved content keys) survives the pull;
-        // the remote's option edits still apply.
+        val rows = listOf(PlaylistRow(sourceType = "m3u_file", fileName = "tv.m3u", dnsProvider = "quad9"))
+        val reconciled = PlaylistKeyAdoption.resolve(pulledPlaylists(rows), listOf(local)).accounts.single()
+        // A row without a server key (un-migrated server): the local id (and with it the local file
+        // copy + saved content keys) survives the pull; the remote's option edits still apply.
         assertEquals("m3u_file|tv.m3u|1719000000", reconciled.id)
         assertEquals("quad9", reconciled.dnsProvider)
         // No local match -> the deterministic synced id is kept.
-        assertEquals("m3u_file|tv.m3u|synced", reconcileLocalIds(listOf(pulled), emptyList()).single().id)
+        assertEquals("m3u_file|tv.m3u|synced", PlaylistKeyAdoption.resolve(pulledPlaylists(rows), emptyList()).accounts.single().id)
     }
 
     @Test

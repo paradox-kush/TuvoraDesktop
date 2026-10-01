@@ -144,8 +144,8 @@ object XtreamAccountSyncService {
             val rows = rowsJson.mapNotNull { el ->
                 runCatching { pullJson.decodeFromJsonElement(PlaylistRow.serializer(), el) }.getOrNull()
             }
-            val accounts = usableRemoteAccounts(rows)
-            return PlaylistPullResponse(revision, accounts, generation)
+            val pulled = pulledPlaylists(rows)
+            return PlaylistPullResponse(revision, pulled.map { it.account }, generation, pulled.keyedIds())
         }
 
         override suspend fun push(
@@ -175,9 +175,11 @@ object XtreamAccountSyncService {
                 "conflict" -> {
                     val curRows = (result["current_rows"] as? JsonArray ?: JsonArray(emptyList()))
                         .mapNotNull { el -> runCatching { pullJson.decodeFromJsonElement(PlaylistRow.serializer(), el) }.getOrNull() }
+                    val pulled = pulledPlaylists(curRows)
                     PlaylistPushResponse.Conflict(
                         currentRevision = (result["current_revision"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L,
-                        currentRows = usableRemoteAccounts(curRows),
+                        currentRows = pulled.map { it.account },
+                        currentKeyedIds = pulled.keyedIds(),
                     )
                 }
                 else -> PlaylistPushResponse.Rejected(result.toString())
@@ -195,6 +197,8 @@ object XtreamAccountSyncService {
         applyLocal = { p, accounts -> XtreamRepository.applyFromRemote(p, v2ApplyLocal(accounts, XtreamRepository.uiState.value.accounts)) },
         stillActive = { ProfileRepository.activeProfileId == it },
         newMutationId = { newPlaylistMutationId() },
+        // Step 0: adopt server playlist keys (re-keys local ids + their saved data, once).
+        adoptKeys = { p, pulled, keyed -> XtreamRepository.adoptFromPull(p, pulled.map { PulledPlaylist(it, it.id in keyed) }) },
     )
 
     /** Runs one full v2 sync for [profileId], serialized per call. Rejections/conflicts are logged. */
@@ -259,10 +263,12 @@ object XtreamAccountSyncService {
                 }
                 .decodeList<PlaylistRow>()
             if (ProfileRepository.activeProfileId != profileId) return@runCatching
-            val playlists = usableRemoteAccounts(rows)
-            if (playlists.isNotEmpty()) {
+            val pulled = pulledPlaylists(rows)
+            if (pulled.isNotEmpty()) {
+                // Step 0: adopt server playlist keys first (re-keys local ids + their saved data, once).
+                val playlists = XtreamRepository.adoptFromPull(profileId, pulled).accounts
                 val local = XtreamRepository.uiState.value.accounts
-                apply(profileId, preserveDeviceLocalPrefs(reconcileLocalIds(playlists, local), local))
+                apply(profileId, preserveDeviceLocalPrefs(playlists, local))
                 return@runCatching
             }
             // Zero usable rows (empty table, or only a newer client's unknown source types)
@@ -310,6 +316,10 @@ object XtreamAccountSyncService {
 /** `iptv_playlists` row (only the columns this client uses; the rest ignore-unknown away). internal for tests. */
 @Serializable
 internal data class PlaylistRow(
+    /** Step 0: the playlist's permanent id. Absent (null) until the server is migrated. */
+    @SerialName("playlist_key") val playlistKey: String? = null,
+    /** Step 0: alternate server addresses (client-owned; round-tripped, no UI yet). */
+    @SerialName("backup_urls") val backupUrls: List<String>? = null,
     @SerialName("source_type") val sourceType: String = "xtream",
     val name: String? = null,
     val enabled: Boolean = true,
@@ -340,12 +350,27 @@ internal data class PlaylistRow(
 /**
  * Maps a sync row to a local account for every source type this client understands; null for
  * malformed rows and unknown (future) source types — those stay remote-only, and the push scope
- * (p_source_types) guarantees we never delete them. Ids are re-derived locally with the same
- * builders the Add-Playlist form uses, so a pulled playlist gets the exact id a hand-added one
- * would (stable content-DB / registry keys). "url"/"file" are accepted as aliases for the
+ * (p_source_types) guarantees we never delete them. "url"/"file" are accepted as aliases for the
  * canonical m3u_url/m3u_file (NuvioTV's internal spellings, tolerated defensively on the wire).
+ *
+ * Step 0: the id is the row's `playlist_key` when the server has one. Without it (an un-migrated
+ * server) it is derived from the address as before — and [PlaylistKeyAdoption] then keeps the local
+ * id of the same playlist, so a frozen id is never re-derived away.
  */
-internal fun PlaylistRow.toAccount(): XtreamAccount? = when (sourceType) {
+internal fun PlaylistRow.toAccount(): XtreamAccount? {
+    val acc = toDerivedAccount() ?: return null
+    val key = playlistKey?.takeIf { it.isNotBlank() }
+    return acc.copy(id = key ?: acc.id, backupUrls = backupUrls.orEmpty())
+}
+
+/** The pull's view of [rows]: each usable row's account and whether its id is the server's key. */
+internal fun pulledPlaylists(rows: List<PlaylistRow>): List<PulledPlaylist> =
+    rows.mapNotNull { row -> row.toAccount()?.let { PulledPlaylist(it, serverKeyed = !row.playlistKey.isNullOrBlank()) } }
+
+internal fun List<PulledPlaylist>.keyedIds(): Set<String> = filter { it.serverKeyed }.map { it.account.id }.toSet()
+
+/** The pre-Step-0 id derivation from a row's address (the fallback while the server has no key). */
+private fun PlaylistRow.toDerivedAccount(): XtreamAccount? = when (sourceType) {
     "xtream" -> {
         val base = baseUrl
         val user = username
@@ -374,7 +399,7 @@ internal fun PlaylistRow.toAccount(): XtreamAccount? = when (sourceType) {
     SOURCE_TYPE_M3U_FILE, "file" -> {
         // File BYTES are never synced — this lands as a re-import ghost (the form shows "added on
         // another device, choose the file again"). Deterministic id so repeated pulls are stable;
-        // reconcileLocalIds keeps the local id when this device already has the real file copy.
+        // PlaylistKeyAdoption matches it to this device's real file copy by file name.
         val fn = fileName?.takeIf { it.isNotBlank() } ?: name ?: "Playlist"
         XtreamAccount(
             id = "m3u_file|$fn|synced",
@@ -420,20 +445,6 @@ private fun XtreamAccount.withOptions(row: PlaylistRow): XtreamAccount = copy(
     contentTypes = row.contentTypes.toSet(),
     categorySelections = parseCategorySelections(row.categorySelections),
 )
-
-/**
- * Keeps this device's account id when a pulled account is the same playlist under a different id.
- * Only m3u_file needs it: its locally-minted id carries a unique suffix (the local file copy lives
- * at `{id}.m3u`), while a pulled ghost has the deterministic `|synced` id — matching by fileName
- * preserves the local copy + saved content keys. Every other source type derives ids
- * deterministically, so pulled == local already. internal for tests.
- */
-internal fun reconcileLocalIds(pulled: List<XtreamAccount>, local: List<XtreamAccount>): List<XtreamAccount> =
-    pulled.map { acc ->
-        if (acc.sourceType != SOURCE_TYPE_M3U_FILE) return@map acc
-        val match = local.firstOrNull { it.sourceType == SOURCE_TYPE_M3U_FILE && it.fileName == acc.fileName }
-        if (match != null) acc.copy(id = match.id) else acc
-    }
 
 /**
  * The pull's emptiness decision happens AFTER this filter: rows of only foreign source types
@@ -500,6 +511,10 @@ internal fun playlistPushParams(
 internal fun playlistPushPayload(accounts: List<XtreamAccount>): JsonArray = buildJsonArray {
     accounts.forEachIndexed { index, acc ->
         addJsonObject {
+            // Step 0: the permanent id + the client-owned backup list ride every push (an omitted
+            // backup_urls would read as "keep", but sending what we pulled keeps the row exact).
+            put("playlist_key", acc.id)
+            put("backup_urls", JsonArray(acc.backupUrls.map(::JsonPrimitive)))
             put("source_type", acc.sourceType)
             acc.name.takeIf { it.isNotBlank() }?.let { put("name", it) }
             put("enabled", acc.enabled)

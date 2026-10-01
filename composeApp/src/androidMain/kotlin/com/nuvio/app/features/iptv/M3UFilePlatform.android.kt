@@ -110,6 +110,15 @@ actual fun deleteM3UFile(playlistId: String) {
     runCatching { File(M3UFilePicker.playlistsDir(), "${safeName(playlistId)}.m3u").delete() }
 }
 
+actual fun moveM3UFile(oldId: String, newId: String) {
+    val dir = M3UFilePicker.playlistsDir()
+    val from = File(dir, "${safeName(oldId)}.m3u")
+    if (!from.exists()) return
+    val to = File(dir, "${safeName(newId)}.m3u")
+    if (to.exists()) to.delete()
+    check(from.renameTo(to)) { "Could not move the playlist file" }
+}
+
 actual suspend fun streamFileLines(path: String, onLine: (String) -> Unit): Unit = withContext(Dispatchers.IO) {
     val file = File(path)
     if (!file.exists()) error("Playlist file not found: $path")

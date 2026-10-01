@@ -78,6 +78,14 @@ actual fun deleteM3UFile(playlistId: String) {
     runCatching { File(playlistsDir(), "${safeName(playlistId)}.m3u").delete() }
 }
 
+actual fun moveM3UFile(oldId: String, newId: String) {
+    val dir = playlistsDir()
+    val from = File(dir, "${safeName(oldId)}.m3u")
+    if (!from.exists()) return
+    val to = File(dir, "${safeName(newId)}.m3u")
+    Files.move(from.toPath(), to.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+}
+
 actual suspend fun streamFileLines(path: String, onLine: (String) -> Unit): Unit =
     withContext(Dispatchers.IO) {
         val file = File(path)

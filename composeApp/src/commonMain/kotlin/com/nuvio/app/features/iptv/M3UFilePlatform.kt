@@ -40,6 +40,13 @@ expect fun fileExists(path: String): Boolean
 expect fun deleteM3UFile(playlistId: String)
 
 /**
+ * Step 0 — moves the saved local copy from [oldId]'s path to [newId]'s (a playlist re-keyed onto its
+ * server key keeps its bytes: the storage path is derived from the id). No-op when [oldId] has no
+ * copy; an existing copy at [newId] is replaced. Throws if the move fails.
+ */
+expect fun moveM3UFile(oldId: String, newId: String)
+
+/**
  * Streams a local file's lines to [onLine], NEVER materializing the whole file (a playlist can be
  * 190+ MB). Transparently gunzips a gzip-magic-prefixed file. [onLine] runs on a background thread;
  * keep it cheap. Throws if the file is missing/unreadable. Twin of `httpStreamLines`.
