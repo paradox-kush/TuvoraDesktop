@@ -60,6 +60,7 @@ object XtreamSearchIndex {
             // per-type category include list — filtered BEFORE the per-type cap (every row carries
             // its categoryId: live, match-index, Stalker and M3U alike). F01: what the viewer hid (a
             // channel, or a whole group, on any device or the website) is left out too.
+            // UX44: live dividers are dropped inside IptvChannelSearchPolicy.search.
             if (account.searchIncludesType(CONTENT_TYPE_LIVE)) {
                 val matched = IptvChannelSearchPolicy.search(ensureChannels(account), q) { it.name }
                 val visible = IptvHiddenItemsPolicy.visibleHits(
@@ -100,7 +101,11 @@ object XtreamSearchIndex {
                         )
                     }
                 }
-                val shownMovies = withoutHiddenGroups(account, CONTENT_TYPE_MOVIES, overlay.categories, hits) { it.categoryId }
+                // UX44: provider heading rows are not titles — drop them before the per-type cap.
+                val shownMovies = withoutHiddenGroups(
+                    account, CONTENT_TYPE_MOVIES, overlay.categories,
+                    IptvSearchRowFilter.withoutDividers(hits) { it.name },
+                ) { it.categoryId }
                 offeredHits(account, CONTENT_TYPE_MOVIES, shownMovies) { it.categoryId }.forEach { movie ->
                     XtreamItemRegistry.registerMovie(account.id, movie)
                     movies += movie.toMetaPreview(account.id)
@@ -129,7 +134,10 @@ object XtreamSearchIndex {
                         )
                     }
                 }
-                val shownSeries = withoutHiddenGroups(account, CONTENT_TYPE_SERIES, overlay.categories, hits) { it.categoryId }
+                val shownSeries = withoutHiddenGroups(
+                    account, CONTENT_TYPE_SERIES, overlay.categories,
+                    IptvSearchRowFilter.withoutDividers(hits) { it.name },
+                ) { it.categoryId }
                 offeredHits(account, CONTENT_TYPE_SERIES, shownSeries) { it.categoryId }.forEach { seriesItem ->
                     XtreamItemRegistry.registerSeries(account.id, seriesItem)
                     series += seriesItem.toMetaPreview(account.id)

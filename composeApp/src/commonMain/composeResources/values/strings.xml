@@ -2549,4 +2549,6 @@
     <string name="iptv_playlist_error_file_unreadable">Could not read that playlist file</string>
     <string name="iptv_playlist_saved_unverified">Saved, but the provider couldn&apos;t be checked: %1$s</string>
     <!-- /wave1 k1 -->
+    <!-- wave1 k2 -->
+    <string name="details_cast_tmdb_off_hint">Turn on TMDB enrichment to see people</string>
 </resources>
