@@ -1,7 +1,6 @@
 package com.nuvio.app.features.iptv
 
 import co.touchlab.kermit.Logger
-import com.nuvio.app.features.addons.httpStreamLines
 import com.nuvio.app.features.iptv.epg.XmltvClient
 import com.nuvio.app.features.iptv.content.IngestMeta
 import com.nuvio.app.features.iptv.content.IptvCategoryRow
@@ -104,7 +103,16 @@ object M3UClient : IptvClient {
             streamFileLines(path, onLine)
         } else {
             // dnsProvider (P3) routes the M3U fetch through the playlist's DoH resolver on Android.
-            httpStreamLines(url, acc.userAgent(), acc.dnsProvider, onLine = onLine)
+            // Step 0.3: the download fails over to the playlist's backup URLs — but only until the
+            // first line reached the parser: rows already chunk-inserted can't be taken back, so a
+            // body that dies part-way surfaces as the failure it is instead of splicing two hosts.
+            var delivered = false
+            PlaylistServerFailover.run(acc, canRetry = { !delivered }) { a ->
+                IptvTransport.current.streamLines(a.baseUrl, acc.userAgent(), acc.dnsProvider) { line ->
+                    delivered = true
+                    onLine(line)
+                }
+            }
         }
     }
 

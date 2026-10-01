@@ -12,7 +12,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
@@ -144,6 +152,8 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
         var stalkerPass by remember(editing?.id) { mutableStateOf(editing?.stalkerPassword ?: "") }
         var serial by remember(editing?.id) { mutableStateOf(editing?.serialNumber ?: "") }
         var deviceId by remember(editing?.id) { mutableStateOf(editing?.deviceId ?: "") }
+        // Step 0.3: backup server rows as typed (validated on save; hidden for M3U files).
+        var backupRows by remember(editing?.id) { mutableStateOf(editing?.backupUrls ?: emptyList()) }
         // A file playlist synced from another device has a fileName but no local copy here.
         val fileMissingOnThisDevice = editingIsM3uFile && editing != null && !M3UFileStore.hasLocalCopy(editing)
 
@@ -243,11 +253,32 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
             onSelected = { autoRefreshHours = it },
         )
 
+        val resolvedSourceType = when (sourceType) {
+            XtreamSourceType.URL -> SOURCE_TYPE_M3U_URL
+            XtreamSourceType.FILE -> SOURCE_TYPE_M3U_FILE
+            XtreamSourceType.STALKER -> SOURCE_TYPE_STALKER
+            else -> SOURCE_TYPE_XTREAM
+        }
+        val backupCheck = BackupServerValidation.validate(
+            resolvedSourceType,
+            if (sourceType == XtreamSourceType.URL) m3uUrl else server,
+            backupRows,
+        )
+        if (BackupServerValidation.supportsBackups(resolvedSourceType)) {
+            BackupServersSection(
+                isTablet = isTablet,
+                rows = backupRows,
+                problems = backupCheck.problems.associate { it.index to it.problem },
+                placeholder = if (sourceType == XtreamSourceType.URL) "http://other-host/playlist.m3u" else "http://other-host:port",
+                onRowsChange = { backupRows = it },
+            )
+        }
+
         SaveSection(
             isTablet = isTablet,
             state = state,
             isEdit = XtreamAddPage.isEdit,
-            canSave = sourceType.enabled && when (sourceType) {
+            canSave = sourceType.enabled && backupCheck.ok && when (sourceType) {
                 XtreamSourceType.URL -> m3uUrl.isNotBlank()
                 // A file playlist can save when a new file was picked, OR (edit) an on-device copy exists.
                 XtreamSourceType.FILE -> pickedFile != null || (editingIsM3uFile && !fileMissingOnThisDevice)
@@ -256,12 +287,6 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
                 else -> server.isNotBlank() && username.isNotBlank() && password.isNotBlank()
             },
             onSave = {
-                val resolvedSourceType = when (sourceType) {
-                    XtreamSourceType.URL -> SOURCE_TYPE_M3U_URL
-                    XtreamSourceType.FILE -> SOURCE_TYPE_M3U_FILE
-                    XtreamSourceType.STALKER -> SOURCE_TYPE_STALKER
-                    else -> SOURCE_TYPE_XTREAM
-                }
                 val input = XtreamFormInput(
                     serverUrl = server,
                     username = username,
@@ -280,6 +305,7 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
                     stalkerPassword = stalkerPass.trim().ifEmpty { null },
                     serialNumber = serial.trim().ifEmpty { null },
                     deviceId = deviceId.trim().ifEmpty { null },
+                    backupUrls = backupRows,
                 )
                 val editId = XtreamAddPage.editId
                 if (editId != null) {
@@ -681,6 +707,96 @@ private fun AutoRefreshSection(
     }
 }
 
+/**
+ * Step 0.3 — "Backup servers": an ordered list of alternate addresses (priority = order) with add /
+ * remove / move up-down. Row operations are [BackupServerListEdits]; validation is
+ * [BackupServerValidation] (run by the caller — this only renders its verdict per row).
+ */
+@Composable
+private fun BackupServersSection(
+    isTablet: Boolean,
+    rows: List<String>,
+    problems: Map<Int, BackupServerValidation.Problem>,
+    placeholder: String,
+    onRowsChange: (List<String>) -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    SettingsSection(title = "Backup servers", isTablet = isTablet) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = NuvioTokens.Space.s2),
+            verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
+        ) {
+            Text(
+                text = "Used automatically if the main server doesn't respond.",
+                style = MaterialTheme.typography.bodySmall,
+                color = tokens.colors.textMuted,
+            )
+            rows.forEachIndexed { index, value ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    FormOutlinedField(
+                        value = value,
+                        onValueChange = { onRowsChange(BackupServerListEdits.update(rows, index, it)) },
+                        label = "Backup server ${index + 1}",
+                        placeholder = placeholder,
+                        isError = index in problems,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(
+                        onClick = { onRowsChange(BackupServerListEdits.moveUp(rows, index)) },
+                        enabled = index > 0,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.KeyboardArrowUp,
+                            contentDescription = "Move up",
+                            tint = if (index > 0) tokens.colors.textSecondary else tokens.colors.textDisabled,
+                        )
+                    }
+                    IconButton(
+                        onClick = { onRowsChange(BackupServerListEdits.moveDown(rows, index)) },
+                        enabled = index < rows.lastIndex,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.KeyboardArrowDown,
+                            contentDescription = "Move down",
+                            tint = if (index < rows.lastIndex) tokens.colors.textSecondary else tokens.colors.textDisabled,
+                        )
+                    }
+                    IconButton(onClick = { onRowsChange(BackupServerListEdits.remove(rows, index)) }) {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = "Remove backup server",
+                            tint = tokens.colors.textSecondary,
+                        )
+                    }
+                }
+                problems[index]?.let { problem ->
+                    Text(
+                        text = BackupServerListEdits.message(problem),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.colors.danger,
+                    )
+                }
+            }
+            if (BackupServerListEdits.canAdd(rows)) {
+                TextButton(onClick = { onRowsChange(BackupServerListEdits.add(rows)) }) {
+                    Icon(
+                        imageVector = Icons.Rounded.Add,
+                        contentDescription = null,
+                        tint = tokens.colors.accent,
+                    )
+                    Spacer(Modifier.width(NuvioTokens.Space.s8))
+                    Text(text = "Add backup server", color = tokens.colors.accent)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun SaveSection(
     isTablet: Boolean,
@@ -747,13 +863,16 @@ private fun FormOutlinedField(
     onValueChange: (String) -> Unit,
     label: String,
     placeholder: String? = null,
+    isError: Boolean = false,
+    modifier: Modifier = Modifier.fillMaxWidth(),
 ) {
     val tokens = MaterialTheme.nuvio
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier,
         singleLine = true,
+        isError = isError,
         label = { Text(label) },
         placeholder = placeholder?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
         colors = OutlinedTextFieldDefaults.colors(

@@ -71,6 +71,8 @@ class PlaylistKeySyncTest {
             XtreamFormInput(
                 serverUrl = "https://new.example", username = "u2", password = "p2", name = "P",
                 epgUrl = null, dnsProvider = "system", autoRefreshHours = 24,
+                // Step 0.3: the form now shows (prefilled) the backup list and saves what it shows.
+                backupUrls = old.backupUrls,
             ),
         ) { done.complete(it) }
 
@@ -79,7 +81,7 @@ class PlaylistKeySyncTest {
         assertEquals(old.id, saved.id, "the id is frozen across a server + username edit")
         assertEquals("https://new.example", saved.baseUrl, "the new address is saved")
         assertEquals("u2", saved.username)
-        assertEquals(listOf("http://backup.example"), saved.backupUrls, "the edit form does not touch the backup list")
+        assertEquals(listOf("http://backup.example"), saved.backupUrls, "the edit form keeps the backup list it showed")
         val wire = playlistPushPayload(listOf(saved)).single() as kotlinx.serialization.json.JsonObject
         assertEquals(JsonPrimitive(old.id), wire["playlist_key"], "and the server is told the same id")
     }

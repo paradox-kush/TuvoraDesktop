@@ -55,6 +55,8 @@ internal fun LazyListScope.xtreamSettingsContent(
             .collectAsStateWithLifecycle()
         val indexProgress by com.nuvio.app.features.iptv.match.XtreamMatchIndex.buildProgress
             .collectAsStateWithLifecycle()
+        // Step 0.3: playlists currently served by a backup server.
+        val activeServers by XtreamRepository.activeServers.collectAsStateWithLifecycle()
 
         // The guide mirror indexes every region it can find, but a household uses a fraction of
         // it (2,035 of 15,397 channels on a measured panel). Unselected regions are never stored,
@@ -94,7 +96,8 @@ internal fun LazyListScope.xtreamSettingsContent(
                             ?: com.nuvio.app.features.iptv.match.indexingStatusLine(
                                 isIndexing = account.id in indexingAccounts,
                                 progress = indexProgress[account.id],
-                            ) ?: (account.baseUrl + if (account.enabled) "" else "  •  disabled"),
+                            ) ?: ((ServerFailoverPolicy.backupLabel(activeServers[account.id] ?: 0) ?: account.baseUrl) +
+                                if (account.enabled) "" else "  •  disabled"),
                         isTablet = isTablet,
                         onClick = { actionsFor = account },
                     )
@@ -112,7 +115,7 @@ internal fun LazyListScope.xtreamSettingsContent(
                 title = { Text(account.name) },
                 text = {
                     Column {
-                        XtreamAccountDetails(account)
+                        XtreamAccountDetails(account, activeServers[account.id] ?: 0)
                         Spacer(Modifier.height(8.dp))
                         // B57: every action — Remove included — is a labelled row here; Remove is last,
                         // in the danger colour, and asks first. The Cancel slot is only "Close".
@@ -217,7 +220,7 @@ private suspend fun localCatalogCounts(account: XtreamAccount): CatalogCounts = 
 
 /** Live account status pulled from the source's own panel API: state, connections, and expiry. */
 @Composable
-private fun XtreamAccountDetails(account: XtreamAccount) {
+private fun XtreamAccountDetails(account: XtreamAccount, activeServerIndex: Int = 0) {
     var info by remember(account.id) { mutableStateOf<XtreamAccountInfo?>(null) }
     var loading by remember(account.id) { mutableStateOf(true) }
     var counts by remember(account.id) { mutableStateOf(CatalogCounts(null, null, null)) }
@@ -232,6 +235,11 @@ private fun XtreamAccountDetails(account: XtreamAccount) {
     }
     Column {
         Text(account.baseUrl, style = MaterialTheme.typography.bodyMedium)
+        // Step 0.3: say which server is actually answering when it isn't the main one.
+        ServerFailoverPolicy.backupLabel(activeServerIndex)?.let { label ->
+            val host = account.backupUrls.getOrNull(activeServerIndex - 1)
+            AccountDetailLine("Server", if (host != null) "$label ($host)" else label)
+        }
         Spacer(Modifier.height(8.dp))
         if (!counts.isEmpty) {
             counts.live?.let { AccountDetailLine("Channels", it.toString()) }

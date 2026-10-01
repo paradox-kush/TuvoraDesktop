@@ -33,4 +33,8 @@ internal expect object XtreamAccountStorage {
      *  pending "add C" and the mutation id outlive a reset of the accounts store. */
     fun loadPlaylistSyncStateJson(profileId: Int): String?
     fun savePlaylistSyncStateJson(profileId: Int, json: String)
+    /** Step 0.3 per-playlist server failover state (JSON map playlistKey->ServerFailoverState),
+     *  profile-scoped. Device-local: which server answered last is a fact about THIS device's network. */
+    fun loadServerFailoverJson(profileId: Int): String?
+    fun saveServerFailoverJson(profileId: Int, json: String)
 }

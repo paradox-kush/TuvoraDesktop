@@ -61,4 +61,11 @@ internal actual object XtreamAccountStorage {
     actual fun saveHubSelectionJson(profileId: Int, json: String) {
         preferences?.edit()?.putString("xtream_hub_selection_$profileId", json)?.apply()
     }
+
+    actual fun loadServerFailoverJson(profileId: Int): String? =
+        preferences?.getString("xtream_server_failover_$profileId", null)
+
+    actual fun saveServerFailoverJson(profileId: Int, json: String) {
+        preferences?.edit()?.putString("xtream_server_failover_$profileId", json)?.apply()
+    }
 }
