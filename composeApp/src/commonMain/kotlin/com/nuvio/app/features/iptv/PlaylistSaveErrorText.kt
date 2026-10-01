@@ -2,6 +2,7 @@ package com.nuvio.app.features.iptv
 
 import kotlinx.coroutines.CancellationException
 import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.compose_iptv_hub_blocked_title
 import nuvio.composeapp.generated.resources.iptv_playlist_error_file_unreadable
 import nuvio.composeapp.generated.resources.iptv_playlist_error_invalid_address
 import nuvio.composeapp.generated.resources.iptv_playlist_error_missing_m3u_file
@@ -42,6 +43,7 @@ private fun PlaylistSaveError.resource(): StringResource = when (this) {
     PlaylistSaveError.INVALID_ADDRESS -> Res.string.iptv_playlist_error_invalid_address
     PlaylistSaveError.UNREACHABLE -> Res.string.iptv_playlist_error_unreachable
     PlaylistSaveError.WRONG_CREDENTIALS -> Res.string.iptv_playlist_error_wrong_credentials
+    PlaylistSaveError.PROVIDER_BLOCKED -> Res.string.compose_iptv_hub_blocked_title
     PlaylistSaveError.SECURE_CONNECTION_FAILED -> Res.string.iptv_playlist_error_secure_connection
     PlaylistSaveError.FILE_UNREADABLE -> Res.string.iptv_playlist_error_file_unreadable
 }

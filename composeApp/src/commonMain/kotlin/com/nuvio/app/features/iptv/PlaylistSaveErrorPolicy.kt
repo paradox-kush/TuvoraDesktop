@@ -25,8 +25,14 @@ internal enum class PlaylistSaveError(val fallbackText: String) {
     /** DNS, timeout, refused, an open breaker, or anything we can't explain better. */
     UNREACHABLE("Couldn't reach the server — check the address"),
 
-    /** HTTP 401/403 or the Xtream panel's `auth != 1`. */
+    /** HTTP 401 or the Xtream panel's `auth != 1`. */
     WRONG_CREDENTIALS("Wrong username or password"),
+
+    /**
+     * The provider's firewall answered (403/419/429/451/456 — see [IptvLoadFailurePolicy]): the server
+     * is up and turned this device away. Not a password problem; reuses the hub's shipped title.
+     */
+    PROVIDER_BLOCKED("This provider is blocking us"),
 
     /** TLS handshake / certificate failure — the B23 class. */
     SECURE_CONNECTION_FAILED("Secure connection failed — try http:// or check the certificate"),
@@ -128,7 +134,10 @@ internal object PlaylistSaveErrorPolicy {
             error is XtreamAuthRejectedException -> PlaylistSaveMessage.Known(PlaylistSaveError.WRONG_CREDENTIALS)
             error is XtreamAccountInactiveException -> PlaylistSaveMessage.Authored(error.message.orEmpty())
             error is M3UNoContentException -> PlaylistSaveMessage.Authored(M3U_NO_CONTENT_MESSAGE)
-            // Stalker signs in by MAC: a 401/403 there is a portal/WAF refusal, not a password typo.
+            // The provider's edge (WAF/Cloudflare) turned us away: the server is up, the password is not the problem.
+            error is HttpStatusException && IptvLoadFailurePolicy.isBlockingStatus(error.status) ->
+                PlaylistSaveMessage.Known(PlaylistSaveError.PROVIDER_BLOCKED)
+            // Stalker signs in by MAC: a 401 there is a portal refusal, not a password typo.
             error is HttpStatusException && error.status in CREDENTIAL_STATUSES && sourceType != SOURCE_TYPE_STALKER ->
                 PlaylistSaveMessage.Known(PlaylistSaveError.WRONG_CREDENTIALS)
             error is HttpStatusException -> PlaylistSaveMessage.Known(PlaylistSaveError.UNREACHABLE)
@@ -164,7 +173,7 @@ internal object PlaylistSaveErrorPolicy {
         PlaylistTransportFailure.INVALID_ADDRESS -> PlaylistSaveError.INVALID_ADDRESS
     }
 
-    private val CREDENTIAL_STATUSES = setOf(401, 403)
+    private val CREDENTIAL_STATUSES = setOf(401)
     private val HTTP_SCHEMES = setOf("http", "https")
     private const val MAX_CAUSE_DEPTH = 8
 }

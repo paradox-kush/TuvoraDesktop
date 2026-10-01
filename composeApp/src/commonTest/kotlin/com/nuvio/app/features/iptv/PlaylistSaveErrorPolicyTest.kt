@@ -106,7 +106,22 @@ class PlaylistSaveErrorPolicyTest {
         val none = transport(emptyMap())
         assertEquals(known(PlaylistSaveError.WRONG_CREDENTIALS), PlaylistSaveErrorPolicy.classify(XtreamAuthRejectedException(), SOURCE_TYPE_XTREAM, none))
         assertEquals(known(PlaylistSaveError.WRONG_CREDENTIALS), PlaylistSaveErrorPolicy.classify(HttpStatusException(401, "HTTP 401"), SOURCE_TYPE_XTREAM, none))
-        assertEquals(known(PlaylistSaveError.WRONG_CREDENTIALS), PlaylistSaveErrorPolicy.classify(HttpStatusException(403, "HTTP 403"), SOURCE_TYPE_M3U_URL, none))
+    }
+
+    @Test
+    fun `a provider firewall status is a block - not a username or password problem`() {
+        // 403/429/456 come from the provider's edge (WAF / Cloudflare), measured on real providers:
+        // telling the viewer their password is wrong would send them to retype a correct one.
+        val none = transport(emptyMap())
+        for (status in listOf(403, 419, 429, 451, 456)) {
+            for (type in listOf(SOURCE_TYPE_XTREAM, SOURCE_TYPE_M3U_URL, SOURCE_TYPE_STALKER)) {
+                assertEquals(
+                    known(PlaylistSaveError.PROVIDER_BLOCKED),
+                    PlaylistSaveErrorPolicy.classify(HttpStatusException(status, "HTTP $status"), type, none),
+                    "HTTP $status for $type",
+                )
+            }
+        }
     }
 
     @Test
@@ -124,7 +139,7 @@ class PlaylistSaveErrorPolicyTest {
     fun `a Stalker 403 is not reported as a username or password problem`() {
         // Stalker signs in by MAC; there is no username/password for the user to fix.
         assertEquals(
-            known(PlaylistSaveError.UNREACHABLE),
+            known(PlaylistSaveError.PROVIDER_BLOCKED),
             PlaylistSaveErrorPolicy.classify(HttpStatusException(403, "HTTP 403"), SOURCE_TYPE_STALKER, transport(emptyMap())),
         )
     }
