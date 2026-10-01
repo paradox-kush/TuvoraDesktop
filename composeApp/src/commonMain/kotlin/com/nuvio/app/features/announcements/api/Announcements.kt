@@ -7,11 +7,18 @@ import kotlinx.coroutines.flow.StateFlow
 
 /** The announcements port: what to show now, when to refresh, and how to dismiss. */
 interface Announcements {
-    /** The single announcement to show (server order, not dismissed), or null. */
+    /** The single announcement to show (server order, not dismissed, meant for this viewer), or null. */
     val visible: StateFlow<Announcement?>
 
     /** Fetch only when the refresh policy says the cache is due. Failures keep the cache. */
     suspend fun refreshIfDue()
+
+    /**
+     * Keeps [visible] in step with who is signed in (a policy notice is only for people who used
+     * the app under the older terms). Suspends until cancelled: call it only while the surface is
+     * visible. Reads local auth state only and never touches the network.
+     */
+    suspend fun followSignIn()
 
     /** Hide [id] immediately and remember it on this device. */
     fun dismiss(id: String)

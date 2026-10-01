@@ -2,11 +2,16 @@ package com.nuvio.app.features.announcements.internal
 
 import com.nuvio.app.features.announcements.api.Announcement
 import com.nuvio.app.features.announcements.api.AnnouncementKind
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Instant
 
 class AnnouncementsRepositoryTest {
 
@@ -163,5 +168,111 @@ class AnnouncementsRepositoryTest {
         assertNull(items[1].ctaLabel)
         assertNull(items[1].ctaUrl)
         assertEquals(AnnouncementKind.Info, items[2].kind)
+    }
+
+    // --- UX84: who sees a policy notice ---
+
+    private val policyStartsAtMs = Instant.parse("2026-09-28T06:00:00Z").toEpochMilliseconds()
+    private val hour = 60L * 60 * 1000
+
+    private fun policyItem() = Announcement(
+        id = "policy",
+        title = "We've updated our Privacy Policy",
+        body = "Body",
+        ctaLabel = null,
+        ctaUrl = null,
+        kind = AnnouncementKind.Policy,
+        startsAt = "2026-09-28T06:00:00+00:00",
+    )
+
+    @Test
+    fun `an account that signed up after the policy notice started does not see it`() = runTest {
+        val repo = AnnouncementsRepository(
+            fetch = { listOf(policyItem(), item("news")) },
+            store = FakeStore(),
+            nowMs = { policyStartsAtMs + 48 * hour },
+            signIn = flowOf(AnnouncementSignIn.Account(createdAtMs = policyStartsAtMs + 24 * hour, acceptedTermsVersion = "2026-09-27")),
+        )
+        backgroundScope.launch { repo.followSignIn() }
+        repo.refreshIfDue()
+        runCurrent()
+        assertEquals("news", repo.visible.value?.id)
+    }
+
+    @Test
+    fun `an existing account still sees the policy notice on a brand new install`() = runTest {
+        val repo = AnnouncementsRepository(
+            fetch = { listOf(policyItem(), item("news")) },
+            store = FakeStore(),
+            nowMs = { policyStartsAtMs + 48 * hour },
+            signIn = flowOf(AnnouncementSignIn.Account(createdAtMs = policyStartsAtMs - 30 * 24 * hour, acceptedTermsVersion = "2026-08-04")),
+        )
+        backgroundScope.launch { repo.followSignIn() }
+        repo.refreshIfDue()
+        runCurrent()
+        assertEquals("policy", repo.visible.value?.id)
+    }
+
+    @Test
+    fun `a fresh signed out install does not see a policy notice that predates it`() = runTest {
+        val store = FakeStore()
+        val repo = AnnouncementsRepository(
+            fetch = { listOf(policyItem()) },
+            store = store,
+            nowMs = { policyStartsAtMs + 48 * hour },
+            signIn = flowOf(AnnouncementSignIn.NoAccount),
+        )
+        backgroundScope.launch { repo.followSignIn() }
+        repo.refreshIfDue()
+        runCurrent()
+        assertNull(repo.visible.value)
+        assertEquals(
+            (policyStartsAtMs + 48 * hour).toString(),
+            store.load(AnnouncementsRepository.KEY_INSTALL_FIRST_SEEN),
+        )
+    }
+
+    @Test
+    fun `an install upgraded from the previous version keeps showing the policy notice`() = runTest {
+        // 1.8.3 cached the notice but never recorded a first-seen time.
+        val store = FakeStore().apply {
+            save(AnnouncementsRepository.KEY_ITEMS, AnnouncementCodec.encode(listOf(policyItem())))
+            save(AnnouncementsRepository.KEY_LAST_FETCHED_AT, (policyStartsAtMs + 47 * hour).toString())
+        }
+        val repo = AnnouncementsRepository(
+            fetch = { listOf(policyItem()) },
+            store = store,
+            nowMs = { policyStartsAtMs + 48 * hour },
+            signIn = flowOf(AnnouncementSignIn.NoAccount),
+        )
+        backgroundScope.launch { repo.followSignIn() }
+        repo.refreshIfDue()
+        runCurrent()
+        assertEquals("policy", repo.visible.value?.id)
+        assertEquals("0", store.load(AnnouncementsRepository.KEY_INSTALL_FIRST_SEEN))
+    }
+
+    @Test
+    fun `the card follows sign in changes without a fetch`() = runTest {
+        var calls = 0
+        val signIn = MutableStateFlow<AnnouncementSignIn>(AnnouncementSignIn.Resolving)
+        val store = FakeStore().apply { save(AnnouncementsRepository.KEY_INSTALL_FIRST_SEEN, "0") }
+        val repo = AnnouncementsRepository(
+            fetch = { calls++; listOf(policyItem()) },
+            store = store,
+            nowMs = { policyStartsAtMs + 48 * hour },
+            signIn = signIn,
+        )
+        backgroundScope.launch { repo.followSignIn() }
+        repo.refreshIfDue()
+        runCurrent()
+        assertNull(repo.visible.value, "held back while sign-in is still resolving")
+        signIn.value = AnnouncementSignIn.NoAccount
+        runCurrent()
+        assertEquals("policy", repo.visible.value?.id, "existing install signed out")
+        signIn.value = AnnouncementSignIn.Account(createdAtMs = policyStartsAtMs + hour, acceptedTermsVersion = null)
+        runCurrent()
+        assertNull(repo.visible.value, "signed in to an account newer than the notice")
+        assertEquals(1, calls)
     }
 }
