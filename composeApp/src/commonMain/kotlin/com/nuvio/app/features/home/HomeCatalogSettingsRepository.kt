@@ -298,6 +298,7 @@ object HomeCatalogSettingsRepository {
         showLiveOnHome = true
         preferences = emptyMap()
         normalizePreferences()
+        enforcePinnedCollectionsAtTop()
         publish()
         persist()
         HomeRepository.applyCurrentSettings()
@@ -454,8 +455,9 @@ object HomeCatalogSettingsRepository {
             )
         }
 
+        val rowIndex = allOrderedKeys().withIndex().associate { (index, key) -> key to index }
         val items = (catalogItems + collectionItems)
-            .sortedBy { it.order }
+            .sortedBy { rowIndex[it.key] ?: Int.MAX_VALUE }
 
         val nextState = HomeCatalogSettingsUiState(
             heroEnabled = heroEnabled,
@@ -603,6 +605,7 @@ object HomeCatalogSettingsRepository {
             }
             preferences = preservedPreferences + remotePreferences
             normalizePreferences()
+            enforcePinnedCollectionsAtTop()
         }
         hasLoaded = true
         publish()
@@ -610,33 +613,29 @@ object HomeCatalogSettingsRepository {
         HomeRepository.applyCurrentSettings()
     }
 
-    private fun allOrderedKeys(): List<String> {
-        val catalogKeys = definitions.map { it.key }
-        val collectionKeys = collectionDefinitions.map { it.key }
-        return (catalogKeys + collectionKeys)
-            .sortedBy { key -> preferences[key]?.order ?: Int.MAX_VALUE }
-    }
+    /** Rows in display order: stored order with pinned collections first (B81, [HomeRowOrderPolicy]). */
+    private fun allOrderedKeys(): List<String> =
+        HomeRowOrderPolicy.orderedKeys(
+            catalogKeys = definitions.map { it.key },
+            collectionKeys = collectionDefinitions.map { it.key },
+            pinnedCollectionKeys = collectionDefinitions.filter { it.isPinnedToTop }.mapTo(mutableSetOf()) { it.key },
+            orderOf = { key -> preferences[key]?.order },
+        )
 
+    /**
+     * Rewrites the stored order to match the display order, so what is persisted and pushed keeps
+     * pinned collections first too. Display already applies the pin on every read (B81); this only
+     * keeps the stored numbers honest after any path that rewrote them.
+     */
     private fun enforcePinnedCollectionsAtTop() {
-        val orderedKeys = allOrderedKeys()
-        if (orderedKeys.isEmpty()) return
-
-        val pinnedCollectionKeys = collectionDefinitions
-            .asSequence()
-            .filter { it.isPinnedToTop }
-            .map { it.key }
-            .toSet()
-        if (pinnedCollectionKeys.isEmpty()) return
-
-        val pinnedKeys = orderedKeys.filter { it in pinnedCollectionKeys }
-        if (pinnedKeys.isEmpty()) return
-
-        val nonPinnedKeys = orderedKeys.filterNot { it in pinnedCollectionKeys }
-        val reorderedKeys = pinnedKeys + nonPinnedKeys
-        if (reorderedKeys == orderedKeys) return
+        if (collectionDefinitions.none { it.isPinnedToTop }) return
+        val displayKeys = allOrderedKeys()
+        val storedKeys = (definitions.map { it.key } + collectionDefinitions.map { it.key })
+            .sortedBy { key -> preferences[key]?.order ?: Int.MAX_VALUE }
+        if (displayKeys == storedKeys) return
 
         val updatedPreferences = preferences.toMutableMap()
-        reorderedKeys.forEachIndexed { index, itemKey ->
+        displayKeys.forEachIndexed { index, itemKey ->
             val current = updatedPreferences[itemKey] ?: return@forEachIndexed
             updatedPreferences[itemKey] = current.copy(order = index)
         }
