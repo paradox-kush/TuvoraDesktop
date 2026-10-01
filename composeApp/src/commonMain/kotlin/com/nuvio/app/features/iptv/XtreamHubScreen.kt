@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material3.TextButton
 import com.nuvio.app.core.ui.NuvioToastController
+import com.nuvio.app.core.ui.NuvioToastPlacement
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -229,6 +230,8 @@ fun XtreamHubScreen(
                                 NuvioToastController.show(
                                     "“$name” hidden. Unhide it in Settings → Integrations → IPTV → ${account.name}.",
                                     durationMillis = 4000L,
+                                    // UX35: at the top it covered the Live TV / Movies / Series tabs.
+                                    placement = NuvioToastPlacement.Bottom,
                                 )
                             }
                             openCategoryId = null
