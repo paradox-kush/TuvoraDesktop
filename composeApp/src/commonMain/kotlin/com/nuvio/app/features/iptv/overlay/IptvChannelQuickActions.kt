@@ -36,6 +36,24 @@ internal object IptvChannelQuickActionsPolicy {
      * also applied whenever the rows are shown. A card whose identity is unknown ([entityOf] null)
      * stays. Returns [items] itself when nothing in it is hidden.
      */
+    /**
+     * What a fetched live window of the hub keeps in its row cache: renames applied and pins floated
+     * ([IptvChannelOverlayPolicy.displayedWindow]), in provider order otherwise — but hidden channels
+     * KEPT. Hiding is applied when rows are shown ([visibleInHub]); a window cached without its hidden
+     * channels left an unhide (Undo, or Settings) nothing to restore until a re-fetch (K9). Keeping
+     * them also makes the next window's offset the raw provider count the paging indexes.
+     */
+    fun <T> hubRowWindow(
+        rows: List<T>,
+        overlay: Map<String, ChannelOverlay>,
+        entityOf: (T) -> String,
+        withName: (T, newName: String) -> T = { r, _ -> r },
+    ): List<T> {
+        val unhidden = if (overlay.values.none { it.hidden }) overlay
+        else overlay.mapValues { (_, o) -> if (o.hidden) o.copy(hidden = false) else o }
+        return IptvChannelOverlayPolicy.displayedWindow(rows, unhidden, entityOf, withName)
+    }
+
     fun <T> visibleInHub(items: List<T>, overlay: Map<String, ChannelOverlay>, entityOf: (T) -> String?): List<T> {
         if (items.isEmpty() || overlay.values.none { it.hidden }) return items
         val kept = items.filter { item -> entityOf(item)?.let { overlay[it]?.hidden } != true }

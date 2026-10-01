@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
+import com.nuvio.app.core.ui.KeepRestoredItemsInView
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.iptv.XtreamCatchUp
@@ -223,11 +224,15 @@ fun LiveGuideGrid(
             }
         }
 
+        // Dedup at the key-consumption point: guideChannels can carry a duplicate contentId
+        // (provider listing a channel twice), and a duplicate Compose `key` is a hard crash
+        // (message-less SIGABRT on iOS). Keys stay unique regardless of the producer.
+        val rows = remember(channels) { channels.distinctBy { it.contentId } }
+        // K9: a channel un-hidden (Undo, or Settings) at the top of the visible rows comes back into
+        // view instead of being inserted just above it.
+        KeepRestoredItemsInView(listState, remember(rows) { rows.map { it.contentId } })
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-            // Dedup at the key-consumption point: guideChannels can carry a duplicate contentId
-            // (provider listing a channel twice), and a duplicate Compose `key` is a hard crash
-            // (message-less SIGABRT on iOS). Keys stay unique regardless of the producer.
-            items(channels.distinctBy { it.contentId }, key = { it.contentId }) { channel ->
+            items(rows, key = { it.contentId }) { channel ->
                 GuideRow(
                     channel = channel,
                     isCurrent = channel.contentId == currentContentId,

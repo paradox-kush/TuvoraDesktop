@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material3.TextButton
+import com.nuvio.app.core.ui.KeepRestoredItemsInView
 import com.nuvio.app.core.ui.LiveRecentActionTarget
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.core.ui.NuvioToastPlacement
@@ -25,6 +26,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -39,6 +41,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,8 +76,11 @@ import com.nuvio.app.features.home.components.rememberHomeSkeletonBrush
 import com.nuvio.app.features.library.LibraryRepository
 import com.nuvio.app.features.library.toMetaPreview
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
+import org.jetbrains.compose.resources.getString
 import kotlinx.coroutines.flow.emptyFlow
 import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.iptv_group_hidden_toast
 import nuvio.composeapp.generated.resources.action_retry
 import nuvio.composeapp.generated.resources.compose_iptv_hub_add_provider
 import nuvio.composeapp.generated.resources.compose_iptv_hub_empty_message
@@ -201,6 +207,7 @@ fun XtreamHubScreen(
     }
     val displayedCategories = liveSpecialCategories + renderableCategories
     var openCategoryId by remember(state.selectedAccountId, state.section) { mutableStateOf<String?>(null) }
+    val toastScope = rememberCoroutineScope()
     val openCategory = openCategoryId?.let { id -> displayedCategories.firstOrNull { it.id == id } }
 
     val tokens = MaterialTheme.nuvio
@@ -230,12 +237,14 @@ fun XtreamHubScreen(
                     ) {
                         {
                             XtreamHubRepository.hideCategory(openCategory.id)?.let { name ->
-                                NuvioToastController.show(
-                                    "“$name” hidden. Unhide it in Settings → Integrations → IPTV → ${account.name}.",
-                                    durationMillis = 4000L,
-                                    // UX35: at the top it covered the Live TV / Movies / Series tabs.
-                                    placement = NuvioToastPlacement.Bottom,
-                                )
+                                toastScope.launch {
+                                    NuvioToastController.show(
+                                        getString(Res.string.iptv_group_hidden_toast, name, account.name),
+                                        durationMillis = 4000L,
+                                        // UX35: at the top it covered the Live TV / Movies / Series tabs.
+                                        placement = NuvioToastPlacement.Bottom,
+                                    )
+                                }
                             }
                             openCategoryId = null
                         }
@@ -303,6 +312,8 @@ fun XtreamHubScreen(
                 else -> {
                     // Xtream panels ship real-world duplicate category ids — duplicate-safe keys.
                     val keyedCategories = displayedCategories.withDuplicateSafeLazyKeys { it.id }
+                    // K9: a row restored at the top (its only hidden channel un-hidden) comes back into view.
+                    KeepRestoredItemsInView(listState, remember(keyedCategories) { keyedCategories.map { it.lazyKey } })
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
@@ -491,9 +502,14 @@ private fun XtreamHubCategoryRow(
             XtreamHubTilePlaceholder(live = live, brush = brush)
         }
     } else {
+        // K9: Undo of a hide (or a Settings unhide) restores the card INTO view — the keyed row would
+        // otherwise keep the card that became first in place and leave the restored one off-screen.
+        val rowState = rememberLazyListState()
+        KeepRestoredItemsInView(rowState, remember(category.items) { category.items.map { it.id } })
         NuvioShelfSection(
             title = title,
             entries = category.items,
+            state = rowState,
             headerHorizontalPadding = sectionPadding,
             rowContentPadding = PaddingValues(horizontal = sectionPadding),
             viewAllPillSize = NuvioViewAllPillSize.Compact,
@@ -591,8 +607,11 @@ private fun XtreamHubCategoryPage(
             val columns = remember(maxWidth, landscape) {
                 xtreamCategoryGridColumns(maxWidth, landscape)
             }
+            val gridState = rememberLazyGridState()
+            KeepRestoredItemsInView(gridState, remember(category.items) { category.items.map { it.id } })
             LazyVerticalGrid(
                 columns = GridCells.Fixed(columns),
+                state = gridState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
                     start = sectionPadding,
