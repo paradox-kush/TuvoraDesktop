@@ -82,7 +82,8 @@ class BackupServerFailoverIntegrationTest {
 
         assertTrue(XtreamClient.verify(acc).isSuccess, "login fails over to the backup")
         assertEquals(1, PlaylistServerFailover.activeIndex(acc))
-        assertEquals(ServerFailoverState(1, 1_000L + ServerFailoverPolicy.MAIN_RETRY_WINDOW_MS), store.read(1, acc.id))
+        assertEquals(ServerFailoverState(1, 1_000L + ServerFailoverPolicy.MAIN_RETRY_WINDOW_MS), store.read(1, acc.id).copy(stats = emptyMap()))
+        assertTrue(store.read(1, acc.id).stats[0]?.lastFailAtMs != null, "the refused main is remembered as failed (stagger hint)")
 
         requests.clear()
         assertEquals(listOf("News"), XtreamClient.liveCategories(acc).getOrThrow().map { it.name })
@@ -117,7 +118,7 @@ class BackupServerFailoverIntegrationTest {
         store.write(1, acc.id, ServerFailoverState(1, now + 60_000))
         repeat(3) { XtreamClient.liveStreamUrl(acc, 7) }
         assertTrue(requests.isEmpty())
-        assertEquals(ServerFailoverState(1, now + 60_000), store.read(1, acc.id))
+        assertEquals(ServerFailoverState(1, now + 60_000), store.read(1, acc.id).copy(stats = emptyMap()))
     }
 
     @Test
@@ -130,7 +131,8 @@ class BackupServerFailoverIntegrationTest {
         downHosts += "dead.invalid"
         assertTrue(M3UClient.verify(acc).isSuccess)
         assertEquals(1, PlaylistServerFailover.activeIndex(acc))
-        assertEquals(listOf("dead.invalid", "m3u-backup.test"), requests.map(::hostOf))
+        // main (refused) -> the backup's tiny validation probe -> the real download, issued once, to the winner.
+        assertEquals(listOf("dead.invalid", "m3u-backup.test", "m3u-backup.test"), requests.map(::hostOf))
         assertEquals(
             "http://m3u-backup.test/live/1.ts",
             M3UClient.liveChannels(acc, null).getOrThrow().single().streamUrl,
@@ -224,6 +226,6 @@ class BackupServerFailoverIntegrationTest {
         assertNull(StalkerClient.resolveLiveUrl(acc, 1, forceMint = true))
         assertTrue(portalRequests.none { it.startsWith("st2-backup.test") }, "no backup request: $portalRequests")
         assertEquals(0, PlaylistServerFailover.activeIndex(acc))
-        assertEquals(ServerFailoverState(), store.read(1, acc.id))
+        assertEquals(ServerFailoverState(), store.read(1, acc.id).copy(stats = emptyMap()))
     }
 }

@@ -90,7 +90,8 @@ class PlaylistServerFailoverTest {
         }
         assertSame(mainErr, thrown)
         assertEquals(3, tried.size)
-        assertEquals(ServerFailoverState(), store.read(1, acc.id))
+        assertEquals(ServerFailoverState(), store.read(1, acc.id).copy(stats = emptyMap()), "active server and window untouched")
+        assertEquals(setOf(0, 1, 2), store.read(1, acc.id).stats.keys, "each server that failed is remembered (stagger hint only)")
     }
 
     @Test
@@ -121,20 +122,6 @@ class PlaylistServerFailoverTest {
         assertEquals(listOf("http://main.test"), tried)
         assertEquals(0, PlaylistServerFailover.activeIndex(acc))
         assertEquals("http://main.test/live/u/p/7.ts", PlaylistServerFailover.rebaseStreamUrl(acc, "http://b1.test/live/u/p/7.ts"))
-    }
-
-    @Test
-    fun `the walk stops once the time budget is spent`() = runBlocking {
-        val tried = mutableListOf<String>()
-        val thrown = assertFailsWith<HttpStatusException> {
-            PlaylistServerFailover.run(acc) { a ->
-                tried += a.baseUrl
-                now += PlaylistServerFailover.SINGLE_REQUEST_TIMEOUT_MS * 3   // one slow failure eats the whole budget
-                throw HttpStatusException(504, a.baseUrl)
-            }
-        }
-        assertEquals(listOf("http://main.test"), tried)
-        assertEquals("http://main.test", thrown.message)
     }
 
     @Test

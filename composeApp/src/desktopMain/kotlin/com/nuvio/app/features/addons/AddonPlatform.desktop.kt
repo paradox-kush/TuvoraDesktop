@@ -156,17 +156,52 @@ private suspend fun executeTextRequest(
     body: String = "",
 ): String = withContext(Dispatchers.IO) {
     val request = buildDesktopRequest(method, url, headers, body)
-    desktopHttpClient.newCall(request).execute().use { response ->
-        val payload = readResponseBody(response.body)
-        if (!response.isSuccessful) {
-            throw HttpStatusException(response.code, runBlocking { getString(Res.string.network_request_failed_http, response.code) })
+    val call = clientForAttempt().newCall(request)
+    // Step 0.3b: a racing failover attempt that lost must stop NOW — cancel the socket, not just the coroutine.
+    val cancelHook = cancelCallWithJob(call)
+    try {
+        call.execute().use { response ->
+            if (!response.isSuccessful) {
+                // The status is known from the headers alone: no body is read for a failure.
+                throw HttpStatusException(response.code, runBlocking { getString(Res.string.network_request_failed_http, response.code) })
+            }
+            // 2xx headers are in: a racing attempt reports "answered" here (a loser is parked until it
+            // is cancelled), before any body byte is read.
+            signalHttpHeaders()
+            val payload = readResponseBody(response.body)
+            if (payload.isBlank()) {
+                throw EmptyResponseBodyException(runBlocking { getString(Res.string.network_empty_response_body) })
+            }
+            payload
         }
-        if (payload.isBlank()) {
-            throw EmptyResponseBodyException(runBlocking { getString(Res.string.network_empty_response_body) })
-        }
-        payload
+    } catch (t: Throwable) {
+        coroutineContext.ensureActive() // a cancel-induced IOException becomes CancellationException
+        throw t
+    } finally {
+        cancelHook.dispose()
     }
 }
+
+/**
+ * [desktopHttpClient] with the failover attempt's CONNECT timeout (Step 0.3b) when this request runs
+ * inside a backup-server race: only the connect phase is shortened; `newBuilder()` shares the pool,
+ * dispatcher and DNS, so it costs one small allocation.
+ */
+private suspend fun clientForAttempt(): OkHttpClient {
+    val connectMs = failoverConnectTimeoutMs() ?: return desktopHttpClient
+    return desktopHttpClient.newBuilder().connectTimeout(connectMs, TimeUnit.MILLISECONDS).build()
+}
+
+/**
+ * Wires coroutine cancellation to [call]: `Call.cancel()` closes the socket, which is what actually
+ * unblocks a synchronous `execute()`/read. `onCancelling = true` fires as soon as the job is cancelled —
+ * BEFORE the blocking call returns; a default `invokeOnCompletion` would only fire after it, i.e. never.
+ */
+@OptIn(InternalCoroutinesApi::class)
+private suspend fun cancelCallWithJob(call: okhttp3.Call) =
+    coroutineContext.job.invokeOnCompletion(onCancelling = true, invokeImmediately = true) { cause ->
+        if (cause != null) call.cancel()
+    }
 
 private fun buildDesktopRequest(
     method: String,
@@ -297,6 +332,7 @@ actual suspend fun httpStreamLines(
     userAgent: String?,
     dnsProvider: String?,
     headers: Map<String, String>,
+    maxBytes: Long,
     onLine: (String) -> Unit,
 ): Unit = withContext(Dispatchers.IO) {
     val builder = Request.Builder().url(url).get()
@@ -310,16 +346,17 @@ actual suspend fun httpStreamLines(
     // Cancellation must stop the actual blocking read (a synchronous okio read ignores coroutine
     // cancellation): wire it to Call.cancel() on the cancelling transition, then ensureActive() maps
     // the resulting read failure to CancellationException. See the Android twin for the rationale.
-    val call = desktopHttpClient.newCall(request)
-    @OptIn(InternalCoroutinesApi::class)
-    val cancelHook = coroutineContext.job.invokeOnCompletion(onCancelling = true, invokeImmediately = true) { cause ->
-        if (cause != null) call.cancel()
-    }
+    val call = clientForAttempt().newCall(request)
+    val cancelHook = cancelCallWithJob(call)
     try {
         call.execute().use { response ->
             if (!response.isSuccessful) {
-                error("Request failed with HTTP ${response.code}")
+                // A typed status (not a bare IllegalStateException) so the failover classifier can tell a 503
+                // (fail over) from a 401/403/456 (never): this used to read as "anything else" and never failed over.
+                throw HttpStatusException(response.code, runBlocking { getString(Res.string.network_request_failed_http, response.code) })
             }
+            // 2xx headers are in (Step 0.3b): a racing attempt reports "answered" before any body byte is read.
+            signalHttpHeaders()
             val body = response.body ?: return@use
             val rawSource = body.source()
             val encoding = response.header("Content-Encoding")?.lowercase()
@@ -333,7 +370,7 @@ actual suspend fun httpStreamLines(
             } else {
                 rawSource
             }
-            streamBoundedLines(source, onLine)
+            streamBoundedLines(source, onLine, maxBytes)
         }
     } catch (t: Throwable) {
         coroutineContext.ensureActive() // a cancel-induced read failure becomes CancellationException
@@ -361,20 +398,26 @@ private const val MAX_LINE_BYTES = 1L * 1024 * 1024
  * Safe for both consumers: M3U lines are far below the cap so they still arrive whole, and the
  * XMLTV tokenizer explicitly accepts chunk boundaries falling anywhere, even mid-tag.
  */
-internal fun streamBoundedLines(source: okio.BufferedSource, onLine: (String) -> Unit) {
+internal fun streamBoundedLines(source: okio.BufferedSource, onLine: (String) -> Unit, maxBytes: Long = Long.MAX_VALUE) {
+    var consumed = 0L
     while (true) {
-        val newline = source.indexOf('\n'.code.toByte(), 0L, MAX_LINE_BYTES)
+        // [maxBytes] (the M3U validation probe reads ~1 KB and stops): the search window never reaches past it.
+        val window = minOf(MAX_LINE_BYTES, maxBytes - consumed)
+        if (window <= 0L) return
+        val newline = source.indexOf('\n'.code.toByte(), 0L, window)
         if (newline != -1L) {
             val line = source.readUtf8(newline)
             source.skip(1)                      // drop the '\n'
+            consumed += newline + 1
             onLine(line.removeSuffix("\r"))
             continue
         }
         if (!source.request(1)) return          // EOF
-        // No newline within the cap: emit what we have, cut on a character boundary so a
+        // No newline within the window: emit what we have, cut on a character boundary so a
         // multi-byte glyph is never split across two chunks.
-        val cut = utf8SafeCut(source.buffer, MAX_LINE_BYTES)
+        val cut = utf8SafeCut(source.buffer, window)
         if (cut <= 0L) return
+        consumed += cut
         onLine(source.readUtf8(cut))
     }
 }

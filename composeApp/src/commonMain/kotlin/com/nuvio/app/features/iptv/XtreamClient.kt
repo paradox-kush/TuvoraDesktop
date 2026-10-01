@@ -61,7 +61,7 @@ object XtreamClient : IptvClient {
      * [PlaylistServerFailover] walk tries, so the request lands on that server with the same path.
      */
     private suspend fun panelText(acc: XtreamAccount, url: (XtreamAccount) -> String): String =
-        PlaylistServerFailover.run(acc) { a -> panelGetText(url(a), a.dnsProvider) }
+        PlaylistServerFailover.run(acc, probe = ::failoverProbe) { a -> panelGetText(url(a), a.dnsProvider) }
 
     override suspend fun liveCategories(acc: XtreamAccount) = categories(acc, "get_live_categories")
     override suspend fun vodCategories(acc: XtreamAccount) = categories(acc, "get_vod_categories")
@@ -260,7 +260,7 @@ object XtreamClient : IptvClient {
         // over (Step 0.3) only until the first line reached the parser — rows already handed to
         // [onProgramme] must never be spliced with another server's.
         var delivered = false
-        PlaylistServerFailover.run(acc, canRetry = { !delivered }) { a ->
+        PlaylistServerFailover.run(acc, canRetry = { !delivered }, probe = ::failoverProbe) { a ->
             val url = playerApi(a, "get_simple_data_table") + "&stream_id=$streamId"
             IptvPanelGuard.guard.guardedPanelRequest(url) {
                 IptvTransport.current.streamLines(url, userAgent = null, dnsProvider = a.dnsProvider) {
@@ -440,6 +440,26 @@ object XtreamClient : IptvClient {
     private suspend fun panelGetText(url: String, dnsProvider: String?): String =
         IptvPanelGuard.guard.guardedPanelRequest(url) { IptvTransport.current.getText(url, dnsProvider) }
 
+    /**
+     * The failover race's validation probe (Step 0.3b): the no-action `player_api.php` login on server [a].
+     * Returns normally only for a VALID answer — JSON with `user_info` and `server_info` and auth=1 on a
+     * live account. A 200 that is not the panel (parked domain, CDN error page, blank body) throws
+     * [FailoverInvalidResponseException] (fails over); auth=0 / Expired / Banned / Disabled throws
+     * [FailoverAuthRejectedException] (the same on every server: surfaced, never failed over). Goes
+     * through the same breaker-guarded transport as every panel request.
+     *
+     * The body is the very `user_info` [accountInfo] parses (status, exp_date, is_trial,
+     * max_connections, active_cons), so the expiry reminder can reuse that mapping on it later.
+     */
+    internal suspend fun failoverProbe(a: XtreamAccount) {
+        val body = try {
+            panelGetText(playerApi(a), a.dnsProvider)
+        } catch (e: com.nuvio.app.features.addons.EmptyResponseBodyException) {
+            throw FailoverInvalidResponseException("Xtream login probe: empty body")
+        }
+        FailoverProbePolicy.toFailure(FailoverProbePolicy.xtreamLogin(body), "Xtream login probe")?.let { throw it }
+    }
+
     private fun String.splitCsv(): List<String> = split(",").mapNotNull { it.trim().ifBlank { null } }
 
     private suspend fun categories(acc: XtreamAccount, action: String): Result<List<XtreamCategory>> = call {
@@ -500,7 +520,7 @@ object XtreamClient : IptvClient {
         // A catalog call fails over (Step 0.3). The list is collected by a fresh parser per server,
         // so a body that died part-way can safely be fetched whole from the next one; [map] gets the
         // server that answered, so URLs built from a row point at it.
-        PlaylistServerFailover.run(acc) { a ->
+        PlaylistServerFailover.run(acc, probe = ::failoverProbe) { a ->
             val parser = XtreamCatalogIndexParser(json, { o: JsonObject -> map(a, o) })
             val u = url(a)
             // Guarded like panelGetText (WP6). A parser throw classifies as HTTP_RESPONSE — body
@@ -522,7 +542,7 @@ object XtreamClient : IptvClient {
         onItem: (T) -> Unit,
     ): Int {
         var delivered = false
-        return PlaylistServerFailover.run(acc, canRetry = { !delivered }) { a ->
+        return PlaylistServerFailover.run(acc, canRetry = { !delivered }, probe = ::failoverProbe) { a ->
             val parser = XtreamCatalogIndexParser(json, map, sink = onItem)
             val u = url(a)
             IptvPanelGuard.guard.guardedPanelRequest(u) {

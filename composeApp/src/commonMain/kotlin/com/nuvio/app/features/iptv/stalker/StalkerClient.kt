@@ -127,7 +127,7 @@ object StalkerClient : IptvClient {
      * active portal only ([playbackSession]).
      */
     private suspend fun browse(acc: XtreamAccount, params: Map<String, String>): JsonElement =
-        PlaylistServerFailover.run(acc) { a -> sessionFor(acc, a).request(params) }
+        PlaylistServerFailover.run(acc, probe = { a -> sessionFor(acc, a).probe() }) { a -> sessionFor(acc, a).request(params) }
 
     /** The session on the playlist's ACTIVE portal — for create_link, which never fails over. */
     private suspend fun playbackSession(acc: XtreamAccount): StalkerSession =
@@ -527,7 +527,7 @@ object StalkerClient : IptvClient {
                 ingest.begin()
                 // Fails over (Step 0.3) only until the first chunk reached the ingest.
                 var delivered = false
-                PlaylistServerFailover.run(acc, canRetry = { !delivered }) { a ->
+                PlaylistServerFailover.run(acc, canRetry = { !delivered }, probe = { a -> sessionFor(acc, a).probe() }) { a ->
                     sessionFor(acc, a).requestStream(
                         params = mapOf("type" to "itv", "action" to "get_epg_info", "period" to EPG_PERIOD_HOURS),
                         onRestart = { ingest.restart() },
