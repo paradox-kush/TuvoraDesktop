@@ -25,7 +25,16 @@ not a code-review maybe.** Phase 0 (this commit) lands the machinery; seams S1�
 - [ ] Firewall crossings go through an extension point, not a direct reference. *(Konsist)*
 - [ ] Screens stay previewable via `PreviewFeatureWiring`.
 - [ ] Arch test green; `ArchBaseline` shrank or held (never grew).
-- [ ] Tests red-first, green on BOTH runners (`testAndroidHostTest` + `iosSimulatorArm64Test`).
+- [ ] Tests red-first, green on `:composeApp:desktopTest` (where `ArchitectureTest` lives; what `build.yml` runs).
+
+## The Android target is declared but dead (decision 2026-09-30)
+`composeApp` still declares an `android {}` target because upstream (`origin/Dev`) does, but it does
+not compile — upstream's own `commonMain` uses desktop-only pointer APIs (`PointerButton`,
+`onPointerEvent`; trailer hover 08-12, mouse seek 08-22) and `androidMain` lags Mobile. Desktop ships no
+Android build, so it is **left as upstream has it** (keeping merges conflict-free) and **not repaired**.
+Consequences: `testAndroidHostTest` / `androidHostTest` / `androidFullHostTest` never run here — a test
+ported from Mobile into those dirs is unverified on Desktop, and is not a Desktop gate. Port a
+behaviour's test into `desktopTest` (or `commonTest`) when it must be proven on Desktop.
 
 ## The firewall (merge safety)
 The fork side is defined by **upstream absence** (`git cat-file -e origin/cmp-rewrite:<path>`), NOT
