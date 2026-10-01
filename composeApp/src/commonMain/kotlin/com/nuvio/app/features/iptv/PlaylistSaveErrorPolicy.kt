@@ -101,42 +101,17 @@ internal object PlaylistSaveErrorPolicy {
     }
 
     /**
-     * True when [raw] (scheme optional — http is assumed, as the builders do) names a host and, if a
-     * port is given, a port in 1..65535. Parsed by hand rather than via Ktor's `Url`, which accepts
-     * out-of-range ports and lets the transport fail later with an unhelpful error.
+     * True when [raw] (scheme optional — http is assumed, as the builders do) is an http(s) address
+     * with a host and, if a port is given, a port in 1..65535. Reuses [PlaylistKey.origin] — the same
+     * parse the playlist id is built from — rather than Ktor's `Url`, which accepts out-of-range
+     * ports and lets the transport fail later with an unhelpful error.
      */
     fun isValidServerAddress(raw: String): Boolean {
         val trimmed = raw.trim()
         if (trimmed.isEmpty() || trimmed.any { it.isWhitespace() }) return false
         val schemeEnd = trimmed.indexOf("://")
-        val rest = if (schemeEnd >= 0) {
-            val scheme = trimmed.substring(0, schemeEnd).lowercase()
-            if (scheme != "http" && scheme != "https") return false
-            trimmed.substring(schemeEnd + 3)
-        } else {
-            trimmed
-        }
-        val authority = rest.substringBefore('/').substringBefore('?').substringBefore('#').substringAfterLast('@')
-        if (authority.isEmpty()) return false
-        val (host, port) = if (authority.startsWith("[")) {
-            val close = authority.indexOf(']')
-            if (close < 0) return false
-            val after = authority.substring(close + 1)
-            authority.substring(0, close + 1) to when {
-                after.isEmpty() -> null
-                after.startsWith(":") -> after.substring(1)
-                else -> return false
-            }
-        } else {
-            val colon = authority.indexOf(':')
-            if (colon < 0) authority to null else authority.substring(0, colon) to authority.substring(colon + 1)
-        }
-        if (host.isEmpty() || host == "[]") return false
-        if (port != null) {
-            val n = port.takeIf { p -> p.isNotEmpty() && p.all { it in '0'..'9' } && p.length <= 5 }?.toInt() ?: return false
-            if (n !in 1..65535) return false
-        }
-        return true
+        if (schemeEnd >= 0 && trimmed.substring(0, schemeEnd).lowercase() !in HTTP_SCHEMES) return false
+        return PlaylistKey.origin(trimmed) != null
     }
 
     /**
@@ -190,5 +165,6 @@ internal object PlaylistSaveErrorPolicy {
     }
 
     private val CREDENTIAL_STATUSES = setOf(401, 403)
+    private val HTTP_SCHEMES = setOf("http", "https")
     private const val MAX_CAUSE_DEPTH = 8
 }
