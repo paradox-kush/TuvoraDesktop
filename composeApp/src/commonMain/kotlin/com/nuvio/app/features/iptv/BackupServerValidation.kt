@@ -89,10 +89,13 @@ object BackupServerValidation {
         val sep = s.indexOf("://")
         if (sep <= 0) return false
         val scheme = s.substring(0, sep)
-        if (!scheme[0].isLetter() || !scheme.all { it.isLetterOrDigit() || it == '+' || it == '-' || it == '.' }) return false
+        // ASCII-only on purpose: the TS twin uses /^[A-Za-z][A-Za-z0-9+.-]*$/ and the two must agree.
+        if (!scheme[0].isAsciiLetter() || !scheme.all { it.isAsciiLetter() || it in '0'..'9' || it == '+' || it == '-' || it == '.' }) return false
         val lower = scheme.lowercase()
         return lower != "http" && lower != "https"
     }
+
+    private fun Char.isAsciiLetter(): Boolean = this in 'a'..'z' || this in 'A'..'Z'
 
     /** [PlaylistKey.origin] plus the checks a typed URL needs: a host, and no whitespace in it. */
     private fun saneOrigin(withScheme: String): String? {
