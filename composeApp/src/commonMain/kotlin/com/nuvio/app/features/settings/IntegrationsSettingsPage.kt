@@ -50,7 +50,7 @@ internal fun LazyListScope.integrationsContent(
                 SettingsGroupDivider(isTablet = isTablet)
                 SettingsNavigationRow(
                     title = stringResource(Res.string.compose_settings_page_iptv),
-                    description = "Live TV, movies & series from an Xtream provider",
+                    description = "Live TV, movies & series from your Xtream, M3U or Stalker playlists",
                     isTablet = isTablet,
                     onClick = onIptvClick,
                 )

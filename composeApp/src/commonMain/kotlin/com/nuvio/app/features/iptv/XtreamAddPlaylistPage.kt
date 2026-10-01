@@ -644,11 +644,15 @@ private fun DnsProviderSection(
                 style = MaterialTheme.typography.bodySmall,
                 color = tokens.colors.textMuted,
             )
-            Text(
-                text = "Android only — iOS ignores this setting.",
-                style = MaterialTheme.typography.bodySmall,
-                color = tokens.colors.textMuted,
-            )
+            // UX83: a limitation note only where the setting is actually ignored — never a dev note
+            // ("iOS ignores this") shown to Android users, for whom the setting works.
+            if (!perPlaylistDnsSupported) {
+                Text(
+                    text = "Only used by the Android app — this device ignores it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.colors.textMuted,
+                )
+            }
         }
     }
 }
