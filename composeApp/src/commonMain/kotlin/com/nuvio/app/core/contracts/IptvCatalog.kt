@@ -51,4 +51,7 @@ object IptvCatalogAccess {
 
     /** The registered catalog, or null before registration (tests, previews). */
     val catalogOrNull: IptvCatalog? get() = instance
+
+    /** Tests that registered a fake put the process back as they found it. */
+    internal fun unregisterForTest() { instance = null }
 }
