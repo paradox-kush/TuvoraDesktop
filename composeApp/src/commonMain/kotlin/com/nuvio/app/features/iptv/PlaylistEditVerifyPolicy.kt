@@ -1,7 +1,11 @@
 package com.nuvio.app.features.iptv
 
-/** What a playlist edit does after its provider check: whether it is saved, and what to tell the user. */
-internal data class PlaylistEditOutcome(val save: Boolean, val warning: String?)
+/**
+ * What a playlist edit does after its provider check: whether it is saved, and — when the check
+ * failed — why, as a mapped [PlaylistSaveMessage] (UX11: never the raw exception text). The row
+ * warning is composed from [failure] by `playlistSavedUnverifiedWarning`.
+ */
+internal data class PlaylistEditOutcome(val save: Boolean, val failure: PlaylistSaveMessage?)
 
 /**
  * B60 — decides what an edited playlist's live provider check may do to the save.
@@ -20,10 +24,9 @@ internal data class PlaylistEditOutcome(val save: Boolean, val warning: String?)
 internal object PlaylistEditVerifyPolicy {
     fun needsVerify(old: XtreamAccount, edited: XtreamAccount): Boolean = !edited.sameConnectionAs(old)
 
-    fun outcome(verifyResult: Result<Unit>): PlaylistEditOutcome {
-        val failure = verifyResult.exceptionOrNull() ?: return PlaylistEditOutcome(save = true, warning = null)
-        val reason = failure.message?.trim()?.takeIf { it.isNotEmpty() } ?: "no response"
-        return PlaylistEditOutcome(save = true, warning = "Saved, but the provider couldn't be checked: $reason")
+    fun outcome(verifyResult: Result<Unit>, sourceType: String): PlaylistEditOutcome {
+        val failure = verifyResult.exceptionOrNull() ?: return PlaylistEditOutcome(save = true, failure = null)
+        return PlaylistEditOutcome(save = true, failure = PlaylistSaveErrorPolicy.classify(failure, sourceType))
     }
 }
 

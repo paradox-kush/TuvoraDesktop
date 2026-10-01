@@ -2537,4 +2537,16 @@
     <string name="settings_playback_stream_info_description">Briefly show quality, codec and bitrate when playback starts</string>
     <string name="announcement_dismiss">Dismiss announcement</string>
     <string name="external_link_open_failed_copied">Couldn't open a browser. Link copied: %1$s</string>
+    <!-- wave1 k1 -->
+    <string name="iptv_playlist_error_missing_xtream_fields">Enter a server URL, username and password</string>
+    <string name="iptv_playlist_error_missing_m3u_url">Enter an M3U playlist URL</string>
+    <string name="iptv_playlist_error_missing_stalker_fields">Enter a portal URL and MAC address</string>
+    <string name="iptv_playlist_error_missing_m3u_file">Choose an M3U file to import</string>
+    <string name="iptv_playlist_error_invalid_address">That server address isn&apos;t valid</string>
+    <string name="iptv_playlist_error_unreachable">Couldn&apos;t reach the server — check the address</string>
+    <string name="iptv_playlist_error_wrong_credentials">Wrong username or password</string>
+    <string name="iptv_playlist_error_secure_connection">Secure connection failed — try http:// or check the certificate</string>
+    <string name="iptv_playlist_error_file_unreadable">Could not read that playlist file</string>
+    <string name="iptv_playlist_saved_unverified">Saved, but the provider couldn&apos;t be checked: %1$s</string>
+    <!-- /wave1 k1 -->
 </resources>

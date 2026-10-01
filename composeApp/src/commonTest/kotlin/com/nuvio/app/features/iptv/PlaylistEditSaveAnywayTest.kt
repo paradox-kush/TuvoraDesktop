@@ -6,6 +6,7 @@ import kotlinx.coroutines.withTimeout
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -28,7 +29,8 @@ class PlaylistEditSaveAnywayTest {
         val old = XtreamAccount(id = "http://old.example:8080|u", name = "P", baseUrl = "http://old.example:8080", username = "u", password = "p")
         XtreamRepository.installAccountsForTest(listOf(old))
         XtreamRepository.persistWriteForTest = { _, _ -> }
-        XtreamRepository.verifyForTest = { Result.failure(RuntimeException("Could not reach the panel")) }
+        // UX11: the platform's raw transport text, exactly as the emulator pass saw it.
+        XtreamRepository.verifyForTest = { Result.failure(RuntimeException("Failed to connect to /10.0.2.2:8999")) }
 
         val done = CompletableDeferred<Boolean>()
         XtreamRepository.editFromForm(
@@ -44,6 +46,7 @@ class PlaylistEditSaveAnywayTest {
         assertEquals(listOf("http://new.example:8080"), state.accounts.map { it.baseUrl }, "the new URL is kept, in place")
         val saved = state.accounts.single()
         val warning = assertNotNull(state.saveWarnings[saved.id], "the failed check is surfaced on the row")
-        assertTrue(warning.contains("Could not reach the panel"), warning)
+        assertTrue(warning.contains("Couldn't reach the server — check the address"), "a plain sentence: $warning")
+        assertFalse(warning.contains("10.0.2.2"), "never the raw exception text (UX11): $warning")
     }
 }
