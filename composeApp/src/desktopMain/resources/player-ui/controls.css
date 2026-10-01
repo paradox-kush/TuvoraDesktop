@@ -563,10 +563,12 @@ button:disabled {
 }
 
 /* Stream info — the mirror image of the parental guide: same rule, same row metrics,
-   same timing, anchored to the trailing edge so the two never compete. */
+   same timing, anchored to the trailing edge so the two never compete. It sits BELOW the
+   header's button row (B105: at the header's own top it was drawn over Close/fullscreen),
+   and stays there while the chrome is hidden so it never jumps. */
 .stream-info {
   position: absolute;
-  top: calc(var(--slider-bottom) + env(safe-area-inset-top));
+  top: calc(var(--slider-bottom) + env(safe-area-inset-top) + var(--header-button) + 8px);
   right: var(--hp);
   z-index: 5;
   display: flex;

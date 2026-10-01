@@ -52,6 +52,9 @@ import com.nuvio.app.core.ui.nuvioTypeScale
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
 
+/** Height of [PlayerToolbar] (48 dp touch targets); the stream-info readout is laid out below it. */
+internal val PlayerToolbarHeight = 48.dp
+
 @Composable
 internal fun PlayerToolbar(
     isLocked: Boolean,
@@ -72,7 +75,7 @@ internal fun PlayerToolbar(
             onClick = onBack,
             containerColor = Color.Transparent,
             contentColor = Color.White,
-            buttonSize = 48.dp,
+            buttonSize = PlayerToolbarHeight,
             iconSize = 24.dp,
             contentDescription = stringResource(Res.string.compose_player_close),
         )
