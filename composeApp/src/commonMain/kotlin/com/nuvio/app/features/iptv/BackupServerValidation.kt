@@ -62,6 +62,22 @@ object BackupServerValidation {
         return Outcome(urls, problems)
     }
 
+    /**
+     * UX92 — indexes of [entries] that point at the SAME server as [main] except for http vs https
+     * (default ports of each scheme ignored; for an M3U link the path + query must match too). Still
+     * valid backups — a panel can genuinely serve both — so this only drives a hint, never a block,
+     * and it is kept out of [validate] so the cross-platform golden tables stay untouched.
+     */
+    fun schemeOnlyDifferences(sourceType: String, main: String, entries: List<String>): Set<Int> {
+        if (!supportsBackups(sourceType)) return emptySet()
+        val mainKey = comparisonKey(sourceType, main) ?: return emptySet()
+        val mainWithoutScheme = mainKey.substringAfter("://")
+        return entries.indices.filterTo(LinkedHashSet()) { index ->
+            val key = comparisonKey(sourceType, entries[index]) ?: return@filterTo false
+            key != mainKey && key.substringAfter("://") == mainWithoutScheme
+        }
+    }
+
     /** The stored form of one non-blank http(s) entry, or null when it is not a usable URL. */
     fun normalize(sourceType: String, entry: String): String? {
         val trimmed = entry.trim()

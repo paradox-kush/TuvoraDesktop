@@ -269,6 +269,11 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
                 isTablet = isTablet,
                 rows = backupRows,
                 problems = backupCheck.problems.associate { it.index to it.problem },
+                schemeOnlyRows = BackupServerValidation.schemeOnlyDifferences(
+                    resolvedSourceType,
+                    if (sourceType == XtreamSourceType.URL) m3uUrl else server,
+                    backupRows,
+                ),
                 placeholder = if (sourceType == XtreamSourceType.URL) "http://other-host/playlist.m3u" else "http://other-host:port",
                 onRowsChange = { backupRows = it },
             )
@@ -717,6 +722,7 @@ private fun BackupServersSection(
     isTablet: Boolean,
     rows: List<String>,
     problems: Map<Int, BackupServerValidation.Problem>,
+    schemeOnlyRows: Set<Int>,
     placeholder: String,
     onRowsChange: (List<String>) -> Unit,
 ) {
@@ -746,25 +752,31 @@ private fun BackupServersSection(
                         isError = index in problems,
                         modifier = Modifier.weight(1f),
                     )
-                    IconButton(
-                        onClick = { onRowsChange(BackupServerListEdits.moveUp(rows, index)) },
-                        enabled = index > 0,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.KeyboardArrowUp,
-                            contentDescription = "Move up",
-                            tint = if (index > 0) tokens.colors.textSecondary else tokens.colors.textDisabled,
-                        )
-                    }
-                    IconButton(
-                        onClick = { onRowsChange(BackupServerListEdits.moveDown(rows, index)) },
-                        enabled = index < rows.lastIndex,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.KeyboardArrowDown,
-                            contentDescription = "Move down",
-                            tint = if (index < rows.lastIndex) tokens.colors.textSecondary else tokens.colors.textDisabled,
-                        )
+                    // UX89: the two reorder arrows stack in one narrow column (they fit the field's
+                    // height) instead of taking two full-width buttons, so a long URL stays readable.
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        IconButton(
+                            onClick = { onRowsChange(BackupServerListEdits.moveUp(rows, index)) },
+                            enabled = index > 0,
+                            modifier = Modifier.size(BACKUP_ARROW_TARGET),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.KeyboardArrowUp,
+                                contentDescription = "Move up",
+                                tint = if (index > 0) tokens.colors.textSecondary else tokens.colors.textDisabled,
+                            )
+                        }
+                        IconButton(
+                            onClick = { onRowsChange(BackupServerListEdits.moveDown(rows, index)) },
+                            enabled = index < rows.lastIndex,
+                            modifier = Modifier.size(BACKUP_ARROW_TARGET),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.KeyboardArrowDown,
+                                contentDescription = "Move down",
+                                tint = if (index < rows.lastIndex) tokens.colors.textSecondary else tokens.colors.textDisabled,
+                            )
+                        }
                     }
                     IconButton(onClick = { onRowsChange(BackupServerListEdits.remove(rows, index)) }) {
                         Icon(
@@ -779,6 +791,14 @@ private fun BackupServersSection(
                         text = BackupServerListEdits.message(problem),
                         style = MaterialTheme.typography.bodySmall,
                         color = tokens.colors.danger,
+                    )
+                }
+                if (index !in problems && index in schemeOnlyRows) {
+                    // UX92: valid, but usually the main server typed twice — say so, don't block.
+                    Text(
+                        text = "Same server as the main one — only http/https differs",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.colors.textMuted,
                     )
                 }
             }
@@ -796,6 +816,9 @@ private fun BackupServersSection(
         }
     }
 }
+
+/** Two stacked reorder arrows together match the 56dp text field's height. */
+private val BACKUP_ARROW_TARGET = 28.dp
 
 @Composable
 private fun SaveSection(
