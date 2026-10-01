@@ -7,13 +7,21 @@ import com.nuvio.app.core.ui.rememberSafeUriOpener
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.contracts.HomeAnnouncementsSection
 import com.nuvio.app.features.announcements.api.Announcements
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 
 /** Home-screen adapter: renders the port's current announcement; no I/O in the UI. */
 internal class AnnouncementsHomeSection(
     private val announcements: Announcements,
 ) : HomeAnnouncementsSection {
 
-    override suspend fun refreshIfDue() = announcements.refreshIfDue()
+    /** Runs for as long as Home is RESUMED: one due-check fetch, plus following sign-in changes. */
+    override suspend fun refreshIfDue() {
+        coroutineScope {
+            launch { announcements.followSignIn() }
+            announcements.refreshIfDue()
+        }
+    }
 
     @Composable
     override fun hasContent(): Boolean =
