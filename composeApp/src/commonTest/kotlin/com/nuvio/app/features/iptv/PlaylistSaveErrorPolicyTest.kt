@@ -46,7 +46,7 @@ class PlaylistSaveErrorPolicyTest {
     }
 
     @Test
-    fun `an invalid port is an invalid address - not a missing field (UX21)`() {
+    fun `an invalid port is an invalid address - not a missing field - UX21`() {
         assertEquals(PlaylistSaveError.INVALID_ADDRESS, PlaylistSaveErrorPolicy.validate(form(server = "http://panel.example:99999")))
         assertEquals(PlaylistSaveError.INVALID_ADDRESS, PlaylistSaveErrorPolicy.validate(form(server = "panel.example:abc")))
         assertEquals(PlaylistSaveError.INVALID_ADDRESS, PlaylistSaveErrorPolicy.validate(form(server = "http://panel.example:0")))
@@ -81,7 +81,7 @@ class PlaylistSaveErrorPolicyTest {
     // --- failures from the live check ---------------------------------------------------------
 
     @Test
-    fun `transport failures map to their plain sentences (UX20 and B23)`() {
+    fun `transport failures map to their plain sentences - UX20 and B23`() {
         val t = transport(
             mapOf(
                 "dns" to PlaylistTransportFailure.UNREACHABLE,
@@ -145,7 +145,7 @@ class PlaylistSaveErrorPolicyTest {
     }
 
     @Test
-    fun `raw unknown errors never reach the user (UX11)`() {
+    fun `raw unknown errors never reach the user - UX11`() {
         val raw = RuntimeException("Failed to connect to /10.0.2.2:8999")
         assertEquals(known(PlaylistSaveError.UNREACHABLE), PlaylistSaveErrorPolicy.classify(raw, SOURCE_TYPE_XTREAM, transport(emptyMap())))
         assertEquals(known(PlaylistSaveError.FILE_UNREADABLE), PlaylistSaveErrorPolicy.classify(raw, SOURCE_TYPE_M3U_FILE, transport(emptyMap())))
