@@ -4,6 +4,10 @@ actual object AppFeaturePolicy {
     actual val pluginsEnabled: Boolean = false
     // Store builds hide the addon system: pure BYO-IPTV player posture (Play policy 4.2.2).
     actual val addonsEnabled: Boolean = false
+    // Debrid is a torrent-cache service: same store posture as addons and P2P (Apple 5.2.3).
+    actual val debridEnabled: Boolean = false
+    // Add-ons stay for discovery (catalogs, metadata, subtitles), never as stream sources.
+    actual val addonStreamSourcesEnabled: Boolean = false
     actual val supportersContributorsPageEnabled: Boolean = false
     // Google Play requires in-app account deletion when the app offers account creation.
     actual val accountDeletionEnabled: Boolean = true

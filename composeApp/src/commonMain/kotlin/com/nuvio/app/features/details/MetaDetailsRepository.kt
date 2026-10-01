@@ -564,7 +564,14 @@ object MetaDetailsRepository {
     }
 
    
-    fun findEmbeddedStreams(videoId: String): List<com.nuvio.app.features.streams.StreamItem> {
+    fun findEmbeddedStreams(videoId: String): List<com.nuvio.app.features.streams.StreamItem> =
+        com.nuvio.app.features.addons.AddonSourcePolicy.embeddedStreamsForBuild(
+            streams = findEmbeddedStreamsUnfiltered(videoId),
+            streamSourcesEnabled = com.nuvio.app.core.build.AppFeaturePolicy.addonStreamSourcesEnabled,
+            isIptv = com.nuvio.app.features.streams.StreamLinkCacheRepository::isIptvAddon,
+        )
+
+    private fun findEmbeddedStreamsUnfiltered(videoId: String): List<com.nuvio.app.features.streams.StreamItem> {
         val meta = _uiState.value.meta ?: return emptyList()
         val videosWithStreams = meta.videos.filter { it.streams.isNotEmpty() }
         if (videosWithStreams.isEmpty()) return emptyList()

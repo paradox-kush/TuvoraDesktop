@@ -63,4 +63,26 @@ class DebridSettingsTest {
         assertTrue(settings.canUseCloudLibrary)
         assertFalse(settings.canResolvePlayableLinks)
     }
+
+    @Test
+    fun `store builds keep saved keys but never resolve links or open the cloud library`() {
+        val fullBuild = DebridSettings(
+            enabled = true,
+            cloudLibraryEnabled = true,
+            providerApiKeys = mapOf(DebridProviders.TORBOX_ID to "tb_key"),
+        )
+        val storeBuild = fullBuild.copy(featureAvailable = false)
+
+        assertTrue(fullBuild.canResolvePlayableLinks)
+        assertTrue(fullBuild.cloudLibraryActive)
+        assertTrue(fullBuild.canUseCloudLibrary)
+
+        assertFalse(storeBuild.linkResolvingEnabled)
+        assertFalse(storeBuild.canResolvePlayableLinks)
+        assertFalse(storeBuild.cloudLibraryActive)
+        assertFalse(storeBuild.canUseCloudLibrary)
+        // The keys stay put so a synced account is not wiped by a store-build device.
+        assertEquals("tb_key", storeBuild.torboxApiKey)
+        assertTrue(storeBuild.hasAnyApiKey)
+    }
 }

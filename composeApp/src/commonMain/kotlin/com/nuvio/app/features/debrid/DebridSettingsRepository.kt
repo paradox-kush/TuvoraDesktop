@@ -1,5 +1,6 @@
 package com.nuvio.app.features.debrid
 
+import com.nuvio.app.core.build.AppFeaturePolicy
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -345,6 +346,7 @@ object DebridSettingsRepository {
 
     private fun publish() {
         _uiState.value = DebridSettings(
+            featureAvailable = AppFeaturePolicy.debridEnabled,
             enabled = enabled,
             cloudLibraryEnabled = cloudLibraryEnabled,
             providerApiKeys = providerApiKeys,

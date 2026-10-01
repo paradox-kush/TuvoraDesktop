@@ -101,7 +101,7 @@ object CloudLibraryRepository {
 
     fun ensureLoaded() {
         DebridSettingsRepository.ensureLoaded()
-        if (!DebridSettingsRepository.snapshot().cloudLibraryEnabled) {
+        if (!DebridSettingsRepository.snapshot().cloudLibraryActive) {
             loadedConnectionKeys = emptyList()
             _uiState.value = CloudLibraryUiState(isLoaded = true, isEnabled = false)
             return
@@ -116,7 +116,7 @@ object CloudLibraryRepository {
 
     fun refresh() {
         DebridSettingsRepository.ensureLoaded()
-        if (!DebridSettingsRepository.snapshot().cloudLibraryEnabled) {
+        if (!DebridSettingsRepository.snapshot().cloudLibraryActive) {
             loadedConnectionKeys = emptyList()
             _uiState.value = CloudLibraryUiState(isLoaded = true, isEnabled = false)
             return
@@ -152,7 +152,7 @@ object CloudLibraryRepository {
         videoId: String,
     ): CloudLibraryPlaybackTargetLookupResult {
         DebridSettingsRepository.ensureLoaded()
-        if (!DebridSettingsRepository.snapshot().cloudLibraryEnabled) {
+        if (!DebridSettingsRepository.snapshot().cloudLibraryActive) {
             loadedConnectionKeys = emptyList()
             _uiState.value = CloudLibraryUiState(isLoaded = true, isEnabled = false)
             return CloudLibraryPlaybackTargetLookupResult.Disabled
@@ -197,7 +197,7 @@ object CloudLibraryRepository {
         file: CloudLibraryFile,
     ): CloudLibraryPlaybackResult {
         DebridSettingsRepository.ensureLoaded()
-        if (!DebridSettingsRepository.snapshot().cloudLibraryEnabled) {
+        if (!DebridSettingsRepository.snapshot().cloudLibraryActive) {
             return CloudLibraryPlaybackResult.Failed(getString(Res.string.cloud_library_playback_disabled))
         }
         val result = store.resolvePlayback(item, file)
@@ -224,7 +224,7 @@ object CloudLibraryRepository {
 
     private fun connectedCloudCredentials(): List<DebridServiceCredential> =
         DebridSettingsRepository.snapshot()
-            .takeIf { settings -> settings.cloudLibraryEnabled }
+            .takeIf { settings -> settings.cloudLibraryActive }
             ?.let(DebridProviders::configuredServices)
             .orEmpty()
             .filter { credential -> credential.provider.supports(DebridProviderCapability.CloudLibrary) }
