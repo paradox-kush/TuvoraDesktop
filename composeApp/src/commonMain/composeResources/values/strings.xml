@@ -2537,4 +2537,6 @@
     <string name="settings_playback_stream_info_description">Briefly show quality, codec and bitrate when playback starts</string>
     <string name="announcement_dismiss">Dismiss announcement</string>
     <string name="external_link_open_failed_copied">Couldn't open a browser. Link copied: %1$s</string>
+    <!-- wave1 k2 -->
+    <string name="details_cast_tmdb_off_hint">Turn on TMDB enrichment to see people</string>
 </resources>
