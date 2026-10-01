@@ -2554,4 +2554,12 @@
     <!-- wave1 x1 -->
     <string name="addons_not_synced_yet">Not synced yet</string>
     <string name="addons_not_synced_retry_description">Retry syncing add-ons to your account</string>
+    <!-- wave2 k6 -->
+    <string name="iptv_channel_action_add_favorite">Add to Favorites</string>
+    <string name="iptv_channel_action_remove_favorite">Remove from Favorites</string>
+    <string name="iptv_channel_action_hide">Hide channel</string>
+    <string name="iptv_channel_hidden_toast">“%1$s” hidden. Unhide it in Settings → Integrations → IPTV → %2$s.</string>
+    <string name="iptv_channel_hidden_toast_generic">“%1$s” hidden. Unhide it in Settings → Integrations → IPTV.</string>
+    <string name="iptv_toast_undo">Undo</string>
+    <!-- /wave2 k6 -->
 </resources>

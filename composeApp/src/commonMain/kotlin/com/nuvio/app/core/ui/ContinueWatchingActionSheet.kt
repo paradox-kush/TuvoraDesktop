@@ -165,7 +165,7 @@ data class LiveRecentActionTarget(
 )
 
 @Composable
-private fun LiveRecentSheetHeader(
+internal fun LiveRecentSheetHeader(
     channel: LiveRecentActionTarget,
 ) {
     val posterCardStyle = rememberPosterCardStyleUiState()

@@ -43,6 +43,7 @@ interface LiveTvContent {
         initialLogo: String?,
         initialReplay: LiveReplayLaunch?,
         onBack: () -> Unit,
+        onFavoriteChannel: (String) -> Unit,
         modifier: Modifier,
     )
 }
