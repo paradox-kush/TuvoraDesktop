@@ -11,6 +11,7 @@ actual object AppFeaturePolicy {
     // Desktop is a sideload distribution — full addon system stays on.
     actual val addonsEnabled: Boolean = true
     actual val debridEnabled: Boolean = true
+    actual val addonStreamSourcesEnabled: Boolean = true
     actual val supportersContributorsPageEnabled: Boolean = false
     // Upstream custom-server + donation flags the fork does not use (fork = SyncBackend + its own
     // Donate row via DONATIONS_DONATE_URL); kept off.
