@@ -46,7 +46,13 @@ import kotlinx.serialization.json.contentOrNull
  */
 object StalkerClient : IptvClient {
 
-    private data class Entry(val session: StalkerSession, val fingerprint: String)
+    /**
+     * One playlist's sessions: one per PORTAL it has been reached on (main / a backup — Step 0.3), all
+     * under one [fingerprint] of the playlist's config. A failover walk visits portals in turn; a
+     * shared per-playlist slot would swap (and re-handshake) the session on every visit, rotating the
+     * MAC token and defeating the per-session single-flight re-auth.
+     */
+    private class Entry(val fingerprint: String, val byPortal: MutableMap<String, StalkerSession> = mutableMapOf())
 
     private val sessions = mutableMapOf<String, Entry>()
     private val sessionsMutex = Mutex()
@@ -89,42 +95,49 @@ object StalkerClient : IptvClient {
         seasonCache.clear()
     }
 
-    private suspend fun sessionFor(acc: XtreamAccount): StalkerSession = sessionsMutex.withLock {
+    /**
+     * The session for playlist [acc] on portal [on] (the playlist itself, or a copy re-pointed at one of
+     * its backup portals by [PlaylistServerFailover]).
+     */
+    private suspend fun sessionFor(acc: XtreamAccount, on: XtreamAccount = acc): StalkerSession = sessionsMutex.withLock {
         // Fingerprint mirrors NuvioTV's StalkerSessionManager: serial/device-id/login edits don't
         // change acc.id (it's portal+MAC), so a cached session must be dropped when they change or
-        // the edit silently keeps the OLD device identity.
+        // the edit silently keeps the OLD device identity. It is the PLAYLIST's (main portal +
+        // backups), so a failover walk between its portals never counts as a config change.
         val fp = fingerprint(acc)
         val existing = sessions[acc.id]
-        if (existing != null && existing.fingerprint == fp) return@withLock existing.session
-        // Config changed (or first use) — the cached rows/cmds belong to the OLD portal identity,
-        // and the replaced session's watchdog must not keep pinging it.
-        existing?.session?.shutdown()
-        rowCache.keys.removeAll { it.startsWith("${acc.id}:") }
-        linkFlags.keys.removeAll { it.startsWith("${acc.id}:") }
-        epgUnsupported.remove(acc.id)
-        seasonCache.keys.removeAll { it.startsWith("${acc.id}:") }
-        sessionFactory(acc).also { sessions[acc.id] = Entry(it, fp) }
+        val entry = if (existing != null && existing.fingerprint == fp) existing else {
+            // Config changed (or first use) — the cached rows/cmds belong to the OLD portal identity,
+            // and the replaced sessions' watchdogs must not keep pinging it.
+            existing?.byPortal?.values?.forEach { it.shutdown() }
+            rowCache.keys.removeAll { it.startsWith("${acc.id}:") }
+            linkFlags.keys.removeAll { it.startsWith("${acc.id}:") }
+            epgUnsupported.remove(acc.id)
+            seasonCache.keys.removeAll { it.startsWith("${acc.id}:") }
+            Entry(fp).also { sessions[acc.id] = it }
+        }
+        entry.byPortal.getOrPut(on.baseUrl) { sessionFactory(on) }
     }
 
     /**
      * One fail-over-able portal call (Step 0.3): handshake / get_profile / browse, walked across the
-     * playlist's portal URLs by [PlaylistServerFailover]. The session is per playlist and keyed by
-     * [fingerprint] (which includes the portal base), so landing on another portal swaps the session —
-     * the old one's watchdog stops, nothing keeps pinging a dead main. create_link NEVER comes through
-     * here: it is a playback request and goes to the active portal only ([playbackSession]).
+     * playlist's portal URLs by [PlaylistServerFailover]. Each portal keeps its own session
+     * ([sessionFor]), so walking between them never throws an authenticated session away or
+     * re-handshakes it. create_link NEVER comes through here: it is a playback request and goes to the
+     * active portal only ([playbackSession]).
      */
     private suspend fun browse(acc: XtreamAccount, params: Map<String, String>): JsonElement =
-        PlaylistServerFailover.run(acc) { a -> sessionFor(a).request(params) }
+        PlaylistServerFailover.run(acc) { a -> sessionFor(acc, a).request(params) }
 
     /** The session on the playlist's ACTIVE portal — for create_link, which never fails over. */
     private suspend fun playbackSession(acc: XtreamAccount): StalkerSession =
-        sessionFor(PlaylistServerFailover.activeAccount(acc))
+        sessionFor(acc, PlaylistServerFailover.activeAccount(acc))
 
     // dnsProvider is in here because the session's HTTP seams close over it: without it an edited
     // DNS choice wouldn't reach the portal until the process restarted.
     private fun fingerprint(a: XtreamAccount): String =
         listOf(a.baseUrl, a.macAddress, a.serialNumber, a.deviceId, a.sendDeviceId.toString(),
-            a.stalkerUsername, a.stalkerPassword, a.dnsProvider).joinToString("|")
+            a.stalkerUsername, a.stalkerPassword, a.dnsProvider, a.backupUrls.joinToString(",")).joinToString("|")
 
     /** Verify = a successful get_genres proves the full handshake + get_profile + authorised-browse chain. */
     override suspend fun verify(acc: XtreamAccount): Result<Unit> = runCatching {
@@ -515,7 +528,7 @@ object StalkerClient : IptvClient {
                 // Fails over (Step 0.3) only until the first chunk reached the ingest.
                 var delivered = false
                 PlaylistServerFailover.run(acc, canRetry = { !delivered }) { a ->
-                    sessionFor(a).requestStream(
+                    sessionFor(acc, a).requestStream(
                         params = mapOf("type" to "itv", "action" to "get_epg_info", "period" to EPG_PERIOD_HOURS),
                         onRestart = { ingest.restart() },
                         onChunk = {

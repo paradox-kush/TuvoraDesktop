@@ -182,6 +182,36 @@ class BackupServerFailoverIntegrationTest {
     }
 
     @Test
+    fun `re-walking a dead main after the window keeps the backup portal's session - no extra handshake`() = runBlocking {
+        // Review regression: sessions were one-per-playlist keyed by a fingerprint that includes the
+        // portal, so every walk that touched another portal SWAPPED the session — the backup's
+        // authenticated session was thrown away and re-handshaked (rotating the MAC token, and with
+        // concurrent walkers defeating the single-flight reauth). One session per portal fixes it.
+        StalkerClient.sessionFactory = { StalkerSession(it, fakePortal) }
+        val acc = stalker("st3")
+        downHosts += "st3-main.test"
+        assertTrue(StalkerClient.verify(acc).isSuccess)
+        assertEquals(1, PlaylistServerFailover.activeIndex(acc))
+
+        // The window ran out: main is tried first again (still dead), then the backup answers.
+        now += ServerFailoverPolicy.MAIN_RETRY_WINDOW_MS
+        portalRequests.clear()
+        assertTrue(StalkerClient.verify(acc).isSuccess)
+        assertEquals(1, PlaylistServerFailover.activeIndex(acc))
+        assertTrue(portalRequests.any { it.startsWith("st3-main.test/") }, "main was retried: $portalRequests")
+        assertTrue(
+            portalRequests.none { it == "st3-backup.test/handshake" },
+            "the backup portal's authenticated session survives the walk: $portalRequests",
+        )
+
+        // create_link mints on the same (still authenticated) backup session.
+        StalkerClient.liveChannels(acc, null).getOrThrow()
+        portalRequests.clear()
+        assertEquals("http://st3-backup.test/live/1.ts?token=x", StalkerClient.resolveLiveUrl(acc, 1, forceMint = true))
+        assertEquals(listOf("st3-backup.test/create_link"), portalRequests)
+    }
+
+    @Test
     fun `a failed create_link on main never tries a backup and never moves the active server`() = runBlocking {
         StalkerClient.sessionFactory = { StalkerSession(it, fakePortal) }
         val acc = stalker("st2")
