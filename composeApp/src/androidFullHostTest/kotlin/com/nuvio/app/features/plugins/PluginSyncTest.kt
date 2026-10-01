@@ -177,7 +177,15 @@ class PluginSyncTest {
     fun aNeverSyncedDeviceKeepsItsAddonsOnAnEmptyServerAndUploadsThem(): Unit = runBlocking {
         // The B79 field report: desktop addons never reached the account, and the pull wiped them.
         AddonStorage.saveInstalledAddonUrls(1, listOf(manifestUrl))
+        // initialize() refreshes the enabled addon's manifest in the background. Settle it before
+        // queueing the sync responses: on a warm JVM that fetch otherwise wins the race to this
+        // shared FIFO mock, takes the pull's "[]" and leaves the pull an undecodable body.
+        respond("""{"id":"addon","name":"Cached addon","version":"1","resources":["stream"],"types":["movie"],"catalogs":[]}""")
         AddonRepository.initialize()
+        withTimeout(5_000) {
+            AddonRepository.uiState.first { state -> state.addons.none { it.isRefreshing } }
+        }
+        assertEquals("/plugin/manifest.json", assertNotNull(server.takeRequest(5, TimeUnit.SECONDS)).requestUrl?.encodedPath)
         respond("[]")
         respond("")
 
