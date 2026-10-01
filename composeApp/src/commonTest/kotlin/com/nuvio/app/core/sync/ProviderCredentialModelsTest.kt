@@ -6,6 +6,7 @@ import com.nuvio.app.features.player.PlayerSettingsUiState
 import com.nuvio.app.features.tmdb.TmdbSettings
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -134,4 +135,72 @@ class ProviderCredentialModelsTest {
         mdbList = MdbListSettings(),
         player = PlayerSettingsUiState(),
     )
+
+    @Test
+    fun `local edit pushes only the providers that changed`() {
+        val baseline = ProviderCredentialSnapshot(
+            profileId = 1,
+            values = listOf(
+                ProviderCredentialValue("debrid:torbox", "api_key", ""),
+                ProviderCredentialValue("mdblist", "api_key", ""),
+                ProviderCredentialValue("tmdb", "api_key", ""),
+            ),
+        )
+        val edited = baseline.copy(
+            values = listOf(
+                ProviderCredentialValue("debrid:torbox", "api_key", ""),
+                ProviderCredentialValue("mdblist", "api_key", ""),
+                ProviderCredentialValue("tmdb", "api_key", "new-tmdb"),
+            ),
+        )
+
+        assertEquals(
+            listOf("tmdb"),
+            edited.changedSince(baseline).values.map { it.provider },
+            "a stale blank MDBList placeholder must not ride along with the TMDB edit",
+        )
+    }
+
+    @Test
+    fun `clearing a key still pushes its blank`() {
+        val baseline = ProviderCredentialSnapshot(
+            profileId = 1,
+            values = listOf(
+                ProviderCredentialValue("mdblist", "api_key", "key"),
+                ProviderCredentialValue("tmdb", "api_key", ""),
+            ),
+        )
+        val cleared = baseline.copy(
+            values = listOf(
+                ProviderCredentialValue("mdblist", "api_key", ""),
+                ProviderCredentialValue("tmdb", "api_key", ""),
+            ),
+        )
+
+        assertEquals(
+            listOf(ProviderCredentialValue("mdblist", "api_key", "")),
+            cleared.changedSince(baseline).values,
+            "an explicit clear is a real change",
+        )
+    }
+
+    @Test
+    fun `no baseline pushes every value`() {
+        val snapshot = ProviderCredentialSnapshot(
+            profileId = 3,
+            values = listOf(ProviderCredentialValue("mdblist", "api_key", "key")),
+        )
+
+        assertEquals(snapshot, snapshot.changedSince(null), "first push carries the whole snapshot")
+    }
+
+    @Test
+    fun `unchanged snapshot pushes nothing`() {
+        val snapshot = ProviderCredentialSnapshot(
+            profileId = 1,
+            values = listOf(ProviderCredentialValue("mdblist", "api_key", "key")),
+        )
+
+        assertTrue(snapshot.changedSince(snapshot).values.isEmpty(), "nothing changed")
+    }
 }

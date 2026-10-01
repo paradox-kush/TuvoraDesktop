@@ -2551,4 +2551,7 @@
     <!-- /wave1 k1 -->
     <!-- wave1 k2 -->
     <string name="details_cast_tmdb_off_hint">Turn on TMDB enrichment to see people</string>
+    <!-- wave1 x1 -->
+    <string name="addons_not_synced_yet">Not synced yet</string>
+    <string name="addons_not_synced_retry_description">Retry syncing add-ons to your account</string>
 </resources>
