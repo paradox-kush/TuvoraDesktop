@@ -20,6 +20,28 @@ import org.jetbrains.compose.resources.stringResource
 internal fun playlistFormTitleOverride(editTitle: String, isEditing: () -> Boolean): (SettingsPage) -> String? =
     { page -> if (page == SettingsPage.IptvAddPlaylist && isEditing()) editTitle else null }
 
+/**
+ * B103 — the IPTV settings pages' navigation intents, pulled out of [IptvSettingsSectionImpl.renderPage]
+ * so the decision is testable without Compose. Opening a page goes FORWARD ([open]); finishing the
+ * Add/Edit form and the process-death bounce-backs go BACK ([back]) — exactly one pop to the parent.
+ * On the iPhone each settings page is a real nav-stack entry, so a forward "open the list" after a save
+ * stacked list → submitted form → list, and Back from the list returned to the submitted form.
+ */
+internal class IptvSettingsNavigation(
+    private val open: (SettingsPage) -> Unit,
+    private val back: () -> Unit,
+) {
+    fun openPlaylistForm() = open(SettingsPage.IptvAddPlaylist)
+    fun openContent() = open(SettingsPage.IptvContent)
+    fun openCategoryChecklist() = open(SettingsPage.IptvCategoryChecklist)
+
+    /** A successful Add/Edit save returns to the playlist list the form was opened from. */
+    fun playlistFormDone() = back()
+
+    /** Process-death restore lost the page's plain-var target: leave the page. */
+    fun bounceBackAfterRestore() = back()
+}
+
 /** Opaque carrier so shared settings code never names [XtreamUiState]. */
 private class IptvSettingsStateHandle(val xtream: XtreamUiState) : IptvSettingsState
 
@@ -54,8 +76,10 @@ internal object IptvSettingsSectionImpl : IptvSettingsSection {
         isTablet: Boolean,
         state: IptvSettingsState,
         onPageChange: (SettingsPage) -> Unit,
+        onNavigateBack: () -> Unit,
     ): Boolean {
         val xtreamState = (state as IptvSettingsStateHandle).xtream
+        val navigation = IptvSettingsNavigation(open = onPageChange, back = onNavigateBack)
         when (page) {
             SettingsPage.Iptv -> xtreamSettingsContent(
                 isTablet = isTablet,
@@ -63,42 +87,43 @@ internal object IptvSettingsSectionImpl : IptvSettingsSection {
                 onAddPlaylist = {
                     XtreamRepository.clearError()
                     XtreamAddPage.openAdd()
-                    onPageChange(SettingsPage.IptvAddPlaylist)
+                    navigation.openPlaylistForm()
                 },
                 onEditPlaylist = { account ->
                     XtreamRepository.clearError()
                     XtreamAddPage.openEdit(account.id)
-                    onPageChange(SettingsPage.IptvAddPlaylist)
+                    navigation.openPlaylistForm()
                 },
                 onOpenContent = { account ->
                     XtreamContentPage.open(account.id)
-                    onPageChange(SettingsPage.IptvContent)
+                    navigation.openContent()
                 },
             )
             SettingsPage.IptvAddPlaylist -> xtreamAddPlaylistContent(
                 isTablet = isTablet,
                 state = xtreamState,
-                onDone = { onPageChange(SettingsPage.Iptv) },
+                onDone = navigation::playlistFormDone,
             )
             SettingsPage.IptvContent -> if (XtreamContentPage.accountId == null) {
                 // Process-death restore: the page survives (rememberSaveable) but the
                 // target playlist id is a plain var — bounce back to the playlist list.
-                item { LaunchedEffect(Unit) { onPageChange(SettingsPage.Iptv) } }
+                item { LaunchedEffect(Unit) { navigation.bounceBackAfterRestore() } }
             } else {
                 xtreamContentSettingsContent(
                     isTablet = isTablet,
                     state = xtreamState,
                     onOpenType = { type ->
                         XtreamContentPage.openChecklist(type)
-                        onPageChange(SettingsPage.IptvCategoryChecklist)
+                        navigation.openCategoryChecklist()
                     },
                 )
             }
             SettingsPage.IptvCategoryChecklist -> if (
                 XtreamContentPage.accountId == null || XtreamContentPage.type == null
             ) {
-                // Process-death restore: the drilled-into type is a plain var — bounce back.
-                item { LaunchedEffect(Unit) { onPageChange(SettingsPage.Iptv) } }
+                // Process-death restore: the drilled-into type is a plain var — bounce back
+                // (pops to the content page, whose own guard then pops to the list).
+                item { LaunchedEffect(Unit) { navigation.bounceBackAfterRestore() } }
             } else {
                 xtreamCategoryChecklistContent(
                     isTablet = isTablet,
