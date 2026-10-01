@@ -119,6 +119,7 @@ class SearchIptvRefreshTest {
         override fun warmUpMatchIndexes(startDelayMs: Long) = Unit
         override suspend fun refreshDuePlaylists() = Unit
         override val servedStreamTypes: StateFlow<Set<String>> = MutableStateFlow(emptySet())
+        override val hasAnyPlaylist: StateFlow<Boolean> = MutableStateFlow(true)
     }
 
     private class FakeIptvSearch : IptvSearchProvider {
