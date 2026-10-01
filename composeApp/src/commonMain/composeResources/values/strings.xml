@@ -2537,4 +2537,7 @@
     <string name="settings_playback_stream_info_description">Briefly show quality, codec and bitrate when playback starts</string>
     <string name="announcement_dismiss">Dismiss announcement</string>
     <string name="external_link_open_failed_copied">Couldn't open a browser. Link copied: %1$s</string>
+    <!-- wave1 x1 -->
+    <string name="addons_not_synced_yet">Not synced yet</string>
+    <string name="addons_not_synced_retry_description">Retry syncing add-ons to your account</string>
 </resources>
