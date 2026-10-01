@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material3.TextButton
+import com.nuvio.app.core.ui.KeepRestoredItemsInView
 import com.nuvio.app.core.ui.LiveRecentActionTarget
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.core.ui.NuvioToastPlacement
@@ -25,6 +26,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -303,6 +305,8 @@ fun XtreamHubScreen(
                 else -> {
                     // Xtream panels ship real-world duplicate category ids — duplicate-safe keys.
                     val keyedCategories = displayedCategories.withDuplicateSafeLazyKeys { it.id }
+                    // K9: a row restored at the top (its only hidden channel un-hidden) comes back into view.
+                    KeepRestoredItemsInView(listState, remember(keyedCategories) { keyedCategories.map { it.lazyKey } })
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
@@ -491,9 +495,14 @@ private fun XtreamHubCategoryRow(
             XtreamHubTilePlaceholder(live = live, brush = brush)
         }
     } else {
+        // K9: Undo of a hide (or a Settings unhide) restores the card INTO view — the keyed row would
+        // otherwise keep the card that became first in place and leave the restored one off-screen.
+        val rowState = rememberLazyListState()
+        KeepRestoredItemsInView(rowState, remember(category.items) { category.items.map { it.id } })
         NuvioShelfSection(
             title = title,
             entries = category.items,
+            state = rowState,
             headerHorizontalPadding = sectionPadding,
             rowContentPadding = PaddingValues(horizontal = sectionPadding),
             viewAllPillSize = NuvioViewAllPillSize.Compact,
@@ -591,8 +600,11 @@ private fun XtreamHubCategoryPage(
             val columns = remember(maxWidth, landscape) {
                 xtreamCategoryGridColumns(maxWidth, landscape)
             }
+            val gridState = rememberLazyGridState()
+            KeepRestoredItemsInView(gridState, remember(category.items) { category.items.map { it.id } })
             LazyVerticalGrid(
                 columns = GridCells.Fixed(columns),
+                state = gridState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
                     start = sectionPadding,

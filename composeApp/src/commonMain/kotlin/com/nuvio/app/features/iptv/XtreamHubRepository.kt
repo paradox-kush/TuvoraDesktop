@@ -363,12 +363,14 @@ object XtreamHubRepository {
         com.nuvio.app.features.iptv.overlay.IptvCustomGroupPolicy.groupIdOf(categoryId) != null
 
     /**
-     * BUG #2: the browse hub's LIVE window must DROP hidden channels and APPLY renames per the
-     * channel overlay (categories were already handled by [applyCategoryOverlay]; individual channels
-     * were not). honorOrder=false — a paged surface must never reorder: a pin/position could belong on
-     * a page not yet fetched, and the hub's offsets index the RAW provider list. Dropping hidden rows
-     * therefore leaves paging correct: `hasMore` is derived from the raw window size (not this
-     * filtered list), and [mergePagedWindow] dedups by id and halts when a window adds nothing new.
+     * BUG #2: the browse hub's LIVE window APPLIES renames (and floats pins) per the channel overlay
+     * (categories were already handled by [applyCategoryOverlay]; individual channels were not).
+     * honorOrder=false — a paged surface must never reorder: a pin/position could belong on a page not
+     * yet fetched, and the hub's offsets index the RAW provider list.
+     *
+     * Hidden channels are KEPT in the cached window (K9) and dropped only when rows are shown
+     * ([applyCategoryOverlay] → visibleInHub): a window cached without them had nothing to give back
+     * when the channel was unhidden (Undo, or Settings), so the card stayed gone until a relaunch.
      * No-op when the overlay is empty. [entityIds] is parallel to [previews] (same order/length).
      */
     private fun applyLiveChannelOverlay(entityIds: List<String>, previews: List<MetaPreview>): List<MetaPreview> {
@@ -384,7 +386,7 @@ object XtreamHubRepository {
                 preview
             }
         }
-        return com.nuvio.app.features.iptv.overlay.IptvChannelOverlayPolicy.displayedWindow(
+        return com.nuvio.app.features.iptv.overlay.IptvChannelQuickActionsPolicy.hubRowWindow(
             rows = rows,
             overlay = channels,
             entityOf = { it.first },
