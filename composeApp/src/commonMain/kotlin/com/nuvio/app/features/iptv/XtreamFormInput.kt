@@ -32,4 +32,7 @@ internal data class XtreamFormInput(
     val serialNumber: String? = null,
     val deviceId: String? = null,
     val sendDeviceId: Boolean = true,
+    // Step 0.3: the backup-server rows as typed (Xtream base URLs / M3U playlist URLs / Stalker portal
+    // URLs, in priority order). Validated + normalized by BackupServerValidation when the account is built.
+    val backupUrls: List<String> = emptyList(),
 )

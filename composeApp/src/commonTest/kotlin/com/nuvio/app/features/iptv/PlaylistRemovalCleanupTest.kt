@@ -12,6 +12,7 @@ import com.nuvio.app.features.iptv.PlaylistRemovalTarget.MatchIndex
 import com.nuvio.app.features.iptv.PlaylistRemovalTarget.Overlay
 import com.nuvio.app.features.iptv.PlaylistRemovalTarget.RefreshStamp
 import com.nuvio.app.features.iptv.PlaylistRemovalTarget.SavedRefs
+import com.nuvio.app.features.iptv.PlaylistRemovalTarget.ServerFailover
 import com.nuvio.app.features.iptv.PlaylistRemovalTarget.SessionCaches
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -22,7 +23,7 @@ import kotlin.test.assertTrue
 /** The pure "what to purge for a removed playlist" plan. Twin of NuvioTV's PlaylistRemovalCleanupTest. */
 class PlaylistRemovalCleanupTest {
 
-    private val caches = setOf(ContentDb, MatchIndex, EpgMirror, RefreshStamp, CatchUp, SessionCaches, HubSelection)
+    private val caches = setOf(ContentDb, MatchIndex, EpgMirror, RefreshStamp, CatchUp, ServerFailover, SessionCaches, HubSelection)
     private val userData = setOf(Overlay, LiveChannels, SavedRefs, M3uFileCopy)
 
     @Test

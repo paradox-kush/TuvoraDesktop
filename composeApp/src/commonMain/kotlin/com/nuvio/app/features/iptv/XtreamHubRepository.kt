@@ -393,7 +393,8 @@ object XtreamHubRepository {
             if (isCurrent(accountId, section) && cachedCategories(accountId, section) == null) {
                 val failure = IptvLoadFailurePolicy.classify(
                     outcome.exceptionOrNull(),
-                    host = IptvPanelGuard.panelOriginUrlOf(account),
+                    // The server that actually failed last (Step 0.3b) — with backups that is not always the main one.
+                    host = IptvPanelGuard.panelOriginUrlOf(account, PlaylistServerFailover.lastFailedServerUrl(account) ?: account.baseUrl),
                 )
                 _uiState.update { it.copy(loadingCategories = false, loadError = failure) }
             }

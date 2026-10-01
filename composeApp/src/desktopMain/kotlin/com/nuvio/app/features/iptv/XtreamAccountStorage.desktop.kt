@@ -51,4 +51,10 @@ internal actual object XtreamAccountStorage {
     actual fun savePlaylistSyncStateJson(profileId: Int, json: String) {
         store.putString("xtream_sync_state_$profileId", json)
     }
+
+    actual fun loadServerFailoverJson(profileId: Int): String? = store.getString("xtream_server_failover_$profileId")
+
+    actual fun saveServerFailoverJson(profileId: Int, json: String) {
+        store.putString("xtream_server_failover_$profileId", json)
+    }
 }

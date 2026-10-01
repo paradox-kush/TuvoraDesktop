@@ -131,5 +131,8 @@ expect suspend fun httpStreamLines(
     // Extra request headers (P5, Stalker bulk-EPG streaming: Cookie/Referer/Authorization —
     // a MAG portal rejects bare requests). Additive default keeps every existing caller as-is.
     headers: Map<String, String> = emptyMap(),
+    // Stop (and close the connection) after handing out this many bytes. The M3U failover probe reads
+    // ~1 KB of a playlist that may be 190+ MB; Long.MAX_VALUE = read it all, as every other caller does.
+    maxBytes: Long = Long.MAX_VALUE,
     onLine: (String) -> Unit,
 )

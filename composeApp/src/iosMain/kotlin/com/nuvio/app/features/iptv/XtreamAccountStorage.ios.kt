@@ -59,4 +59,11 @@ internal actual object XtreamAccountStorage {
     actual fun savePlaylistSyncStateJson(profileId: Int, json: String) {
         NSUserDefaults.standardUserDefaults.setObject(json, forKey = "xtream_sync_state_$profileId")
     }
+
+    actual fun loadServerFailoverJson(profileId: Int): String? =
+        NSUserDefaults.standardUserDefaults.stringForKey("xtream_server_failover_$profileId")
+
+    actual fun saveServerFailoverJson(profileId: Int, json: String) {
+        NSUserDefaults.standardUserDefaults.setObject(json, forKey = "xtream_server_failover_$profileId")
+    }
 }

@@ -118,9 +118,24 @@ object XmltvClient {
                 if (XmltvIngestWindow.keeps(p.startMs, p.endMs, nowMs)) collector.add(p)
             },
         )
-        streamGuideLines(source, acc.userAgent(), acc.dnsProvider) { line ->
-            parser.feed(line)
-            parser.feed("\n")
+        if (source.kind == EpgSourceKind.XTREAM_DERIVED) {
+            // The panel's own xmltv.php is an EPG catalog call: it fails over with the playlist's
+            // servers (Step 0.3) — until the first line reached the parser, never mid-guide.
+            var delivered = false
+            com.nuvio.app.features.iptv.PlaylistServerFailover.run(acc, canRetry = { !delivered }, probe = { a -> com.nuvio.app.features.iptv.XtreamClient.failoverProbe(a) }) { a ->
+                val derived = derivedXmltvUrl(a) ?: source.url
+                streamGuideLines(EpgSource(derived, source.kind), acc.userAgent(), acc.dnsProvider) { line ->
+                    delivered = true
+                    parser.feed(line)
+                    parser.feed("\n")
+                }
+            }
+        } else {
+            // A custom EPG URL or the playlist's url-tvg lives on its own host — nothing to fail over to.
+            streamGuideLines(source, acc.userAgent(), acc.dnsProvider) { line ->
+                parser.feed(line)
+                parser.feed("\n")
+            }
         }
         parser.finish()
         collector.finish()
