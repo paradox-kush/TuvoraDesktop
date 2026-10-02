@@ -25,6 +25,13 @@ internal object ExternalLinkPolicy {
         data class CopyFallback(val url: String) : Outcome
     }
 
+    /** See [ContactLinkRules.isSafe]: https on a public-looking host or a plain mailto, nothing else. */
+    fun isSafeContactLink(url: String): Boolean = ContactLinkRules.isSafe(url)
+
+    /** [open], but only for a link [isSafeContactLink] accepts; anything else is ignored (never launched). */
+    fun openContact(url: String, launch: (String) -> Unit): Outcome =
+        if (isSafeContactLink(url)) open(url, launch) else Outcome.Ignored
+
     fun open(url: String, launch: (String) -> Unit): Outcome {
         val target = url.trim()
         if (target.isEmpty()) return Outcome.Ignored

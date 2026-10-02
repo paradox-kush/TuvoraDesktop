@@ -82,6 +82,8 @@ import kotlinx.coroutines.flow.emptyFlow
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.iptv_group_hidden_toast
 import nuvio.composeapp.generated.resources.action_retry
+import nuvio.composeapp.generated.resources.provider_hub_contact_label
+import nuvio.composeapp.generated.resources.provider_setup_have_code
 import nuvio.composeapp.generated.resources.compose_iptv_hub_add_provider
 import nuvio.composeapp.generated.resources.compose_iptv_hub_empty_message
 import nuvio.composeapp.generated.resources.compose_iptv_hub_empty_title
@@ -126,6 +128,7 @@ fun XtreamHubScreen(
     onAddProvider: () -> Unit,
     modifier: Modifier = Modifier,
     scrollToTopRequests: Flow<Unit> = emptyFlow(),
+    onEnterSetupCode: () -> Unit = {},
 ) {
     val state by XtreamHubRepository.uiState.collectAsStateWithLifecycle()
     val localLibraryItems by LibraryRepository.localItems.collectAsStateWithLifecycle()
@@ -146,7 +149,7 @@ fun XtreamHubScreen(
     // populated hub for that beat read as data loss (field-reported flash).
     if (state.accounts.isEmpty()) {
         if (state.accountsLoaded) {
-            XtreamHubNoPlaylistState(onAddProvider = onAddProvider, modifier = modifier)
+            XtreamHubNoPlaylistState(onAddProvider = onAddProvider, onEnterSetupCode = onEnterSetupCode, modifier = modifier)
         }
         return
     }
@@ -289,6 +292,11 @@ fun XtreamHubScreen(
                         IptvLoadFailurePolicy.Kind.REFUSED -> failure.portalText ?: generic
                         IptvLoadFailurePolicy.Kind.UNREACHABLE -> generic
                     }
+                    // Step 2: a managed playlist's provider is who can fix a refusal, so their contacts sit
+                    // under Retry (only the ones they set).
+                    val managedProfile = com.nuvio.app.features.profiles.ProfileRepository.activeProfileId
+                    val managedMap by ManagedInfoRepository.state.collectAsStateWithLifecycle()
+                    val provider = state.selectedAccountId?.let { (managedMap[managedProfile] ?: emptyMap())[it] }
                     XtreamHubMessageCard(
                         title = title,
                         // The breadcrumb rides the message rather than a new card slot: it is then
@@ -298,6 +306,18 @@ fun XtreamHubScreen(
                         actionLabel = stringResource(Res.string.action_retry),
                         onAction = { XtreamHubRepository.retryCategories() },
                         sectionPadding = sectionPadding,
+                        footer = provider?.takeIf { !it.support.isEmpty }?.let { info ->
+                            {
+                                androidx.compose.foundation.layout.Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(NuvioTokens.Space.s10)) {
+                                    Text(
+                                        text = stringResource(Res.string.provider_hub_contact_label, info.providerName),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.nuvio.colors.textMuted,
+                                    )
+                                    ProviderContactButtons(info.support.links())
+                                }
+                            }
+                        },
                     )
                 }
 
@@ -837,6 +857,7 @@ private fun XtreamHubMessageCard(
     sectionPadding: Dp,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
+    footer: (@Composable () -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier
@@ -848,12 +869,13 @@ private fun XtreamHubMessageCard(
             message = message,
             actionLabel = actionLabel,
             onActionClick = onAction,
+            footer = footer,
         )
     }
 }
 
 @Composable
-private fun XtreamHubNoPlaylistState(onAddProvider: () -> Unit, modifier: Modifier = Modifier) {
+private fun XtreamHubNoPlaylistState(onAddProvider: () -> Unit, onEnterSetupCode: () -> Unit, modifier: Modifier = Modifier) {
     val tokens = MaterialTheme.nuvio
     BoxWithConstraints(modifier = modifier.fillMaxSize().background(tokens.colors.background)) {
         val sectionPadding = homeSectionHorizontalPaddingForWidth(maxWidth.value)
@@ -870,6 +892,8 @@ private fun XtreamHubNoPlaylistState(onAddProvider: () -> Unit, modifier: Modifi
                 message = stringResource(Res.string.compose_iptv_hub_no_provider_message),
                 actionLabel = stringResource(Res.string.compose_iptv_hub_add_provider),
                 onActionClick = onAddProvider,
+                secondaryActionLabel = stringResource(Res.string.provider_setup_have_code),
+                onSecondaryActionClick = onEnterSetupCode,
             )
         }
     }

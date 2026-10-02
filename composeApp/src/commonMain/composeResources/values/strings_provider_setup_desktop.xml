@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Desktop-only strings for the master-detail IPTV settings (Step 2). The shared provider-setup strings are in
+  strings_provider_setup.xml (identical to Mobile); only what the Desktop layout adds lives here.
+-->
+<resources>
+    <string name="provider_desktop_list_heading">Playlists</string>
+    <string name="provider_desktop_add_row">Add a playlist</string>
+    <string name="provider_desktop_guide_regions">Guide regions</string>
+    <string name="provider_desktop_loading">Loading…</string>
+    <string name="provider_desktop_disabled_suffix">disabled</string>
+    <string name="provider_desktop_back_to_list">Playlists</string>
+    <string name="provider_desktop_empty_list">No playlists yet</string>
+
+    <string name="provider_desktop_menu_open">Open</string>
+    <string name="provider_desktop_menu_rename">Rename</string>
+    <string name="provider_desktop_menu_enable">Enable</string>
+    <string name="provider_desktop_menu_disable">Disable</string>
+    <string name="provider_desktop_menu_more">More actions</string>
+    <string name="provider_desktop_menu_locked_reason">Managed by %1$s</string>
+
+    <string name="provider_desktop_add_title">Add a playlist</string>
+    <string name="provider_desktop_manual_heading">Or add a playlist yourself</string>
+    <string name="provider_desktop_route_xtream">Xtream</string>
+    <string name="provider_desktop_route_xtream_desc">Server, username and password</string>
+    <string name="provider_desktop_route_stalker">Stalker</string>
+    <string name="provider_desktop_route_stalker_desc">Portal address and MAC</string>
+    <string name="provider_desktop_route_m3u_link">M3U link</string>
+    <string name="provider_desktop_route_m3u_link_desc">The address of a playlist file</string>
+    <string name="provider_desktop_route_m3u_file">M3U file</string>
+    <string name="provider_desktop_route_m3u_file_desc">A playlist file on this computer</string>
+    <string name="provider_desktop_checking">Checking…</string>
+
+    <string name="provider_desktop_section_manage">Manage</string>
+    <string name="provider_desktop_section_library">Your library</string>
+    <string name="provider_desktop_rename_hint">Click to rename</string>
+    <string name="provider_desktop_rename_save">Save</string>
+    <string name="provider_desktop_contact_heading">Contact %1$s</string>
+    <string name="provider_desktop_catalog_counts">%1$d %2$s</string>
+</resources>

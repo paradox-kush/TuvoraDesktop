@@ -21,6 +21,8 @@ interface IptvHubContent {
         onFavoriteLiveChannel: (String) -> Unit,
         onAddProvider: () -> Unit,
         scrollToTopRequests: Flow<Unit>,
+        /** The empty screen's "I have a setup code" (Step 2). */
+        onEnterSetupCode: () -> Unit,
     )
 }
 

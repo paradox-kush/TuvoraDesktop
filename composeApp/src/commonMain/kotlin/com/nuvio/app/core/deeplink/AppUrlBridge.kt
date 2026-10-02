@@ -20,6 +20,15 @@ internal sealed interface AppDeepLink {
     ) : AppDeepLink
 
     data object Downloads : AppDeepLink
+
+    /**
+     * A provider's setup link (`https://tuvora.co/s/<code>`, or `nuvio://s/<code>`). Carries the code
+     * text IN MEMORY ONLY (this repository's pending link is never persisted, logged or reported); the
+     * shell hands it to the setup-code port, which keeps it for at most 30 minutes.
+     */
+    data class SetupCode(val code: String) : AppDeepLink {
+        override fun toString(): String = "SetupCode(code=[redacted])"
+    }
 }
 
 internal object AppDeepLinkRepository {
@@ -64,12 +73,27 @@ fun buildDownloadsDeepLinkUrl(): String = "nuvio://downloads"
 internal fun parseAppDeepLink(url: String): AppDeepLink? {
     val parsedUrl = runCatching { Url(url) }.getOrNull() ?: return null
     val scheme = parsedUrl.protocol.name.lowercase()
+    if (scheme == "https" || scheme == "http") {
+        // Exactly what the manifest filter and the app-site association claim: https on tuvora.co (not www, not http).
+        val host = parsedUrl.host.lowercase()
+        val segments = parsedUrl.pathSegments.map(String::trim).filter(String::isNotBlank)
+        return if (scheme == "https" && host == "tuvora.co" && segments.firstOrNull() == "s") {
+            segments.getOrNull(1)?.let(AppDeepLink::SetupCode)
+        } else {
+            null
+        }
+    }
     if (scheme == "stremio") {
         return if (looksLikeAddonHost(parsedUrl.host.lowercase())) {
             customSchemeToHttpsUrl(url, scheme)?.let(AppDeepLink::AddonInstall)
         } else {
             null
         }
+    }
+    if (scheme == "tuvora") {
+        // Desktop: tuvora://s/<code>, the scheme the installers register for a provider's setup link.
+        val segments = parsedUrl.pathSegments.map(String::trim).filter(String::isNotBlank)
+        return if (parsedUrl.host.lowercase() == "s") segments.firstOrNull()?.let(AppDeepLink::SetupCode) else null
     }
     if (scheme != "nuvio") return null
 
@@ -92,6 +116,9 @@ internal fun parseAppDeepLink(url: String): AppDeepLink? {
         "imdb", "tmdb" -> parseProviderMetaDeepLink(host, pathSegments, parsedUrl)
 
         "downloads" -> AppDeepLink.Downloads
+
+        // nuvio://s/<code> — the same setup link in the app's own scheme.
+        "s" -> pathSegments.firstOrNull()?.let(AppDeepLink::SetupCode)
 
         "auth" -> null
 

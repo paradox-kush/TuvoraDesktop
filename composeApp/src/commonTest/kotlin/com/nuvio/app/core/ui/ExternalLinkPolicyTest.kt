@@ -60,4 +60,31 @@ class ExternalLinkPolicyTest {
         ExternalLinkPolicy.open("  $url  ") { launched += it }
         assertEquals(listOf(url), launched)
     }
+
+    // ---- security L10: a provider-supplied contact link is https or mailto only ----------------------------
+
+    @Test
+    fun `contact links are https or mailto and nothing else`() {
+        assertTrue(ExternalLinkPolicy.isSafeContactLink("https://wa.me/447700900123"))
+        assertTrue(ExternalLinkPolicy.isSafeContactLink("https://t.me/acme_tv"))
+        assertTrue(ExternalLinkPolicy.isSafeContactLink("mailto:help@acme.example.com"))
+        assertTrue(ExternalLinkPolicy.isSafeContactLink("https://acme.example.com/help"))
+        for (bad in listOf(
+            "http://acme.example.com", "javascript:alert(1)", "intent://x#Intent;scheme=http;end", "file:///etc/passwd",
+            "tel:+447700900123", "sms:+447700900123", "nuvio://downloads", "https://192.168.0.1/", "https://localhost/", "https://intranet/",
+            "https://user:pw@acme.example.com/", "mailto:a@b.co?cc=x@y.co", "mailto:", "", "   ",
+        )) {
+            assertTrue(!ExternalLinkPolicy.isSafeContactLink(bad), "must be refused: $bad")
+        }
+    }
+
+    @Test
+    fun `an unsafe contact link is ignored without calling the opener`() {
+        var called = false
+        assertEquals(ExternalLinkPolicy.Outcome.Ignored, ExternalLinkPolicy.openContact("javascript:alert(1)") { called = true })
+        assertTrue(!called)
+        val launched = mutableListOf<String>()
+        assertEquals(ExternalLinkPolicy.Outcome.Opened, ExternalLinkPolicy.openContact("https://t.me/acme_tv") { launched += it })
+        assertEquals(listOf("https://t.me/acme_tv"), launched)
+    }
 }

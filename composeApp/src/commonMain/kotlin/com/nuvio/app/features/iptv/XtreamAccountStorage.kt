@@ -37,4 +37,8 @@ internal expect object XtreamAccountStorage {
      *  profile-scoped. Device-local: which server answered last is a fact about THIS device's network. */
     fun loadServerFailoverJson(profileId: Int): String?
     fun saveServerFailoverJson(profileId: Int, json: String)
+    /** Provider-managed playlist info (JSON list of ManagedInfo), profile-scoped. A device-local cache of
+     *  `get_managed_playlists`: it lets an offline cold start still protect a managed playlist from a silent detach. */
+    fun loadManagedInfoJson(profileId: Int): String?
+    fun saveManagedInfoJson(profileId: Int, json: String)
 }

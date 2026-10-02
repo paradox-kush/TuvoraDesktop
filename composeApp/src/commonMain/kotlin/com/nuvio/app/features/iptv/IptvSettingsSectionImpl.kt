@@ -84,9 +84,9 @@ internal object IptvSettingsSectionImpl : IptvSettingsSection {
             SettingsPage.Iptv -> xtreamSettingsContent(
                 isTablet = isTablet,
                 state = xtreamState,
-                onAddPlaylist = {
+                onAddManual = { type ->
                     XtreamRepository.clearError()
-                    XtreamAddPage.openAdd()
+                    XtreamAddPage.openAdd(type)
                     navigation.openPlaylistForm()
                 },
                 onEditPlaylist = { account ->

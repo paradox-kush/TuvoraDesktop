@@ -15,6 +15,7 @@ internal object XtreamHubContent : IptvHubContent {
         onFavoriteLiveChannel: (String) -> Unit,
         onAddProvider: () -> Unit,
         scrollToTopRequests: Flow<Unit>,
+        onEnterSetupCode: () -> Unit,
     ) {
         XtreamHubScreen(
             modifier = modifier,
@@ -23,6 +24,7 @@ internal object XtreamHubContent : IptvHubContent {
             onFavoriteLiveChannel = onFavoriteLiveChannel,
             onAddProvider = onAddProvider,
             scrollToTopRequests = scrollToTopRequests,
+            onEnterSetupCode = onEnterSetupCode,
         )
     }
 }
