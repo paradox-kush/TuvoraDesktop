@@ -63,4 +63,53 @@ class AppUrlBridgeTest {
     fun `does not treat non-host stremio link as addon install`() {
         assertNull(parseAppDeepLink("stremio://detail/series/tt0944947"))
     }
+
+    @Test
+    fun `parses a provider setup link`() {
+        assertEquals(
+            AppDeepLink.SetupCode("TUV-ABCD-EFGH-JKMN"),
+            parseAppDeepLink("https://tuvora.co/s/TUV-ABCD-EFGH-JKMN"),
+        )
+        assertEquals(
+            AppDeepLink.SetupCode("TUV-ABCD-EFGH-JKMN"),
+            parseAppDeepLink("https://tuvora.co/s/TUV-ABCD-EFGH-JKMN?utm=x"),
+        )
+        assertEquals(AppDeepLink.SetupCode("TUV-ABCD-EFGH-JKMN"), parseAppDeepLink("nuvio://s/TUV-ABCD-EFGH-JKMN"))
+    }
+
+    @Test
+    fun `only the setup path on the Tuvora host is a setup link`() {
+        assertNull(parseAppDeepLink("https://tuvora.co/s"))
+        assertNull(parseAppDeepLink("https://tuvora.co/privacy"))
+        assertNull(parseAppDeepLink("https://evil.example.com/s/TUV-ABCD-EFGH-JKMN"))
+        assertNull(parseAppDeepLink("https://tuvora.co.evil.example.com/s/TUV-ABCD-EFGH-JKMN"))
+        assertNull(parseAppDeepLink("nuvio://s"))
+    }
+
+    @Test
+    fun `the setup link is exactly https on tuvora dot co like the manifest filter and the app-site association`() {
+        // Security L12: the parser must not be wider than what the platforms verify.
+        assertNull(parseAppDeepLink("http://tuvora.co/s/TUV-ABCD-EFGH-JKMN"), "plain http")
+        assertNull(parseAppDeepLink("https://www.tuvora.co/s/TUV-ABCD-EFGH-JKMN"), "www is not a claimed host")
+        assertNull(parseAppDeepLink("https://TUVORA.CO.evil.example/s/TUV-ABCD-EFGH-JKMN"))
+        assertEquals(AppDeepLink.SetupCode("TUV-ABCD-EFGH-JKMN"), parseAppDeepLink("HTTPS://Tuvora.Co/s/TUV-ABCD-EFGH-JKMN"), "scheme and host are case-insensitive")
+    }
+
+    @Test
+    fun `a setup link never prints its code`() {
+        val link = parseAppDeepLink("https://tuvora.co/s/TUV-ABCD-EFGH-JKMN")
+        assertEquals(false, link.toString().contains("ABCD"), "toString must not leak the code: $link")
+    }
+
+    // ---- Desktop: the tuvora:// scheme the installers register ----
+
+    @Test
+    fun `tuvora scheme carries a setup link on the s host only`() {
+        assertEquals(AppDeepLink.SetupCode("TUV-ABCD-EFGH-JKMN"), parseAppDeepLink("tuvora://s/TUV-ABCD-EFGH-JKMN"))
+        assertEquals(AppDeepLink.SetupCode("TUV-ABCD-EFGH-JKMN"), parseAppDeepLink("TUVORA://S/TUV-ABCD-EFGH-JKMN"))
+        assertNull(parseAppDeepLink("tuvora://s"), "no code")
+        assertNull(parseAppDeepLink("tuvora://meta?type=movie&id=tt1"), "tuvora is not a second spelling of nuvio")
+        assertNull(parseAppDeepLink("tuvora://downloads"))
+        assertNull(parseAppDeepLink("tuvora://evil.example.com/s/TUV-ABCD-EFGH-JKMN"))
+    }
 }

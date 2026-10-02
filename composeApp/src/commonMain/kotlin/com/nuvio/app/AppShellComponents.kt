@@ -172,6 +172,7 @@ internal data class AppTabActions(
     val onPosterLongClick: ((MetaPreview) -> Unit)? = null,
     // Fork: IPTV + Sports hubs (content comes through the neutral contract ports).
     val onIptvAddProvider: () -> Unit = {},
+    val onIptvEnterSetupCode: () -> Unit = {},
     val onPlayLiveChannel: (String) -> Unit = {},
     val onPlaySportsReplay: (SportsReplay) -> Unit = {},
     val onIptvFavoriteChannel: (String) -> Unit = {},
@@ -300,6 +301,7 @@ internal fun AppTabHost(
                     onFavoriteLiveChannel = actions.onIptvFavoriteChannel,
                     onAddProvider = actions.onIptvAddProvider,
                     scrollToTopRequests = requests.iptvScrollToTopRequests,
+                    onEnterSetupCode = actions.onIptvEnterSetupCode,
                 )
             }
 

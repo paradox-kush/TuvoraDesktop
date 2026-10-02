@@ -73,6 +73,8 @@ fun main(args: Array<String>) {
     configureDesktopChrome()
     configureLinuxSwingGlobalsBeforeAwt()
     installDesktopOpenUriHandler()
+    // Windows/Linux: make tuvora:// resolve to this app (macOS declares it in Info.plist). Best effort, off-thread.
+    DesktopUrlSchemeRegistration.registerBestEffort()
     handleDesktopLaunchArgs(args)
     preloadNativePlayerBridgeAsync()
     // Load cached profile data synchronously so the profile color is available
@@ -282,4 +284,6 @@ private fun handleDesktopLaunchArgs(args: Array<String>) {
 
 private fun isDesktopAppUrl(value: String): Boolean =
     value.startsWith("nuvio://", ignoreCase = true) ||
-        value.startsWith("stremio://", ignoreCase = true)
+        value.startsWith("stremio://", ignoreCase = true) ||
+        // A provider's setup link (tuvora://s/<code>); handleAppUrl routes it to the setup-code entry.
+        value.startsWith("tuvora://", ignoreCase = true)

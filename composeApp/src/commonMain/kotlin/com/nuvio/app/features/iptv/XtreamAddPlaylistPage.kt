@@ -32,8 +32,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.rounded.Lock
+import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.provider_edit_type_locked_note
+import org.jetbrains.compose.resources.stringResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import nuvio.composeapp.generated.resources.provider_edit_banner_message
+import nuvio.composeapp.generated.resources.provider_edit_banner_title
+import nuvio.composeapp.generated.resources.provider_edit_locked_field
+import nuvio.composeapp.generated.resources.provider_edit_locked_note
+import nuvio.composeapp.generated.resources.provider_edit_name_label
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.NuvioDropdownChip
@@ -55,9 +65,14 @@ internal object XtreamAddPage {
 
     val isEdit: Boolean get() = editId != null
 
-    /** Fresh "Add Playlist". */
-    fun openAdd() {
+    /** The manual route the person picked on the "Add a playlist" pane (Desktop): the form opens on it. */
+    var initialType: XtreamSourceType = XtreamSourceType.XTREAM
+        private set
+
+    /** Fresh "Add Playlist", on [type] (the manual route chosen on the add pane). */
+    fun openAdd(type: XtreamSourceType = XtreamSourceType.XTREAM) {
         editId = null
+        initialType = type
     }
 
     /** Edit an existing playlist (prefills from state). */
@@ -116,6 +131,12 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
 ) {
     item {
         val editing = XtreamAddPage.editId?.let { id -> state.accounts.firstOrNull { it.id == id } }
+        // Step 2: a managed playlist's Edit is a name-only screen with the rest locked.
+        val managedInfo = editing?.let { ManagedInfoRepository.infoFor(com.nuvio.app.features.profiles.ProfileRepository.activeProfileId, it.id) }
+        if (editing != null && managedInfo != null) {
+            ManagedEditContent(isTablet = isTablet, state = state, account = editing, info = managedInfo, onDone = onDone)
+            return@item
+        }
 
         // Prefilled once per target playlist (add mode -> blank). Fields are plain remembered state.
         val editingIsM3uUrl = editing?.sourceType == SOURCE_TYPE_M3U_URL
@@ -127,6 +148,7 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
                     editingIsM3uUrl -> XtreamSourceType.URL
                     editingIsM3uFile -> XtreamSourceType.FILE
                     editingIsStalker -> XtreamSourceType.STALKER
+                    editing == null -> XtreamAddPage.initialType
                     else -> XtreamSourceType.XTREAM
                 }
             )
@@ -167,6 +189,8 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
             SourceTypeSection(
                 isTablet = isTablet,
                 selected = sourceType,
+                // The type is decided when a playlist is added: in edit mode no chip can be selected.
+                editing = XtreamAddPage.isEdit,
                 onSelected = { sourceType = it },
             )
 
@@ -331,9 +355,11 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
 private fun SourceTypeSection(
     isTablet: Boolean,
     selected: XtreamSourceType,
+    editing: Boolean,
     onSelected: (XtreamSourceType) -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
+    val selectable = ManagedPlaylistPolicy.sourceTypeSelectable(editing)
     SettingsSection(title = "Source Type", isTablet = isTablet) {
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
@@ -343,8 +369,8 @@ private fun SourceTypeSection(
             XtreamSourceType.entries.forEach { type ->
                 FilterChip(
                     selected = selected == type,
-                    enabled = type.enabled,
-                    onClick = { if (type.enabled) onSelected(type) },
+                    enabled = type.enabled && selectable,
+                    onClick = { if (type.enabled && selectable) onSelected(type) },
                     label = {
                         Text(
                             text = if (type.enabled) type.label else "${type.label} · Soon",
@@ -363,9 +389,19 @@ private fun SourceTypeSection(
                         selectedLabelColor = tokens.colors.textPrimary,
                         labelColor = tokens.colors.textSecondary,
                         disabledLabelColor = tokens.colors.textDisabled,
+                        // Locked in edit mode, not greyed out: the chosen type still reads as chosen.
+                        disabledSelectedContainerColor = tokens.colors.accent.copy(alpha = tokens.opacity.selected),
                     ),
                 )
             }
+        }
+        if (editing) {
+            Spacer(Modifier.height(NuvioTokens.Space.s8))
+            Text(
+                text = stringResource(Res.string.provider_edit_type_locked_note),
+                style = MaterialTheme.typography.bodySmall,
+                color = tokens.colors.textMuted,
+            )
         }
     }
 }
@@ -870,7 +906,7 @@ private fun SaveSection(
 
 /** OutlinedTextField pre-styled with the Nuvio settings token colors (marigold focus border). */
 @Composable
-private fun FormOutlinedField(
+internal fun FormOutlinedField(
     value: String,
     onValueChange: (String) -> Unit,
     label: String,
@@ -901,3 +937,106 @@ private fun FormOutlinedField(
         ),
     )
 }
+
+
+/**
+ * Edit Playlist for a MANAGED playlist: a banner saying why, the name as the only editable field, and the
+ * server/login shown as a locked row (locked, not hidden). The save goes through the normal edit path,
+ * which for a managed playlist is a rename built from the pulled account ([ManagedEditPolicy]).
+ */
+@Composable
+private fun ManagedEditContent(
+    isTablet: Boolean,
+    state: XtreamUiState,
+    account: XtreamAccount,
+    info: ManagedInfo,
+    onDone: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    var name by remember(account.id) { mutableStateOf(account.name) }
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(MaterialTheme.nuvio.spacing.listGap),
+    ) {
+        com.nuvio.app.core.ui.NuvioSurfaceCard {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s12)) {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Rounded.Lock,
+                    contentDescription = null,
+                    tint = tokens.colors.accent,
+                    modifier = Modifier.size(tokens.icons.lg),
+                )
+                Column {
+                    Text(
+                        text = stringResource(Res.string.provider_edit_banner_title, info.providerName),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = tokens.colors.textPrimary,
+                    )
+                    Text(
+                        text = stringResource(Res.string.provider_edit_banner_message),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = tokens.colors.textMuted,
+                    )
+                }
+            }
+        }
+        SettingsSection(title = stringResource(Res.string.provider_edit_name_label), isTablet = isTablet) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = NuvioTokens.Space.s2),
+                verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s12),
+            ) {
+                FormOutlinedField(value = name, onValueChange = { name = it }, label = stringResource(Res.string.provider_edit_name_label))
+                LockedFieldRow(
+                    label = stringResource(Res.string.provider_edit_locked_field),
+                    value = stringResource(Res.string.provider_edit_locked_note),
+                )
+            }
+        }
+        SaveSection(
+            isTablet = isTablet,
+            state = state,
+            isEdit = true,
+            canSave = name.isNotBlank(),
+            onSave = {
+                val input = XtreamFormInput(
+                    serverUrl = account.baseUrl, username = account.username, password = account.password, name = name,
+                    epgUrl = account.epgUrl, dnsProvider = account.dnsProvider, autoRefreshHours = account.autoRefreshHours,
+                    sourceType = account.sourceType,
+                )
+                XtreamRepository.editFromForm(account.id, input) { ok -> if (ok) onDone() }
+            },
+        )
+    }
+}
+
+/** A dashed, non-interactive field stand-in for something the person cannot change here. */
+@Composable
+private fun LockedFieldRow(label: String, value: String) {
+    val tokens = MaterialTheme.nuvio
+    val dash = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(12f, 10f))
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .androidx_drawDashedBorder(tokens.colors.borderDefault.copy(alpha = tokens.opacity.medium), dash)
+            .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s14),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s12),
+    ) {
+        androidx.compose.material3.Icon(
+            imageVector = androidx.compose.material.icons.Icons.Rounded.Lock,
+            contentDescription = null,
+            tint = tokens.colors.textMuted,
+            modifier = Modifier.size(tokens.icons.md),
+        )
+        Column {
+            Text(text = label, style = MaterialTheme.typography.bodyLarge, color = tokens.colors.textPrimary)
+            Text(text = value, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textMuted)
+        }
+    }
+}
+
+private fun Modifier.androidx_drawDashedBorder(color: androidx.compose.ui.graphics.Color, effect: androidx.compose.ui.graphics.PathEffect): Modifier =
+    this.drawBehind {
+        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx(), pathEffect = effect)
+        drawRoundRect(color = color, style = stroke, cornerRadius = androidx.compose.ui.geometry.CornerRadius(12.dp.toPx()))
+    }

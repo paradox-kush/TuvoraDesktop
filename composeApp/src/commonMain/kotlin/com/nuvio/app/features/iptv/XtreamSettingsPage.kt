@@ -1,66 +1,29 @@
 package com.nuvio.app.features.iptv
 
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.nuvio.app.core.ui.NuvioStatusModal
-import com.nuvio.app.core.ui.nuvio
-import com.nuvio.app.features.settings.SettingsGroup
-import kotlinx.coroutines.launch
-import com.nuvio.app.features.settings.SettingsGroupDivider
-import com.nuvio.app.features.settings.SettingsNavigationRow
-import com.nuvio.app.features.settings.SettingsSection
 
 /**
- * Xtream IPTV accounts page. "Add Playlist" opens the full form sub-page (SettingsPage.IptvAddPlaylist);
- * tapping a saved account opens an actions dialog (Edit -> the same form in edit mode, Content, Enable,
- * Remove playlist — confirmed first, see [PlaylistActionsPolicy]). KMP twin of NuvioTV's XtreamSettingsScreen.
+ * Desktop IPTV settings (Step 2): master-detail, no popup. The playlist list is on the left, one pane on the
+ * right — a playlist's details, the "Add a playlist" page (setup code first, four manual routes below), or the
+ * setup preview. See [IptvMasterDetail]. "Add a playlist" manual routes and "Edit server and login" open the
+ * existing form page ([SettingsPage.IptvAddPlaylist]); content settings keep their own page.
  */
 internal fun LazyListScope.xtreamSettingsContent(
     isTablet: Boolean,
     state: XtreamUiState,
-    onAddPlaylist: () -> Unit = {},
+    onAddManual: (XtreamSourceType) -> Unit = {},
     onEditPlaylist: (XtreamAccount) -> Unit = {},
     onOpenContent: (XtreamAccount) -> Unit = {},
 ) {
     item {
-        var actionsFor by remember { mutableStateOf<XtreamAccount?>(null) }
-        var pendingRemoval by remember { mutableStateOf<XtreamAccount?>(null) }
-        val rematchScope = rememberCoroutineScope()
-        var hiddenFor by remember { mutableStateOf<XtreamAccount?>(null) }
-        val hiddenController = remember(rematchScope) {
-            com.nuvio.app.features.iptv.overlay.IptvHiddenItemsController(rematchScope)
-        }
-        val hiddenState by hiddenController.state.collectAsStateWithLifecycle()
-        // A first catalog build runs for minutes on a large panel (~17 on a measured 468k items),
-        // and this screen showed NOTHING while it happened — the `indexing` flow existed but had no
-        // consumer. NuvioTV has shown a status here all along.
-        val indexingAccounts by com.nuvio.app.features.iptv.match.XtreamTmdbResolver.indexing
-            .collectAsStateWithLifecycle()
-        val indexProgress by com.nuvio.app.features.iptv.match.XtreamMatchIndex.buildProgress
-            .collectAsStateWithLifecycle()
-        // Step 0.3: playlists currently served by a backup server.
-        val activeServers by XtreamRepository.activeServers.collectAsStateWithLifecycle()
-
-        // The guide mirror indexes every region it can find, but a household uses a fraction of
-        // it (2,035 of 15,397 channels on a measured panel). Unselected regions are never stored,
-        // so this trims the on-device index, not just the display.
+        // The guide mirror indexes every region it can find, but a household uses a fraction of it (2,035 of 15,397
+        // channels on a measured panel). Unselected regions are never stored, so this trims the on-device index.
         var showRegionPicker by remember { mutableStateOf(false) }
         var regionSummary by remember { mutableStateOf<String?>(null) }
         LaunchedEffect(showRegionPicker) {
@@ -71,223 +34,19 @@ internal fun LazyListScope.xtreamSettingsContent(
                 )
             }
         }
-
-        SettingsSection(title = "IPTV playlists", isTablet = isTablet) {
-            SettingsGroup(isTablet = isTablet) {
-                SettingsNavigationRow(
-                    title = "Add Playlist",
-                    description = "Xtream, M3U or Stalker — with EPG, DNS & auto-refresh",
-                    isTablet = isTablet,
-                    onClick = onAddPlaylist,
-                )
-                SettingsGroupDivider(isTablet = isTablet)
-                SettingsNavigationRow(
-                    title = "Guide regions",
-                    description = regionSummary ?: "Loading…",
-                    isTablet = isTablet,
-                    onClick = { showRegionPicker = true },
-                )
-                state.accounts.forEach { account ->
-                    SettingsGroupDivider(isTablet = isTablet)
-                    SettingsNavigationRow(
-                        title = account.name,
-                        // B60: an edit saved despite a failed provider check says so first.
-                        description = state.saveWarnings[account.id]
-                            ?: com.nuvio.app.features.iptv.match.indexingStatusLine(
-                                isIndexing = account.id in indexingAccounts,
-                                progress = indexProgress[account.id],
-                            ) ?: ((ServerFailoverPolicy.backupLabel(activeServers[account.id] ?: 0) ?: account.baseUrl) +
-                                if (account.enabled) "" else "  •  disabled"),
-                        isTablet = isTablet,
-                        onClick = { actionsFor = account },
-                    )
-                }
-            }
-        }
-
+        IptvMasterDetail(
+            state = state,
+            onAddManual = onAddManual,
+            onEditPlaylist = onEditPlaylist,
+            onOpenContent = onOpenContent,
+            onGuideRegions = { showRegionPicker = true },
+            guideRegionsSummary = regionSummary,
+            // The two panes scroll on their own, so the item takes the viewport's height (the header above it
+            // scrolls away a little; both panes stay fully reachable).
+            modifier = Modifier.fillParentMaxHeight(),
+        )
         if (showRegionPicker) {
             com.nuvio.app.features.epg.EpgRegionPickerHost(onDismiss = { showRegionPicker = false })
         }
-
-        actionsFor?.let { account ->
-            AlertDialog(
-                onDismissRequest = { actionsFor = null },
-                title = { Text(account.name) },
-                text = {
-                    Column {
-                        XtreamAccountDetails(account, activeServers[account.id] ?: 0)
-                        Spacer(Modifier.height(8.dp))
-                        // B57: every action — Remove included — is a labelled row here; Remove is last,
-                        // in the danger colour, and asks first. The Cancel slot is only "Close".
-                        PlaylistActionsPolicy.bodyActions(account).forEach { action ->
-                            val destructive = PlaylistActionsPolicy.isDestructive(action)
-                            TextButton(
-                                onClick = {
-                                    actionsFor = null
-                                    when (action) {
-                                        PlaylistAction.EDIT -> onEditPlaylist(account)
-                                        PlaylistAction.CONTENT -> onOpenContent(account)
-                                        PlaylistAction.HIDDEN -> {
-                                            hiddenFor = account
-                                            hiddenController.open(account)
-                                        }
-                                        // Stale "not on this provider" verdicts hide titles the panel added
-                                        // AFTER the verdict (they sync across devices and live up to 7 days).
-                                        // Catalog syncs that ADD items reset them automatically; this is the
-                                        // do-it-now button.
-                                        PlaylistAction.REMATCH -> rematchScope.launch {
-                                            com.nuvio.app.features.iptv.match.XtreamMatchIndex.distrustNegativeMappings(account.id)
-                                        }
-                                        PlaylistAction.REMOVE -> pendingRemoval = account
-                                    }
-                                },
-                                colors = if (destructive) {
-                                    ButtonDefaults.textButtonColors(contentColor = MaterialTheme.nuvio.colors.danger)
-                                } else {
-                                    ButtonDefaults.textButtonColors()
-                                },
-                            ) { Text(PlaylistActionsPolicy.label(action)) }
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = {
-                        XtreamRepository.setEnabled(account.id, !account.enabled)
-                        actionsFor = null
-                    }) { Text(if (account.enabled) "Disable" else "Enable") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { actionsFor = null }) { Text("Close") }
-                },
-            )
-        }
-
-        hiddenFor?.let { account ->
-            IptvHiddenItemsDialog(
-                playlistName = account.name,
-                state = hiddenState,
-                onUnhide = { hiddenController.unhide(account, it) },
-                onDismiss = { hiddenFor = null },
-            )
-        }
-
-        pendingRemoval?.let { account ->
-            NuvioStatusModal(
-                title = PlaylistActionsPolicy.removeConfirmTitle(account),
-                message = PlaylistActionsPolicy.removeConfirmMessage(account),
-                isVisible = true,
-                // Desktop's NuvioStatusModal has no destructive style (Mobile's does); the specific
-                // "Remove playlist" confirm label + message carry the weight, as with addon removal.
-                confirmText = PlaylistActionsPolicy.label(PlaylistAction.REMOVE),
-                dismissText = "Cancel",
-                onConfirm = {
-                    XtreamRepository.remove(account.id)
-                    pendingRemoval = null
-                },
-                onDismiss = { pendingRemoval = null },
-            )
-        }
     }
-}
-
-/** Catalog sizes from LOCAL data only — zero API calls (item 8; how TiviMate shows its counts). */
-private data class CatalogCounts(val live: Int?, val movies: Int?, val series: Int?) {
-    val isEmpty: Boolean get() = live == null && movies == null && series == null
-}
-
-private suspend fun localCatalogCounts(account: XtreamAccount): CatalogCounts = when {
-    // M3U: the ingest meta row carries all three counts.
-    account.sourceType.isM3u() ->
-        com.nuvio.app.features.iptv.content.IptvContentDb.ingestMeta(account.id)
-            ?.let { CatalogCounts(it.liveCount, it.vodCount, it.seriesCount) }
-            ?: CatalogCounts(null, null, null)
-    // Stalker: the mirrored lineup gives the live count; VOD/series are write-through partials, so
-    // showing them would understate the catalog — skip.
-    account.sourceType == SOURCE_TYPE_STALKER ->
-        CatalogCounts(
-            live = com.nuvio.app.features.iptv.content.IptvContentDb.ingestMeta(account.id)
-                ?.liveCount?.takeIf { it > 0 },
-            movies = null,
-            series = null,
-        )
-    // Xtream: the match index already holds the full movie/series catalogs (live isn't indexed).
-    else -> CatalogCounts(
-        live = null,
-        movies = com.nuvio.app.features.iptv.match.XtreamMatchIndex.indexedCount(account.id, com.nuvio.app.features.iptv.match.MatchKind.MOVIE),
-        series = com.nuvio.app.features.iptv.match.XtreamMatchIndex.indexedCount(account.id, com.nuvio.app.features.iptv.match.MatchKind.SERIES),
-    )
-}
-
-/** Live account status pulled from the source's own panel API: state, connections, and expiry. */
-@Composable
-private fun XtreamAccountDetails(account: XtreamAccount, activeServerIndex: Int = 0) {
-    var info by remember(account.id) { mutableStateOf<XtreamAccountInfo?>(null) }
-    var loading by remember(account.id) { mutableStateOf(true) }
-    var counts by remember(account.id) { mutableStateOf(CatalogCounts(null, null, null)) }
-    // M3U has no panel to ask — skip the fetch instead of showing a phantom "couldn't reach".
-    val hasPanel = !account.sourceType.isM3u()
-    LaunchedEffect(account.id) {
-        counts = runCatching { localCatalogCounts(account) }.getOrDefault(CatalogCounts(null, null, null))
-        if (!hasPanel) { loading = false; return@LaunchedEffect }
-        loading = true
-        info = IptvClient.forAccount(account).accountInfo(account).getOrNull()
-        loading = false
-    }
-    Column {
-        Text(account.baseUrl, style = MaterialTheme.typography.bodyMedium)
-        // Step 0.3: say which server is actually answering when it isn't the main one.
-        ServerFailoverPolicy.backupLabel(activeServerIndex)?.let { label ->
-            val host = account.backupUrls.getOrNull(activeServerIndex - 1)
-            AccountDetailLine("Server", if (host != null) "$label ($host)" else label)
-        }
-        Spacer(Modifier.height(8.dp))
-        if (!counts.isEmpty) {
-            counts.live?.let { AccountDetailLine("Channels", it.toString()) }
-            counts.movies?.let { AccountDetailLine("Movies", it.toString()) }
-            counts.series?.let { AccountDetailLine("Series", it.toString()) }
-        }
-        val i = info
-        when {
-            !hasPanel -> {}
-            loading -> Text("Loading account details…", style = MaterialTheme.typography.bodySmall)
-            i == null -> Text("Couldn't reach the panel for account details.", style = MaterialTheme.typography.bodySmall)
-            else -> {
-                val statusLabel = (i.status?.replaceFirstChar { it.uppercase() } ?: "Unknown") + if (i.isTrial) " · Trial" else ""
-                AccountDetailLine("Status", statusLabel)
-                if (i.maxConnections != null) {
-                    AccountDetailLine("Connections", "${i.activeConnections ?: 0} / ${i.maxConnections} active")
-                }
-                i.expiresAtEpochSec?.let { sec ->
-                    AccountDetailLine("Expires", if (sec == 0L) "Never" else formatEpochDate(sec))
-                }
-                // Stalker portals report expiry as free text, not an epoch.
-                i.expiresText?.let { AccountDetailLine("Expires", it) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AccountDetailLine(label: String, value: String) {
-    Spacer(Modifier.height(2.dp))
-    Text(
-        text = "$label: $value",
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurface,
-    )
-}
-
-/** Epoch seconds -> "YYYY-MM-DD" without a date library (Hinnant's days->civil algorithm). */
-private fun formatEpochDate(epochSec: Long): String {
-    val z = epochSec / 86400L + 719468L
-    val era = (if (z >= 0) z else z - 146096) / 146097
-    val doe = z - era * 146097
-    val yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
-    val y = yoe + era * 400
-    val doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
-    val mp = (5 * doy + 2) / 153
-    val d = doy - (153 * mp + 2) / 5 + 1
-    val m = if (mp < 10) mp + 3 else mp - 9
-    val year = if (m <= 2) y + 1 else y
-    return "$year-${m.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}"
 }
