@@ -60,8 +60,11 @@ interface ProviderSetupApi {
     /** Preview what [code] (already [SetupCode.parse]d) would add. Never throws: every failure is an outcome. */
     suspend fun preview(code: String): SetupCodeOutcome
 
-    /** Redeem [code] into [profileIndex]. Never throws. The caller then forces ONE playlist pull. */
-    suspend fun redeem(code: String, profileIndex: Int): RedeemResult
+    /**
+     * Redeem [code] into [profileIndex]. Never throws. The caller then forces ONE playlist pull.
+     * [skipAddons]: store builds hide add-ons, so the server is told not to install them (`p_skip_addons`).
+     */
+    suspend fun redeem(code: String, profileIndex: Int, skipAddons: Boolean = false): RedeemResult
 
     /** `get_managed_playlists` for the profile. Throws on failure (callers keep their cache). */
     suspend fun managedPlaylists(profileId: Int): List<ManagedInfo>
@@ -71,7 +74,12 @@ interface ProviderSetupApi {
 }
 
 /** An RPC refusal carrying the server's stable error code (the raised P0001 message), or null when unknown. */
-internal class ProviderRpcException(val errorCode: String?, cause: Throwable? = null) : RuntimeException(errorCode, cause)
+internal class ProviderRpcException(
+    val errorCode: String?,
+    cause: Throwable? = null,
+    /** The server never gave an answer about the code (gateway failure, timeout): retry, never a verdict. */
+    val transient: Boolean = false,
+) : RuntimeException(errorCode, cause)
 
 /** The two seams the HTTP/RPC implementation runs on; tests replace them. */
 internal interface ProviderPreviewTransport {
@@ -88,6 +96,9 @@ internal object ProviderSetupConfig {
     const val PRODUCTION_WEB_BASE = "https://tuvora.co"
     const val PREVIEW_TIMEOUT_MS = 15_000L
 
+    /** The route returns a few hundred bytes; anything bigger is not a preview (security L2). */
+    const val PREVIEW_MAX_BODY_CHARS = 64 * 1024
+
     /** The setup-code web host; a debug build may be pointed at a local web server (`PROVIDER_WEB_URL`). */
     val webBaseUrl: String
         get() = SupabaseConfig.PROVIDER_WEB_URL.trim().trimEnd('/')
@@ -99,7 +110,12 @@ internal object ProviderSetupConfig {
 
 internal object PlatformProviderPreviewTransport : ProviderPreviewTransport {
     override suspend fun get(url: String, headers: Map<String, String>): RawHttpResponse =
-        httpRequestRaw(method = "GET", url = url, headers = headers, body = "")
+        // Never follow a redirect: the route does not redirect, and the bearer token must not travel on. The
+        // Darwin engine ignores this flag, so the final URL is checked against the request as well.
+        httpRequestRaw(
+            method = "GET", url = url, headers = headers, body = "",
+            followRedirects = false, maxResponseBodyBytes = ProviderSetupConfig.PREVIEW_MAX_BODY_CHARS + 1024,
+        )
 }
 
 internal object SupabaseProviderRpcTransport : ProviderRpcTransport {
@@ -108,11 +124,40 @@ internal object SupabaseProviderRpcTransport : ProviderRpcTransport {
     } catch (e: CancellationException) {
         throw e
     } catch (e: RestException) {
-        // A raised P0001 carries the code as its message; a JWT/401 means the session is not usable.
-        val first = e.message.orEmpty().trim().lineSequence().firstOrNull().orEmpty().trim().lowercase()
-        val code = first.takeIf { it.isNotEmpty() && it.all { c -> c.isLetter() || c == '_' } }
-            ?: if (e.statusCode == 401) "not_authenticated" else null
-        throw ProviderRpcException(code, e)
+        throw ProviderRpcErrors.fromRest(e.statusCode, e.message, e)
+    }
+}
+
+/**
+ * How a PostgREST refusal becomes a [ProviderRpcException]. Pure (status + message in), so the real message
+ * shape is pinned by a golden test rather than assumed.
+ */
+internal object ProviderRpcErrors {
+    /**
+     * The real `RestException.message` shape (supabase-kt 3.6.0 against PostgREST, captured live on the local stack
+     * 2026-10-02): `<PostgREST message>\nCode: <SQLSTATE or PGRST code>\nHint: ..\nDetails: ..\nURL: ..\nHeaders: ..`.
+     *  - a raised refusal (`P0001`, HTTP 400): first line is exactly the code (`anonymous_not_allowed`), `Code: P0001`;
+     *  - no usable session: HTTP 401 `42501` "permission denied for function redeem_setup" (anon key) or `PGRST301`
+     *    "No suitable key or wrong key type" (bad/expired JWT) — never a code;
+     *  - a function the backend does not have yet: HTTP 404 `PGRST202` (a store build sending `p_skip_addons` to an
+     *    older backend) — a deployment gap, so retry later, never a verdict on the code;
+     *  - a gateway/proxy failure: 5xx/408, first line "Unknown error", `Code: null`.
+     * The code is read WHOLE (first line, letters and underscores only, and only when the server's own code is
+     * `P0001` or absent), never by substring: "refused" contains "used" and "JWT expired" contains "expired", and
+     * neither is that code.
+     */
+    fun fromRest(statusCode: Int, message: String?, cause: Throwable? = null): ProviderRpcException {
+        val lines = message.orEmpty().trim().lines()
+        val first = lines.firstOrNull().orEmpty().trim().lowercase()
+        val serverCode = lines.firstOrNull { it.startsWith("Code:") }?.substringAfter("Code:")?.trim()
+        val raised = first.takeIf { it.isNotEmpty() && it.all { c -> c.isLetter() || c == '_' } && (serverCode == null || serverCode == "P0001") }
+        return when {
+            raised != null -> ProviderRpcException(raised, cause)
+            statusCode == 401 || statusCode == 403 -> ProviderRpcException("not_authenticated", cause)
+            statusCode == 429 -> ProviderRpcException("rate_limited", cause)
+            statusCode >= 500 || statusCode == 408 || statusCode == 404 -> ProviderRpcException(null, cause, transient = true)
+            else -> ProviderRpcException(null, cause)
+        }
     }
 }
 
@@ -141,9 +186,10 @@ internal class HttpProviderSetupApi(
                 put("Accept", "application/json")
                 bearerToken()?.let { put("Authorization", "Bearer $it") }
             }
-            val response = withTimeout(ProviderSetupConfig.PREVIEW_TIMEOUT_MS) {
-                preview.get(ProviderSetupConfig.previewUrl(webBaseUrl(), code), headers)
-            }
+            val url = ProviderSetupConfig.previewUrl(webBaseUrl(), code)
+            val response = withTimeout(ProviderSetupConfig.PREVIEW_TIMEOUT_MS) { preview.get(url, headers) }
+            // An engine that followed a redirect anyway ends on another host: not our route's answer.
+            if (response.url.isNotBlank() && !sameHost(url, response.url)) return SetupCodeOutcome.Unusable
             interpretPreview(response)
         } catch (e: TimeoutCancellationException) {
             SetupCodeOutcome.Network
@@ -154,7 +200,13 @@ internal class HttpProviderSetupApi(
         }
     }
 
+    private fun sameHost(a: String, b: String): Boolean {
+        fun host(u: String) = u.substringAfter("://").takeWhile { it != '/' && it != '?' && it != '#' }.lowercase()
+        return host(a) == host(b)
+    }
+
     internal fun interpretPreview(response: RawHttpResponse): SetupCodeOutcome {
+        if (response.body.length > ProviderSetupConfig.PREVIEW_MAX_BODY_CHARS) return SetupCodeOutcome.Unusable
         if (response.status in 200..299) {
             val parsed = ProviderSetupCodec.preview(response.body) ?: return SetupCodeOutcome.Unusable
             return SetupCodeOutcome.Ready(parsed)
@@ -166,7 +218,7 @@ internal class HttpProviderSetupApi(
         return SetupCodeOutcome.fromPreviewHttp(response.status, errorCode, retryAfter)
     }
 
-    override suspend fun redeem(code: String, profileIndex: Int): RedeemResult {
+    override suspend fun redeem(code: String, profileIndex: Int, skipAddons: Boolean): RedeemResult {
         val normalized = when (val parsed = SetupCode.normalize(code)) {
             is SetupCodeParse.Invalid -> return RedeemResult.Refused(SetupCodeOutcome.fromProblem(parsed.problem))
             is SetupCodeParse.Valid -> parsed.code
@@ -176,12 +228,15 @@ internal class HttpProviderSetupApi(
             val result = rpc.call("redeem_setup", buildJsonObject {
                 put("p_code", normalized)
                 put("p_profile_index", profileIndex)
+                // Only sent when asked: a backend without the parameter keeps working for full builds.
+                if (skipAddons) put("p_skip_addons", true)
             })
             interpretRedeem(result)
         } catch (e: CancellationException) {
             throw e
         } catch (e: ProviderRpcException) {
-            RedeemResult.Refused(SetupCodeOutcome.fromErrorCode(e.errorCode))
+            // A gateway failure or a missing function says nothing about the code: retry, never "can't be used".
+            RedeemResult.Refused(if (e.transient) SetupCodeOutcome.Network else SetupCodeOutcome.fromErrorCode(e.errorCode))
         } catch (e: Throwable) {
             RedeemResult.Refused(SetupCodeOutcome.Network)
         }

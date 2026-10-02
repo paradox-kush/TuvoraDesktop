@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Provider setup codes (Step 2) and the redesigned playlist details screen. Kept in its own file, like
+  strings_mdblist.xml, so the screens built from it never join the hard-coded English the older IPTV
+  settings pages still carry. Other locales fall back to this English until a localisation pass.
+-->
+<resources>
+    <!-- Page titles -->
+    <string name="provider_setup_page_preview">Setup from your provider</string>
+    <string name="provider_playlist_details_page">Playlist</string>
+
+    <!-- Add Playlist: the Code chip -->
+    <string name="provider_setup_chip_code">Code</string>
+    <string name="provider_setup_section_title">Setup Code</string>
+    <string name="provider_setup_code_label">Setup Code</string>
+    <string name="provider_setup_code_placeholder">TUV-XXXX-XXXX-XXXX</string>
+    <string name="provider_setup_paste">Paste</string>
+    <string name="provider_setup_code_help">Your provider gave you a setup code. Enter it to add everything they set up for you.</string>
+    <string name="provider_setup_continue">Continue</string>
+    <string name="provider_setup_sign_in_needed">Sign in to add your provider&apos;s setup. We&apos;ll keep your code until you&apos;re back.</string>
+    <string name="provider_setup_have_code">I have a setup code</string>
+    <string name="provider_setup_guest_title">Sign in to add this setup</string>
+    <string name="provider_setup_guest_message">You are using Tuvora without an account. Setup codes need an account, so you will be taken to sign in or create one. What is saved only on this device as a guest is replaced when you do. We keep your code until you are back.</string>
+    <string name="provider_setup_guest_confirm">Sign in</string>
+
+    <!-- Outcome sentences (SetupCodeMessage) -->
+    <string name="provider_setup_msg_enter_code">Enter the setup code your provider gave you.</string>
+    <string name="provider_setup_msg_bad_characters">That doesn&apos;t look like a setup code. Codes use letters and the numbers 2-9 only.</string>
+    <string name="provider_setup_msg_wrong_length">A code has 12 characters. Check it against the one your provider sent.</string>
+    <string name="provider_setup_msg_expired">This code has expired. Ask your provider for a new one.</string>
+    <string name="provider_setup_msg_rate_limited">Too many tries. Wait a little while and try again.</string>
+    <string name="provider_setup_msg_network">We couldn&apos;t reach Tuvora. Check your connection and try again.</string>
+    <string name="provider_setup_msg_unusable">This code can&apos;t be used. If you&apos;ve already used it, the playlist is in your account. Otherwise ask your provider for a new code.</string>
+    <string name="provider_setup_msg_profile_gone">That profile no longer exists. Pick another.</string>
+
+    <!-- Preview page -->
+    <string name="provider_setup_preview_label">SETUP FROM YOUR PROVIDER</string>
+    <string name="provider_setup_preview_loading">Checking your code…</string>
+    <string name="provider_setup_preview_playlists">Will be added</string>
+    <string name="provider_setup_preview_addons">Add-ons</string>
+    <string name="provider_setup_preview_profile">Add to profile</string>
+    <string name="provider_setup_preview_account">Will be added to your account</string>
+    <string name="provider_setup_source_xtream">Xtream account</string>
+    <string name="provider_setup_source_m3u_url">M3U playlist</string>
+    <string name="provider_setup_source_stalker">Stalker portal</string>
+    <string name="provider_setup_source_other">Playlist</string>
+    <string name="provider_setup_add_to">Add to %1$s</string>
+    <string name="provider_setup_adding">Adding…</string>
+    <string name="provider_setup_cancel">Cancel</string>
+    <string name="provider_setup_enter_other_code">Enter a different code</string>
+    <string name="provider_setup_added_toast">%1$s added your playlist</string>
+    <string name="provider_setup_added_other_profile_toast">%1$s added your playlist to %2$s</string>
+    <string name="provider_setup_already_toast">Your playlist from %1$s is already in your account</string>
+    <string name="provider_setup_nothing_added_toast">Nothing was added. Ask your provider to check your setup.</string>
+    <string name="provider_setup_skipped_login_toast">%1$s has not filled in your login yet. Ask them to: your playlist is added as soon as they do.</string>
+    <string name="provider_setup_skipped_url_toast">%1$s&apos;s address for this playlist isn&apos;t valid. Ask them to check it.</string>
+    <string name="provider_contact_provider">Contact %1$s</string>
+    <string name="provider_contact_telegram">Telegram</string>
+    <string name="provider_contact_whatsapp">WhatsApp</string>
+    <string name="provider_contact_email">Email</string>
+    <string name="provider_contact_website">Website</string>
+
+    <!-- Settings list row -->
+    <string name="provider_managed_row">Managed by %1$s</string>
+    <string name="provider_managed_row_days">Managed by %1$s · %2$d days left</string>
+    <string name="provider_managed_row_day">Managed by %1$s · 1 day left</string>
+    <string name="provider_managed_row_expired">Managed by %1$s · Expired</string>
+
+    <!-- Playlist details -->
+    <string name="provider_details_ribbon">Managed by %1$s</string>
+    <string name="provider_details_ribbon_updated">Managed by %1$s · updated %2$s</string>
+    <string name="provider_details_days_left">%1$d days left</string>
+    <string name="provider_details_day_left">1 day left</string>
+    <string name="provider_details_expired">Expired</string>
+    <string name="provider_details_never_expires">Never expires</string>
+    <string name="provider_details_expiry_not_reported">Expiry not reported by this provider</string>
+    <string name="provider_details_expiry_check_failed">Couldn&apos;t check expiry</string>
+    <string name="provider_details_connections">%1$d of %2$d connections</string>
+    <string name="provider_details_tab_overview">Overview</string>
+    <string name="provider_details_tab_content">Content</string>
+    <string name="provider_details_tab_manage">Manage</string>
+    <string name="provider_details_channels">Channels</string>
+    <string name="provider_details_movies">Movies</string>
+    <string name="provider_details_series">Series</string>
+    <string name="provider_details_status">Status</string>
+    <string name="provider_details_status_loading">Checking the account…</string>
+    <string name="provider_details_status_unreachable">Couldn&apos;t reach the provider for account details.</string>
+    <string name="provider_details_status_none">This playlist is a plain list, so there is no account to check.</string>
+    <string name="provider_details_server">Server</string>
+    <string name="provider_details_tile_categories">Content &amp; categories</string>
+    <string name="provider_details_tile_categories_hint">Choose what to load</string>
+    <string name="provider_details_tile_hidden">Hidden channels &amp; groups</string>
+    <string name="provider_details_tile_hidden_hint">Bring back what you hid</string>
+    <string name="provider_details_tile_rematch">Re-match catalog</string>
+    <string name="provider_details_tile_rematch_hint">Look again for missing titles</string>
+    <string name="provider_details_rematch_started">Checking your catalog again</string>
+    <string name="provider_details_enabled">Enabled</string>
+    <string name="provider_details_enabled_hint">Use this playlist for Live TV, Movies and Series</string>
+    <string name="provider_details_edit">Edit playlist</string>
+    <string name="provider_details_edit_hint_managed">Rename this playlist</string>
+    <string name="provider_details_edit_hint">Change its name, server or login</string>
+    <string name="provider_details_locked_title">Server and login</string>
+    <string name="provider_details_locked_value">Managed by %1$s. Detach to manage them yourself.</string>
+    <string name="provider_details_detach">Detach from %1$s</string>
+    <string name="provider_details_remove">Remove playlist</string>
+    <string name="provider_details_gone">This playlist no longer exists.</string>
+    <string name="provider_details_detached_toast">Detached from %1$s. You manage this playlist now.</string>
+    <string name="provider_details_detach_failed">Couldn&apos;t detach right now. Check your connection and try again.</string>
+
+    <!-- Type-to-confirm -->
+    <string name="provider_confirm_field_label">Type %1$s to confirm</string>
+    <string name="provider_confirm_detach_button">Detach</string>
+    <string name="provider_confirm_remove_button">Remove</string>
+    <string name="provider_confirm_detach_title">Detach from %1$s?</string>
+    <string name="provider_confirm_detach_message">You keep this playlist, but %1$s can&apos;t update it any more. If their server changes you would need to update it yourself.</string>
+    <string name="provider_confirm_remove_title">Remove %1$s?</string>
+    <string name="provider_confirm_remove_message">This deletes the playlist from this profile on all your devices.</string>
+    <string name="provider_confirm_remove_extra">You may need a new code from %1$s to get it back.</string>
+
+    <!-- Edit Playlist, locked -->
+    <string name="provider_edit_banner_title">Managed by %1$s</string>
+    <string name="provider_edit_banner_message">Your provider keeps the server and login up to date, so only the name can change here.</string>
+    <string name="provider_edit_locked_field">Server and login</string>
+    <string name="provider_edit_locked_note">Managed by your provider</string>
+    <string name="provider_edit_type_locked_note">The source type is fixed once a playlist is added. Remove it and add it again to use another type.</string>
+    <string name="provider_edit_name_label">Name</string>
+    <string name="provider_edit_save">Save</string>
+
+    <!-- Hub -->
+    <string name="provider_hub_contact_label">Need help? Contact %1$s</string>
+</resources>

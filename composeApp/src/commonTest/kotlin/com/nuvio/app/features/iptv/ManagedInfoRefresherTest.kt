@@ -15,7 +15,7 @@ class ManagedInfoRefresherTest {
         var calls = 0
         var result: () -> List<ManagedInfo> = { emptyList() }
         override suspend fun preview(code: String): SetupCodeOutcome = error("not used")
-        override suspend fun redeem(code: String, profileIndex: Int): RedeemResult = error("not used")
+        override suspend fun redeem(code: String, profileIndex: Int, skipAddons: Boolean): RedeemResult = error("not used")
         override suspend fun managedPlaylists(profileId: Int): List<ManagedInfo> {
             calls++
             return result()
@@ -28,6 +28,8 @@ class ManagedInfoRefresherTest {
     private var accounts: List<XtreamAccount>? = listOf(account)
     private var revision = 5L
     private var signedIn = true
+    private var repoReady = true
+    private var userId: String? = "user-a"
 
     @BeforeTest
     fun setUp() {
@@ -36,6 +38,9 @@ class ManagedInfoRefresherTest {
         ManagedInfoRefresher.isSignedIn = { signedIn }
         ManagedInfoRefresher.accountsFor = { accounts }
         ManagedInfoRefresher.revisionFor = { revision }
+        ManagedInfoRefresher.loadRepository = { }
+        ManagedInfoRefresher.repositoryReady = { repoReady }
+        ManagedInfoRepository.userId = { userId }
     }
 
     @AfterTest
@@ -126,5 +131,62 @@ class ManagedInfoRefresherTest {
         assertTrue(ManagedInfoRefreshPolicy.shouldRefresh(1, 9, null), "first pull of a launch")
         assertFalse(ManagedInfoRefreshPolicy.shouldRefresh(3, 9, 9), "same revision")
         assertTrue(ManagedInfoRefreshPolicy.shouldRefresh(3, 10, 9), "moved revision")
+    }
+
+    // ---- code review M1: an unloaded or damaged repository never wipes the offline-cold-start cache ----
+
+    @Test
+    fun `an unloaded repository does not wipe the cached map`() {
+        ManagedInfoRepository.replace(1, mapOf("k1" to ManagedInfo("k1", "Acme")))
+        accounts = emptyList()      // what an unloaded repository reports
+        repoReady = false
+        pull()
+        assertTrue(ManagedInfoRepository.isManaged(1, "k1"), "kept: nothing proves the profile has no playlists")
+        assertEquals(0, api.calls)
+    }
+
+    @Test
+    fun `the repository is loaded before its accounts are read`() {
+        var loads = 0
+        ManagedInfoRefresher.loadRepository = { loads++ }
+        pull()
+        assertEquals(1, loads)
+    }
+
+    // ---- security L8: a late answer after sign-out or a user switch writes nothing ----------------------
+
+    @Test
+    fun `a refresh that finishes after sign-out does not write the old account's providers`() {
+        api.result = { signedIn = false; listOf(ManagedInfo("k1", "Acme")) }
+        pull()
+        assertFalse(ManagedInfoRepository.isManaged(1, "k1"), "the session ended during the call")
+    }
+
+    @Test
+    fun `a refresh that finishes for another user does not write either`() {
+        api.result = { userId = "user-b"; listOf(ManagedInfo("k1", "Acme")) }
+        pull()
+        assertFalse(ManagedInfoRepository.isManaged(1, "k1"))
+    }
+
+    @Test
+    fun `the cached map belongs to the user who fetched it`() {
+        val store = InMemoryManagedInfoStore()
+        ManagedInfoRepository.store = store
+        ManagedInfoRepository.replace(1, mapOf("k1" to ManagedInfo("k1", "Acme")))
+        ManagedInfoRepository.clearLocalState()
+        assertTrue(ManagedInfoRepository.isManaged(1, "k1"), "same user: still known after a restart")
+        ManagedInfoRepository.clearLocalState()
+        userId = "user-b"
+        assertFalse(ManagedInfoRepository.isManaged(1, "k1"), "another account never inherits the previous account's providers")
+        assertEquals(emptyMap(), ManagedInfoRepository.forProfile(1))
+    }
+
+    @Test
+    fun `with nobody signed in nothing is read or written`() {
+        userId = null
+        ManagedInfoRepository.replace(1, mapOf("k1" to ManagedInfo("k1", "Acme")))
+        ManagedInfoRepository.clearLocalState()
+        assertEquals(emptyMap(), ManagedInfoRepository.forProfile(1))
     }
 }

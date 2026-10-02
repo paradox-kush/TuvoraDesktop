@@ -359,7 +359,7 @@ object XtreamRepository : IptvCatalog {
         scope.launch {
             _uiState.update { it.copy(isValidating = true, error = null) }
             // Xtream verifies creds against player_api.php; M3U verifies by ingesting the playlist.
-            IptvClient.forAccount(account).verify(account)
+            (verifyForTest?.invoke(account) ?: IptvClient.forAccount(account).verify(account))
                 .onSuccess {
                     // Profile switched while verifying — saving now would write this playlist
                     // into the wrong profile's list. Drop it; re-add on the right profile.
@@ -368,19 +368,25 @@ object XtreamRepository : IptvCatalog {
                         onResult(false)
                         return@onSuccess
                     }
-                    // Step 2: adding the server + login of a playlist a provider MANAGES must not replace it with a
-                    // form-built copy (re-normalised, no backups/EPG/user agent, a host as its name): the server
-                    // would silently detach it. The pulled row stays exactly as it is; nothing is recorded or pushed.
-                    if (_uiState.value.accounts.any { it.id == account.id } && isManagedPlaylist(account.id)) {
-                        _uiState.update { it.copy(isValidating = false) }
-                        persistAndReport(onResult)
-                        return@onSuccess
+                    // The same server + login as a playlist the PROVIDER manages: this add would replace the
+                    // pulled row with the form's re-normalised copy and silently detach it (the server
+                    // trigger compares every provider-owned field). Keep the pulled fields byte-identical
+                    // and record an update, never an add (code review H1 / security M3).
+                    val existing = _uiState.value.accounts.firstOrNull { it.id == account.id }
+                    val toStore = if (existing != null && isManagedPlaylist(account.id)) {
+                        ManagedEditPolicy.lockProviderFields(existing, account)
+                    } else {
+                        account
                     }
-                    val updated = _uiState.value.accounts.filterNot { it.id == account.id } + account
+                    val updated = _uiState.value.accounts.filterNot { it.id == account.id } + toStore
                     _uiState.update { it.copy(accounts = updated, isValidating = false) }
                     // Start the catalog index now, not on first play — minutes on budget devices.
-                    XtreamTmdbResolver.warmUp(listOf(account))
-                    recordPending { it.recordAdd(account) }   // B24 v2: durable "user added this playlist" intent
+                    XtreamTmdbResolver.warmUp(listOf(toStore))
+                    if (existing != null && toStore != account) {
+                        recordPending { it.recordUpdate(toStore, base = existing) }
+                    } else {
+                        recordPending { it.recordAdd(toStore) }   // B24 v2: durable "user added this playlist" intent
+                    }
                     persistAndReport(onResult)
                 }
                 .onFailure { e ->
@@ -580,8 +586,12 @@ object XtreamRepository : IptvCatalog {
      */
     fun updateOptions(id: String, transform: (XtreamAccount) -> XtreamAccount) {
         val before = _uiState.value.accounts.firstOrNull { it.id == id }
+        // Defence in depth: no option edit may change a field the provider owns on a managed playlist.
+        val guarded: (XtreamAccount) -> XtreamAccount =
+            if (before != null && isManagedPlaylist(id)) { acc -> ManagedEditPolicy.lockProviderFields(before, transform(acc)) }
+            else transform
         _uiState.update { st ->
-            st.copy(accounts = st.accounts.map { if (it.id == id) transform(it) else it })
+            st.copy(accounts = st.accounts.map { if (it.id == id) guarded(it) else it })
         }
         // B04: a synced option (content types, category picks) must be recorded as a v2 edit, or the
         // next sync adopts the server's older row and reverts it. Device-local prefs push nothing.

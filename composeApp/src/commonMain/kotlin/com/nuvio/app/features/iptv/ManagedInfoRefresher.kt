@@ -39,11 +39,12 @@ internal object ManagedInfoRefresher {
     }
     /** The playlists this device now holds for [profileId]; null when that is not the profile in memory. */
     internal var accountsFor: (Int) -> List<XtreamAccount>? = { profileId ->
-        // Load from disk first: before any IPTV surface did, the list is [] and an empty list would WIPE the
-        // cached map (and its offline protection) after a failed pull (review M1).
-        XtreamRepository.ensureLoaded()
         XtreamRepository.uiState.value.accounts.takeIf { ProfileRepository.activeProfileId == profileId }
     }
+    /** Loads the playlist repository for the active profile if nothing has yet (a sync can run before any IPTV screen). */
+    internal var loadRepository: () -> Unit = { XtreamRepository.ensureLoaded() }
+    /** True when the in-memory playlist state is a faithful, complete view of the profile (loaded, not damaged). */
+    internal var repositoryReady: () -> Boolean = { XtreamRepository.canPushFullReplace() }
     internal var revisionFor: (Int) -> Long = { profileId ->
         decodePlaylistSyncState(XtreamAccountStorage.loadPlaylistSyncStateJson(profileId)).revision
     }
@@ -53,6 +54,10 @@ internal object ManagedInfoRefresher {
     /** Called after a playlist pull for [profileId] finished (success or not; a failed pull changes nothing). */
     suspend fun afterPlaylistPull(profileId: Int) {
         if (!isSignedIn()) return
+        // A sync can run before any IPTV screen loaded the playlist repository, and an unloaded repository reads
+        // as "no playlists": that must never wipe the offline-cold-start cache (code review M1).
+        loadRepository()
+        if (!repositoryReady()) return
         val accounts = accountsFor(profileId) ?: return
         val revision = revisionFor(profileId)
         if (accounts.isEmpty()) {
@@ -67,9 +72,16 @@ internal object ManagedInfoRefresher {
 
     /** Refresh now (after a redeem or a detach). Returns whether the server answered. */
     suspend fun refresh(profileId: Int): Boolean = try {
+        val user = ManagedInfoRepository.userId()
         val list = api.managedPlaylists(profileId)
-        ManagedInfoRepository.replace(profileId, list.associateBy { it.playlistKey })
-        true
+        // The session may have ended (or another user signed in) while the call was out: the old account's
+        // providers must not be written back after the wipe (security L8).
+        if (!isSignedIn() || ManagedInfoRepository.userId() != user) {
+            false
+        } else {
+            ManagedInfoRepository.replace(profileId, list.associateBy { it.playlistKey })
+            true
+        }
     } catch (e: CancellationException) {
         throw e
     } catch (e: Throwable) {

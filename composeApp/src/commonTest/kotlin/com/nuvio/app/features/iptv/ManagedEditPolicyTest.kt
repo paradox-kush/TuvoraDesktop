@@ -127,6 +127,43 @@ class ManagedEditPolicyTest {
         assertFalse(ManagedEditPolicy.changesProviderFields(xtream, after), "the server would not detach it")
     }
 
+    /** The ADD path, as Add Playlist drives it (code review H1, security M3). */
+    private fun addFromForm(input: XtreamFormInput): Boolean = runBlocking {
+        val done = CompletableDeferred<Boolean>()
+        XtreamRepository.addFromForm(input) { done.complete(it) }
+        withTimeout(10_000) { done.await() }
+    }
+
+    @Test
+    fun `adding the same server and login as a managed playlist never rewrites its provider fields`() {
+        XtreamRepository.verifyForTest = { Result.success(Unit) }
+        // The customer types the very server + login the provider installed, differently written.
+        val typed = formOf(xtream, "Typed by hand").copy(
+            serverUrl = "HTTP://PANEL.example.com", epgUrl = null, userAgent = null, backupUrls = emptyList(),
+        )
+        val key = xtreamAccountFromForm(typed)!!.id
+        val pulled = xtream.copy(id = key)
+        managed(pulled)
+        assertTrue(addFromForm(typed), "the add reports saved")
+        val rows = XtreamRepository.uiState.value.accounts
+        assertEquals(1, rows.size, "no duplicate row")
+        val after = rows.single()
+        for (wireKey in providerOwnedWireKeys) {
+            assertEquals(pushRow(pulled)[wireKey], pushRow(after)[wireKey], "pushed `$wireKey` of an ADDED-over managed playlist must equal the pulled value")
+        }
+        assertFalse(ManagedEditPolicy.changesProviderFields(pulled, after), "the server would not detach it")
+    }
+
+    @Test
+    fun `adding a playlist with the same login as an UNmanaged one still replaces it as before`() {
+        XtreamRepository.verifyForTest = { Result.success(Unit) }
+        val typed = formOf(xtream, "Mine").copy(serverUrl = "HTTP://PANEL.example.com", userAgent = "Mine/9")
+        val key = xtreamAccountFromForm(typed)!!.id
+        XtreamRepository.installAccountsForTest(listOf(xtream.copy(id = key)))
+        assertTrue(addFromForm(typed))
+        assertEquals("Mine/9", XtreamRepository.uiState.value.accounts.single().userAgent, "an unmanaged playlist is the user's to overwrite")
+    }
+
     @Test
     fun `a blank new name keeps the managed playlist's name`() {
         managed(xtream)

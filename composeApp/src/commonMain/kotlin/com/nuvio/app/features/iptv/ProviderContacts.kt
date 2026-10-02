@@ -1,9 +1,10 @@
 package com.nuvio.app.features.iptv
 
+import com.nuvio.app.core.ui.ContactLinkRules
 import kotlinx.serialization.Serializable
 
-/** The contact kinds a provider can publish, in the order the buttons are shown. */
-enum class ContactKind { TELEGRAM, WHATSAPP, EMAIL, WEBSITE }
+/** The contact kinds a provider can publish, in the order the buttons are shown (the contract's and the web's order). */
+enum class ContactKind { WHATSAPP, TELEGRAM, EMAIL, WEBSITE }
 
 /** One tappable contact: [url] is what the platform opens, [text] what is shown beside/under it. */
 data class ContactLink(val kind: ContactKind, val text: String, val url: String)
@@ -21,10 +22,10 @@ data class ProviderSupport(
     val email: String? = null,
     val website: String? = null,
 ) {
-    /** The contacts that can be opened, Telegram first (the round buttons' order in the design). */
+    /** The contacts that can be opened: WhatsApp, Telegram, Email, Website (one order on every platform). */
     fun links(): List<ContactLink> = buildList {
-        ProviderContacts.telegram(telegram)?.let { add(ContactLink(ContactKind.TELEGRAM, "@$it", "https://t.me/$it")) }
         ProviderContacts.whatsapp(whatsapp)?.let { add(ContactLink(ContactKind.WHATSAPP, "+$it", "https://wa.me/$it")) }
+        ProviderContacts.telegram(telegram)?.let { add(ContactLink(ContactKind.TELEGRAM, "@$it", "https://t.me/$it")) }
         ProviderContacts.email(email)?.let { add(ContactLink(ContactKind.EMAIL, it, "mailto:$it")) }
         ProviderContacts.website(website)?.let { add(ContactLink(ContactKind.WEBSITE, ProviderContacts.websiteHost(it), it)) }
     }
@@ -38,7 +39,6 @@ data class ProviderSupport(
 
 /** Shape rules for one contact value; each returns the normalized value or null (never throws). */
 object ProviderContacts {
-    private val emailShape = Regex("""^[A-Za-z0-9.!#$'*+/=_~-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$""")
     private val telegramShape = Regex("""^[A-Za-z0-9_]{5,32}$""")
 
     /** Digits only (with country code), 7-15 long. "+44 7700 900123" -> "447700900123". */
@@ -58,27 +58,25 @@ object ProviderContacts {
     /** A plain address only: the mailto link is built from it, so no ? & % quotes or brackets. */
     fun email(value: String?): String? {
         val s = value.orEmpty().trim()
-        return s.takeIf { it.length <= 254 && emailShape.matches(it) }
+        return s.takeIf { ContactLinkRules.isPlainEmailAddress(it) }
     }
 
     /**
-     * An http(s) address with a host, no spaces/control characters and no userinfo. The server applies
-     * the full public-address rules when the provider saves it; this only refuses what must never be
-     * handed to the platform's link opener.
+     * An https address on a public-looking host: ASCII letters, digits and hyphens in at least two dot-separated
+     * labels with an alphabetic top level, an optional port, no userinfo. Plain http, IP literals (v4 and v6),
+     * single-label hosts (localhost, intranet names), non-ASCII and punycode (IDN) hosts are not offered as
+     * links: the link opener is handed provider-controlled text, so this is checked here and again in
+     * `ContactLinkRules.isSafeContactLink`. The server applies the full public-address rules when the
+     * provider saves it.
      */
     fun website(value: String?): String? {
         val s = value.orEmpty().trim()
         if (s.isEmpty() || s.length > 2048) return null
         if (s.any { it.code <= 0x20 || it.code in 0x7f..0x9f || it in "<>\"\\^`|" }) return null
-        val scheme = when {
-            s.startsWith("https://", ignoreCase = true) -> "https://"
-            s.startsWith("http://", ignoreCase = true) -> "http://"
-            else -> return null
-        }
-        val authority = s.substring(scheme.length).takeWhile { it != '/' && it != '?' && it != '#' }
+        if (!s.startsWith("https://", ignoreCase = true)) return null
+        val authority = s.substring("https://".length).takeWhile { it != '/' && it != '?' && it != '#' }
         if (authority.isEmpty() || '@' in authority || '%' in authority) return null
-        val host = authority.substringBefore(':')
-        if (host.isEmpty() || '.' !in host) return null
+        if (!ContactLinkRules.isPublicLookingAuthority(authority)) return null
         return s
     }
 
