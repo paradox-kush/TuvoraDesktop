@@ -37,9 +37,12 @@ import com.nuvio.app.core.ui.NuvioAsyncImage as AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import com.nuvio.app.core.ui.NuvioCardDepthSurface
+import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.core.ui.nuvioHorizontalScrollBleed
 import com.nuvio.app.core.ui.nuvioCardDepth
 import com.nuvio.app.core.ui.nuvioDesktopDragScroll
+import com.nuvio.app.features.details.CastClickAction
+import com.nuvio.app.features.details.CastClickPolicy
 import com.nuvio.app.features.details.MetaPerson
 import com.nuvio.app.features.details.castAvatarSharedTransitionKey
 import nuvio.composeapp.generated.resources.*
@@ -53,6 +56,8 @@ fun DetailCastSection(
     showHeader: Boolean = true,
     horizontalScrollPadding: Dp = 0.dp,
     onCastClick: ((MetaPerson, String?) -> Unit)? = null,
+    // UX70: false when TMDB enrichment/credits are off — a press then explains why there is no page.
+    tmdbPeopleEnabled: Boolean = true,
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
@@ -63,6 +68,7 @@ fun DetailCastSection(
         modifier = modifier,
         showHeader = showHeader,
     ) {
+        val tmdbOffHint = stringResource(Res.string.details_cast_tmdb_off_hint)
         BoxWithConstraints {
             val sizing = castSectionSizing(maxWidth.value)
             val rowState = rememberLazyListState()
@@ -89,10 +95,10 @@ fun DetailCastSection(
                         sizing = sizing,
                         sharedTransitionScope = sharedTransitionScope,
                         animatedVisibilityScope = animatedVisibilityScope,
-                        onClick = if (onCastClick != null && person.tmdbId != null && person.tmdbId > 0) {
-                            { onCastClick(person, sharedTransitionKey) }
-                        } else {
-                            null
+                        onClick = when (CastClickPolicy.actionFor(person.tmdbId, tmdbPeopleEnabled)) {
+                            is CastClickAction.OpenPerson -> onCastClick?.let { open -> { open(person, sharedTransitionKey) } }
+                            CastClickAction.ExplainTmdbOff -> onCastClick?.let { { NuvioToastController.show(tmdbOffHint) } }
+                            null -> null
                         },
                     )
                 }

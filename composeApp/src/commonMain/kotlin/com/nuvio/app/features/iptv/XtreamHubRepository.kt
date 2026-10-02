@@ -261,6 +261,39 @@ object XtreamHubRepository {
      * loading); the guide already carries channel-level hide/pin/order.
      */
     private fun applyCategoryOverlay(accountId: String, contentType: String, cats: List<XtreamHubCategory>): List<XtreamHubCategory> {
+        val shown = applyCategoryOverlayToRows(accountId, contentType, cats)
+        if (contentType != CONTENT_TYPE_LIVE) return shown
+        // UX73: a channel hidden after its row loaded (from the guide, here, or the website) leaves
+        // the rows already on screen, and an Undo brings it back — no re-fetch either way.
+        val channels = overlaySnapshot.channels
+        if (channels.values.none { it.hidden }) return shown
+        val entities = synchronized(categoryLock) { liveEntityIds.toMap() }
+        return shown.map { cat ->
+            val kept = com.nuvio.app.features.iptv.overlay.IptvChannelQuickActionsPolicy.visibleInHub(cat.items, channels) { entities[it.id] }
+            if (kept === cat.items) cat else cat.copy(items = kept)
+        }
+    }
+
+    /**
+     * Live card id -> its canon-v1 entity id, recorded as rows load (a card's name may already carry
+     * a rename, so the identity can't be re-derived from it). Lets a hide made after a row loaded
+     * drop the card, and lets a long-press on a card hide it.
+     */
+    private val liveEntityIds = mutableMapOf<String, String>()
+
+    private fun rememberLiveEntities(previewIds: List<String>, entityIds: List<String>) {
+        synchronized(categoryLock) { previewIds.zip(entityIds).forEach { (id, entity) -> liveEntityIds[id] = entity } }
+    }
+
+    /** UX36: the hide target for a live card in the hub, or null when its identity isn't known here. */
+    internal fun hideTargetFor(contentId: String): com.nuvio.app.features.iptv.overlay.IptvChannelQuickActionsPolicy.HideTarget? {
+        val entity = synchronized(categoryLock) { liveEntityIds[contentId] }
+        return com.nuvio.app.features.iptv.overlay.IptvChannelQuickActionsPolicy.hideTarget(
+            entity, XtreamItemRegistry.parseId(contentId)?.accountId,
+        )
+    }
+
+    private fun applyCategoryOverlayToRows(accountId: String, contentType: String, cats: List<XtreamHubCategory>): List<XtreamHubCategory> {
         val overlay = overlaySnapshot.categories
         // F02: custom groups are rows of channels, listed above the provider categories of Live TV.
         // (No editor makes movie or series groups.)
@@ -311,7 +344,12 @@ object XtreamHubRepository {
                     }.also { entityIndex = Triple(accountId, channels, it) }
                 val members = com.nuvio.app.features.iptv.overlay.IptvCustomGroupPolicy.members(group, index, overlaySnapshot.channels)
                 members.forEach { XtreamItemRegistry.registerChannel(account.id, it) }
-                synchronized(categoryLock) { groupItems[key] = members.map { it.toMetaPreview(account.id) }.distinctBy { it.id } }
+                val previews = members.map { it.toMetaPreview(account.id) }
+                rememberLiveEntities(
+                    previews.map { it.id },
+                    members.map { com.nuvio.app.features.iptv.identity.IptvIdentity.entityId(account.id, it.name, it.epgChannelId) },
+                )
+                synchronized(categoryLock) { groupItems[key] = previews.distinctBy { it.id } }
                 val st = _uiState.value
                 if (st.selectedAccountId == accountId) showSection(accountId, st.section)
             } finally {
@@ -325,15 +363,18 @@ object XtreamHubRepository {
         com.nuvio.app.features.iptv.overlay.IptvCustomGroupPolicy.groupIdOf(categoryId) != null
 
     /**
-     * BUG #2: the browse hub's LIVE window must DROP hidden channels and APPLY renames per the
-     * channel overlay (categories were already handled by [applyCategoryOverlay]; individual channels
-     * were not). honorOrder=false — a paged surface must never reorder: a pin/position could belong on
-     * a page not yet fetched, and the hub's offsets index the RAW provider list. Dropping hidden rows
-     * therefore leaves paging correct: `hasMore` is derived from the raw window size (not this
-     * filtered list), and [mergePagedWindow] dedups by id and halts when a window adds nothing new.
+     * BUG #2: the browse hub's LIVE window APPLIES renames (and floats pins) per the channel overlay
+     * (categories were already handled by [applyCategoryOverlay]; individual channels were not).
+     * honorOrder=false — a paged surface must never reorder: a pin/position could belong on a page not
+     * yet fetched, and the hub's offsets index the RAW provider list.
+     *
+     * Hidden channels are KEPT in the cached window (K9) and dropped only when rows are shown
+     * ([applyCategoryOverlay] → visibleInHub): a window cached without them had nothing to give back
+     * when the channel was unhidden (Undo, or Settings), so the card stayed gone until a relaunch.
      * No-op when the overlay is empty. [entityIds] is parallel to [previews] (same order/length).
      */
     private fun applyLiveChannelOverlay(entityIds: List<String>, previews: List<MetaPreview>): List<MetaPreview> {
+        rememberLiveEntities(previews.map { it.id }, entityIds)
         // Tag pinned onto each card from the same snapshot that drives hide/rename, so the hub can draw a
         // visible pin marker AND displayedWindow can float pinned channels to the top of the window. An
         // empty overlay leaves pinned=false and displayedWindow returns the rows untouched.
@@ -345,7 +386,7 @@ object XtreamHubRepository {
                 preview
             }
         }
-        return com.nuvio.app.features.iptv.overlay.IptvChannelOverlayPolicy.displayedWindow(
+        return com.nuvio.app.features.iptv.overlay.IptvChannelQuickActionsPolicy.hubRowWindow(
             rows = rows,
             overlay = channels,
             entityOf = { it.first },

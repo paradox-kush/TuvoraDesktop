@@ -12,7 +12,8 @@ import androidx.compose.ui.Modifier
 interface HomeAnnouncementsSection {
     /**
      * Called each time the home screen becomes RESUMED. Fetches only when the refresh policy says
-     * the cache is due; otherwise it makes no request at all. Never throws.
+     * the cache is due; otherwise it makes no request at all. Never throws. It may keep running
+     * (following local sign-in changes, no network) until the caller's RESUMED block is cancelled.
      */
     suspend fun refreshIfDue()
 

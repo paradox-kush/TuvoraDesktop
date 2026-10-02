@@ -17,8 +17,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -62,11 +65,61 @@ object AddonRepository {
     private val activeRefreshJobs = mutableMapOf<String, Job>()
     private val pushJobsByProfile = mutableMapOf<Int, Job>()
 
+    // UX71: the AddonSyncMerge baseline of the current profile, and whether a push/retry is on its way.
+    private val lastSyncedUrls = MutableStateFlow<List<String>?>(null)
+    private val syncInFlight = MutableStateFlow(false)
+    private var retryJob: Job? = null
+
+    /** Drives the Add-ons screen's "Not synced yet" marker (see [AddonSyncStatusPolicy]). */
+    internal val syncStatus: StateFlow<AddonSyncStatus> = combine(
+        uiState,
+        lastSyncedUrls,
+        syncInFlight,
+    ) { state, lastSynced, inFlight ->
+        AddonSyncStatusPolicy.status(
+            local = dedupeManifestUrls(state.addons.map(ManagedAddon::manifestUrl)),
+            lastSynced = lastSynced,
+            hasAccount = SyncSession.hasAccount(),
+            followsPrimaryProfile = isUsingPrimaryAddonsFromSecondaryProfile(),
+            syncInFlight = inFlight,
+        )
+    }.stateIn(scope, SharingStarted.Eagerly, AddonSyncStatus.NotApplicable)
+
+    /**
+     * The "Retry" behind "Not synced yet": runs the same three-way pull+merge as a sync cycle, which pushes the
+     * device's unsynced edits up without overwriting what other devices added meanwhile.
+     */
+    internal fun retrySync() {
+        if (retryJob?.isActive == true) return
+        if (!SyncSession.canSync()) {
+            log.d { "retrySync() — skipped, no usable session" }
+            return
+        }
+        retryJob = scope.launch {
+            syncInFlight.value = true
+            try {
+                pullFromServer(ProfileRepository.activeProfileId)
+            } finally {
+                syncInFlight.value = pushJobsByProfile.values.any { it.isActive }
+            }
+        }
+    }
+
+    private fun recordSynced(profileId: Int, urls: List<String>) {
+        AddonStorage.saveSyncedAddonUrls(profileId, urls)
+        if (profileId == currentProfileId) lastSyncedUrls.value = dedupeManifestUrls(urls)
+    }
+
+    private fun reloadLastSynced() {
+        lastSyncedUrls.value = AddonStorage.loadSyncedAddonUrls(currentProfileId)?.let(::dedupeManifestUrls)
+    }
+
     fun initialize() {
         val effectiveProfileId = resolveEffectiveProfileId(ProfileRepository.activeProfileId)
         if (initialized) return
         initialized = true
         currentProfileId = effectiveProfileId
+        reloadLastSynced()
         log.d { "initialize() — loading local addons for profile $currentProfileId" }
 
         val storedUrls = dedupeManifestUrls(AddonStorage.loadInstalledAddonUrls(currentProfileId))
@@ -100,6 +153,7 @@ object AddonRepository {
         currentProfileId = effectiveProfileId
         initialized = false
         _uiState.value = AddonsUiState()
+        reloadLastSynced()
     }
 
     fun clearLocalState() {
@@ -109,11 +163,14 @@ object AddonRepository {
         currentProfileId = 1
         initialized = false
         _uiState.value = AddonsUiState()
+        lastSyncedUrls.value = null
+        syncInFlight.value = false
     }
 
     suspend fun pullFromServer(profileId: Int) {
         currentProfileId = resolveEffectiveProfileId(profileId)
         val pullProfileId = currentProfileId
+        reloadLastSynced()
         log.i { "pullFromServer() — profileId=$profileId, initialized=$initialized" }
         var mergePushNeeded = false
         runCatching {
@@ -179,7 +236,7 @@ object AddonRepository {
             if (merge.pushNeeded) {
                 mergePushNeeded = true
             } else {
-                AddonStorage.saveSyncedAddonUrls(pullProfileId, urls)
+                recordSynced(pullProfileId, urls)
             }
             log.i { "pullFromServer() — applied ${urls.size} addons to state" }
         }.onFailure { e ->
@@ -389,6 +446,7 @@ object AddonRepository {
         val profileId = currentProfileId
         val addons = pushItemsFor(_uiState.value.addons)
         pushJobsByProfile[profileId]?.cancel()
+        syncInFlight.value = true
         var pushJob: Job? = null
         pushJob = scope.launch {
             try {
@@ -403,6 +461,7 @@ object AddonRepository {
             } finally {
                 if (pushJobsByProfile[profileId] === pushJob) {
                     pushJobsByProfile.remove(profileId)
+                    syncInFlight.value = retryJob?.isActive == true
                 }
             }
         }
@@ -430,7 +489,7 @@ object AddonRepository {
             putSyncOriginClientId()
         }
         SupabaseProvider.client.postgrest.rpc("sync_push_addons", params)
-        AddonStorage.saveSyncedAddonUrls(profileId, addons.map { it.url })
+        recordSynced(profileId, addons.map { it.url })
         log.d { "pushToServer() — success" }
     }
 

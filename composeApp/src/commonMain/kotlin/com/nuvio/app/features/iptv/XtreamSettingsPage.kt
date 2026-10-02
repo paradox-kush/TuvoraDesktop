@@ -72,11 +72,11 @@ internal fun LazyListScope.xtreamSettingsContent(
             }
         }
 
-        SettingsSection(title = "IPTV (Xtream Codes)", isTablet = isTablet) {
+        SettingsSection(title = "IPTV playlists", isTablet = isTablet) {
             SettingsGroup(isTablet = isTablet) {
                 SettingsNavigationRow(
                     title = "Add Playlist",
-                    description = "Xtream account, EPG, DNS & auto-refresh",
+                    description = "Xtream, M3U or Stalker — with EPG, DNS & auto-refresh",
                     isTablet = isTablet,
                     onClick = onAddPlaylist,
                 )

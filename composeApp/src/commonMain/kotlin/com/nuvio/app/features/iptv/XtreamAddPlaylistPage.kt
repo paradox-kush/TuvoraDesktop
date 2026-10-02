@@ -157,164 +157,172 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
         // A file playlist synced from another device has a fileName but no local copy here.
         val fileMissingOnThisDevice = editingIsM3uFile && editing != null && !M3UFileStore.hasLocalCopy(editing)
 
-        SourceTypeSection(
-            isTablet = isTablet,
-            selected = sourceType,
-            onSelected = { sourceType = it },
-        )
+        // UX88: the sections share ONE lazy item, so the list's own item spacing never applied and
+        // each title sat flush against the previous section's helper text. Space them like the
+        // settings list spaces its items.
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(MaterialTheme.nuvio.spacing.listGap),
+        ) {
+            SourceTypeSection(
+                isTablet = isTablet,
+                selected = sourceType,
+                onSelected = { sourceType = it },
+            )
 
-        when (sourceType) {
-            XtreamSourceType.XTREAM -> XtreamFieldsSection(
-                isTablet = isTablet,
-                server = server,
-                onServerChange = { input ->
-                    // Xtream = portal + username + password. Pasting a full get.php URL into Server URL
-                    // auto-fills user/pass; otherwise it's just the portal URL.
-                    val parsed = parseXtreamAccount(input)
-                    if (parsed != null) {
-                        server = parsed.baseUrl
-                        username = parsed.username
-                        password = parsed.password
-                        if (name.isBlank()) name = parsed.name
-                    } else {
-                        server = input
-                    }
-                },
-                username = username,
-                onUsernameChange = { username = it },
-                password = password,
-                onPasswordChange = { password = it },
-                userAgent = userAgent,
-                onUserAgentChange = { userAgent = it },
-                name = name,
-                onNameChange = { name = it },
-            )
-            XtreamSourceType.URL -> M3UFieldsSection(
-                isTablet = isTablet,
-                m3uUrl = m3uUrl,
-                onM3uUrlChange = { m3uUrl = it },
-                userAgent = userAgent,
-                onUserAgentChange = { userAgent = it },
-                name = name,
-                onNameChange = { name = it },
-            )
-            XtreamSourceType.FILE -> M3UFileFieldsSection(
-                isTablet = isTablet,
-                pickedFileName = pickedFileName,
-                fileMissingOnThisDevice = fileMissingOnThisDevice && pickedFile == null,
-                onChooseFile = {
-                    pickM3UFile { picked ->
-                        if (picked != null) {
-                            pickedFile = picked
-                            pickedFileName = picked.fileName
-                            if (name.isBlank()) name = picked.fileName.substringBeforeLast('.')
+            when (sourceType) {
+                XtreamSourceType.XTREAM -> XtreamFieldsSection(
+                    isTablet = isTablet,
+                    server = server,
+                    onServerChange = { input ->
+                        // Xtream = portal + username + password. Pasting a full get.php URL into Server URL
+                        // auto-fills user/pass; otherwise it's just the portal URL.
+                        val parsed = parseXtreamAccount(input)
+                        if (parsed != null) {
+                            server = parsed.baseUrl
+                            username = parsed.username
+                            password = parsed.password
+                            if (name.isBlank()) name = parsed.name
+                        } else {
+                            server = input
                         }
+                    },
+                    username = username,
+                    onUsernameChange = { username = it },
+                    password = password,
+                    onPasswordChange = { password = it },
+                    userAgent = userAgent,
+                    onUserAgentChange = { userAgent = it },
+                    name = name,
+                    onNameChange = { name = it },
+                )
+                XtreamSourceType.URL -> M3UFieldsSection(
+                    isTablet = isTablet,
+                    m3uUrl = m3uUrl,
+                    onM3uUrlChange = { m3uUrl = it },
+                    userAgent = userAgent,
+                    onUserAgentChange = { userAgent = it },
+                    name = name,
+                    onNameChange = { name = it },
+                )
+                XtreamSourceType.FILE -> M3UFileFieldsSection(
+                    isTablet = isTablet,
+                    pickedFileName = pickedFileName,
+                    fileMissingOnThisDevice = fileMissingOnThisDevice && pickedFile == null,
+                    onChooseFile = {
+                        pickM3UFile { picked ->
+                            if (picked != null) {
+                                pickedFile = picked
+                                pickedFileName = picked.fileName
+                                if (name.isBlank()) name = picked.fileName.substringBeforeLast('.')
+                            }
+                        }
+                    },
+                    userAgent = userAgent,
+                    onUserAgentChange = { userAgent = it },
+                    name = name,
+                    onNameChange = { name = it },
+                )
+                XtreamSourceType.STALKER -> StalkerFieldsSection(
+                    isTablet = isTablet,
+                    portalUrl = server,
+                    onPortalUrlChange = { server = it },
+                    mac = mac,
+                    onMacChange = { mac = it },
+                    serial = serial,
+                    onSerialChange = { serial = it },
+                    deviceId = deviceId,
+                    onDeviceIdChange = { deviceId = it },
+                    stalkerUser = stalkerUser,
+                    onStalkerUserChange = { stalkerUser = it },
+                    stalkerPass = stalkerPass,
+                    onStalkerPassChange = { stalkerPass = it },
+                    name = name,
+                    onNameChange = { name = it },
+                )
+            }
+
+            EpgUrlSection(
+                isTablet = isTablet,
+                epgUrl = epgUrl,
+                onEpgUrlChange = { epgUrl = it },
+            )
+
+            DnsProviderSection(
+                isTablet = isTablet,
+                selected = dnsProvider,
+                onSelected = { dnsProvider = it },
+            )
+
+            AutoRefreshSection(
+                isTablet = isTablet,
+                selectedHours = autoRefreshHours,
+                onSelected = { autoRefreshHours = it },
+            )
+
+            val resolvedSourceType = when (sourceType) {
+                XtreamSourceType.URL -> SOURCE_TYPE_M3U_URL
+                XtreamSourceType.FILE -> SOURCE_TYPE_M3U_FILE
+                XtreamSourceType.STALKER -> SOURCE_TYPE_STALKER
+                else -> SOURCE_TYPE_XTREAM
+            }
+            val backupCheck = BackupServerValidation.validate(
+                resolvedSourceType,
+                if (sourceType == XtreamSourceType.URL) m3uUrl else server,
+                backupRows,
+            )
+            if (BackupServerValidation.supportsBackups(resolvedSourceType)) {
+                BackupServersSection(
+                    isTablet = isTablet,
+                    rows = backupRows,
+                    problems = backupCheck.problems.associate { it.index to it.problem },
+                    placeholder = if (sourceType == XtreamSourceType.URL) "http://other-host/playlist.m3u" else "http://other-host:port",
+                    onRowsChange = { backupRows = it },
+                )
+            }
+
+            SaveSection(
+                isTablet = isTablet,
+                state = state,
+                isEdit = XtreamAddPage.isEdit,
+                canSave = sourceType.enabled && backupCheck.ok && when (sourceType) {
+                    XtreamSourceType.URL -> m3uUrl.isNotBlank()
+                    // A file playlist can save when a new file was picked, OR (edit) an on-device copy exists.
+                    XtreamSourceType.FILE -> pickedFile != null || (editingIsM3uFile && !fileMissingOnThisDevice)
+                    // Stalker auths by MAC, not creds — a portal URL + MAC is enough.
+                    XtreamSourceType.STALKER -> server.isNotBlank() && mac.isNotBlank()
+                    else -> server.isNotBlank() && username.isNotBlank() && password.isNotBlank()
+                },
+                onSave = {
+                    val input = XtreamFormInput(
+                        serverUrl = server,
+                        username = username,
+                        password = password,
+                        name = name.trim().ifEmpty { null },
+                        epgUrl = epgUrl.trim().ifEmpty { null },
+                        dnsProvider = dnsProvider,
+                        autoRefreshHours = autoRefreshHours,
+                        sourceType = resolvedSourceType,
+                        m3uUrl = m3uUrl,
+                        userAgent = userAgent.trim().ifEmpty { null },
+                        fileName = pickedFileName,
+                        pickedFile = pickedFile,
+                        macAddress = mac.trim(),
+                        stalkerUsername = stalkerUser.trim().ifEmpty { null },
+                        stalkerPassword = stalkerPass.trim().ifEmpty { null },
+                        serialNumber = serial.trim().ifEmpty { null },
+                        deviceId = deviceId.trim().ifEmpty { null },
+                        backupUrls = backupRows,
+                    )
+                    val editId = XtreamAddPage.editId
+                    if (editId != null) {
+                        XtreamRepository.editFromForm(editId, input) { ok -> if (ok) onDone() }
+                    } else {
+                        XtreamRepository.addFromForm(input) { ok -> if (ok) onDone() }
                     }
                 },
-                userAgent = userAgent,
-                onUserAgentChange = { userAgent = it },
-                name = name,
-                onNameChange = { name = it },
-            )
-            XtreamSourceType.STALKER -> StalkerFieldsSection(
-                isTablet = isTablet,
-                portalUrl = server,
-                onPortalUrlChange = { server = it },
-                mac = mac,
-                onMacChange = { mac = it },
-                serial = serial,
-                onSerialChange = { serial = it },
-                deviceId = deviceId,
-                onDeviceIdChange = { deviceId = it },
-                stalkerUser = stalkerUser,
-                onStalkerUserChange = { stalkerUser = it },
-                stalkerPass = stalkerPass,
-                onStalkerPassChange = { stalkerPass = it },
-                name = name,
-                onNameChange = { name = it },
             )
         }
-
-        EpgUrlSection(
-            isTablet = isTablet,
-            epgUrl = epgUrl,
-            onEpgUrlChange = { epgUrl = it },
-        )
-
-        DnsProviderSection(
-            isTablet = isTablet,
-            selected = dnsProvider,
-            onSelected = { dnsProvider = it },
-        )
-
-        AutoRefreshSection(
-            isTablet = isTablet,
-            selectedHours = autoRefreshHours,
-            onSelected = { autoRefreshHours = it },
-        )
-
-        val resolvedSourceType = when (sourceType) {
-            XtreamSourceType.URL -> SOURCE_TYPE_M3U_URL
-            XtreamSourceType.FILE -> SOURCE_TYPE_M3U_FILE
-            XtreamSourceType.STALKER -> SOURCE_TYPE_STALKER
-            else -> SOURCE_TYPE_XTREAM
-        }
-        val backupCheck = BackupServerValidation.validate(
-            resolvedSourceType,
-            if (sourceType == XtreamSourceType.URL) m3uUrl else server,
-            backupRows,
-        )
-        if (BackupServerValidation.supportsBackups(resolvedSourceType)) {
-            BackupServersSection(
-                isTablet = isTablet,
-                rows = backupRows,
-                problems = backupCheck.problems.associate { it.index to it.problem },
-                placeholder = if (sourceType == XtreamSourceType.URL) "http://other-host/playlist.m3u" else "http://other-host:port",
-                onRowsChange = { backupRows = it },
-            )
-        }
-
-        SaveSection(
-            isTablet = isTablet,
-            state = state,
-            isEdit = XtreamAddPage.isEdit,
-            canSave = sourceType.enabled && backupCheck.ok && when (sourceType) {
-                XtreamSourceType.URL -> m3uUrl.isNotBlank()
-                // A file playlist can save when a new file was picked, OR (edit) an on-device copy exists.
-                XtreamSourceType.FILE -> pickedFile != null || (editingIsM3uFile && !fileMissingOnThisDevice)
-                // Stalker auths by MAC, not creds — a portal URL + MAC is enough.
-                XtreamSourceType.STALKER -> server.isNotBlank() && mac.isNotBlank()
-                else -> server.isNotBlank() && username.isNotBlank() && password.isNotBlank()
-            },
-            onSave = {
-                val input = XtreamFormInput(
-                    serverUrl = server,
-                    username = username,
-                    password = password,
-                    name = name.trim().ifEmpty { null },
-                    epgUrl = epgUrl.trim().ifEmpty { null },
-                    dnsProvider = dnsProvider,
-                    autoRefreshHours = autoRefreshHours,
-                    sourceType = resolvedSourceType,
-                    m3uUrl = m3uUrl,
-                    userAgent = userAgent.trim().ifEmpty { null },
-                    fileName = pickedFileName,
-                    pickedFile = pickedFile,
-                    macAddress = mac.trim(),
-                    stalkerUsername = stalkerUser.trim().ifEmpty { null },
-                    stalkerPassword = stalkerPass.trim().ifEmpty { null },
-                    serialNumber = serial.trim().ifEmpty { null },
-                    deviceId = deviceId.trim().ifEmpty { null },
-                    backupUrls = backupRows,
-                )
-                val editId = XtreamAddPage.editId
-                if (editId != null) {
-                    XtreamRepository.editFromForm(editId, input) { ok -> if (ok) onDone() }
-                } else {
-                    XtreamRepository.addFromForm(input) { ok -> if (ok) onDone() }
-                }
-            },
-        )
     }
 }
 
@@ -670,11 +678,15 @@ private fun DnsProviderSection(
                 style = MaterialTheme.typography.bodySmall,
                 color = tokens.colors.textMuted,
             )
-            Text(
-                text = "Android only — iOS ignores this setting.",
-                style = MaterialTheme.typography.bodySmall,
-                color = tokens.colors.textMuted,
-            )
+            // UX83: a limitation note only where the setting is actually ignored — never a dev note
+            // ("iOS ignores this") shown to Android users, for whom the setting works.
+            if (!perPlaylistDnsSupported) {
+                Text(
+                    text = "Only used by the Android app — this device ignores it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.colors.textMuted,
+                )
+            }
         }
     }
 }

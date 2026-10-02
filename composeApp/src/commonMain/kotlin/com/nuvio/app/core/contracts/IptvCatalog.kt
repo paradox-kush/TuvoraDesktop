@@ -19,6 +19,12 @@ interface IptvCatalog {
     /** Count of enabled accounts. */
     val enabledAccountCount: Int
 
+    /**
+     * True while the active profile has at least one playlist saved, enabled or not. Observable so
+     * the home screen drops its "add your IPTV playlist" card as soon as one is added (UX38).
+     */
+    val hasAnyPlaylist: StateFlow<Boolean>
+
     /** Warm the TMDB<->stream match indexes off the critical path. */
     fun warmUpMatchIndexes(startDelayMs: Long)
 
@@ -51,4 +57,7 @@ object IptvCatalogAccess {
 
     /** The registered catalog, or null before registration (tests, previews). */
     val catalogOrNull: IptvCatalog? get() = instance
+
+    /** Tests that registered a fake put the process back as they found it. */
+    internal fun unregisterForTest() { instance = null }
 }

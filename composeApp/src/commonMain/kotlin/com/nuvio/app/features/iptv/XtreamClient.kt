@@ -1,5 +1,6 @@
 package com.nuvio.app.features.iptv
 
+import com.nuvio.app.features.addons.EmptyResponseBodyException
 import com.nuvio.app.features.iptv.match.IndexedItem
 import com.nuvio.app.features.iptv.match.TitleNormalizer
 import com.nuvio.app.features.iptv.match.XtreamCatalogIndexParser
@@ -26,12 +27,30 @@ object XtreamClient : IptvClient {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    /** Verifies credentials. Success only when the panel reports auth=1 and an active status. */
+    /**
+     * Verifies credentials. Success only when the panel reports auth=1 and an active status.
+     *
+     * UX20: transport failures (DNS, refused, timeout, TLS) and HTTP statuses PROPAGATE — the user
+     * must be told the server is unreachable, not that their password is wrong. Only a panel that
+     * answered (with `auth != 1`, an unparseable body, or an empty one — how some panels say "no")
+     * is a credential rejection.
+     */
     override suspend fun verify(acc: XtreamAccount): Result<Unit> = call {
-        val info = userInfo(acc)
-        check(info?.get("auth").asIntOrNull() == 1) { "Authentication failed" }
+        // Through the backup-server walk (Step 0.3); a panel that answered "no" (empty body, auth != 1,
+        // or a definitive refusal on every server) is a credential rejection, transport failures propagate.
+        val body = try {
+            loginText(acc)
+        } catch (e: EmptyResponseBodyException) {
+            throw XtreamAuthRejectedException()
+        } catch (e: FailoverAuthRejectedException) {
+            throw XtreamAuthRejectedException()
+        }
+        val info = runCatching { json.parseToJsonElement(body).jsonObject["user_info"] as? JsonObject }.getOrNull()
+        if (info?.get("auth").asIntOrNull() != 1) throw XtreamAuthRejectedException()
         val status = info?.get("status").asStringOrNull()?.lowercase() ?: ""
-        check(status.isEmpty() || status == "active") { "Account status: ${info?.get("status").asStringOrNull()}" }
+        if (status.isNotEmpty() && status != "active") {
+            throw XtreamAccountInactiveException(info?.get("status").asStringOrNull().orEmpty())
+        }
     }
 
     /** Live account status: active/expired, trial flag, expiry, and current vs max connections. */
@@ -579,6 +598,12 @@ object XtreamClient : IptvClient {
         return p.intOrNull ?: p.contentOrNull?.trim()?.toIntOrNull()
     }
 }
+
+/** The panel answered and refused these credentials (`auth != 1`). Message kept for logs only. */
+internal class XtreamAuthRejectedException : IllegalStateException("Authentication failed")
+
+/** The credentials are right but the line is not active (expired, banned, disabled). */
+internal class XtreamAccountInactiveException(status: String) : IllegalStateException("Account status: $status")
 
 internal fun XtreamEpgEntryDto.toProgram(): XtreamProgram = XtreamProgram(
     title = decodeXtreamBase64(title),

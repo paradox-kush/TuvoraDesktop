@@ -271,6 +271,8 @@ fun SettingsScreen(
         var currentPage by rememberSaveable(initialPageName) { mutableStateOf(initialPageName) }
         val scrollToTopRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
         val pageTitles = if (onNavigatePage != null) settingsPageTitles() else emptyMap()
+        // UX19: feature-owned title overrides (Edit vs Add Playlist), read when navigating.
+        val navigationTitleOverride = IptvSettingsSectionAccess.current()?.rememberNavigationTitleOverride()
         val page = remember(currentPage) {
             runCatching { SettingsPage.valueOf(currentPage) }
                 .getOrDefault(SettingsPage.Root)
@@ -290,7 +292,10 @@ fun SettingsScreen(
                 onExternalBack()
                 return
             }
-            externalNavigator(targetPage.name, pageTitles.getValue(targetPage))
+            externalNavigator(
+                targetPage.name,
+                navigationTitleOverride?.invoke(targetPage) ?: pageTitles.getValue(targetPage),
+            )
         }
 
         fun navigateBack() {
@@ -865,7 +870,13 @@ private fun MobileSettingsScreen(
                     val handle = iptvSettingsState
                     if (section != null && handle != null) {
                         with(section) {
-                            renderPage(page, isTablet = false, state = handle, onPageChange = onPageChange)
+                            renderPage(
+                                page,
+                                isTablet = false,
+                                state = handle,
+                                onPageChange = onPageChange,
+                                onNavigateBack = onNavigateBack,
+                            )
                         }
                     }
                 }
@@ -1354,7 +1365,13 @@ private fun TabletSettingsScreen(
                                 val handle = iptvSettingsState
                                 if (section != null && handle != null) {
                                     with(section) {
-                                        renderPage(page, isTablet = true, state = handle, onPageChange = onPageChange)
+                                        renderPage(
+                                            page,
+                                            isTablet = true,
+                                            state = handle,
+                                            onPageChange = onPageChange,
+                                            onNavigateBack = onNavigateBack,
+                                        )
                                     }
                                 }
                             }

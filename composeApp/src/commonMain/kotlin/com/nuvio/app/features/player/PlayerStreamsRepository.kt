@@ -16,6 +16,7 @@ import com.nuvio.app.features.plugins.PluginsUiState
 import com.nuvio.app.features.plugins.pluginContentId
 import com.nuvio.app.features.streams.AddonStreamGroup
 import com.nuvio.app.features.streams.InstalledStreamAddonTarget
+import com.nuvio.app.features.streams.IptvMatchSourceLane
 import com.nuvio.app.features.streams.StreamAutoPlaySelector
 import com.nuvio.app.features.streams.StreamBadgePresentation
 import com.nuvio.app.features.streams.StreamBadgeSettingsRepository
@@ -34,6 +35,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -464,8 +466,13 @@ object PlayerStreamsRepository {
                 debridAvailabilityJobs += availabilityJob
             }
 
+            // B63: the IPTV match lanes wait past their budget only while these addon/plugin loads
+            // are still running — see IptvSourceWaitPolicy.
+            val nonIptvLoads = mutableListOf<Job>()
+            val othersSettled = Job()
+
             streamAddons.forEach { addon ->
-                launch {
+                nonIptvLoads += launch {
                     val url = buildAddonResourceUrl(
                         manifestUrl = addon.manifest.transportUrl,
                         resource = "stream",
@@ -502,29 +509,9 @@ object PlayerStreamsRepository {
 
             xtreamSourceGroups.forEach { src ->
                 launch {
-                    val group = runCatchingUnlessCancelled {
+                    val group = IptvMatchSourceLane.resolveGroup(src, othersSettled) {
                         streamProvider.resolveMatchStreams(src.sourceId, type, videoId, season, episode)
-                    }.fold(
-                        onSuccess = { streams ->
-                            log.d { "Xtream match: ${streams.size} streams from ${src.addonName} for $videoId" }
-                            AddonStreamGroup(
-                                addonName = src.addonName,
-                                addonId = src.sourceId,
-                                streams = streams,
-                                isLoading = false,
-                            )
-                        },
-                        onFailure = { err ->
-                            log.w(err) { "Xtream match failed for ${src.addonName}" }
-                            AddonStreamGroup(
-                                addonName = src.addonName,
-                                addonId = src.sourceId,
-                                streams = emptyList(),
-                                isLoading = false,
-                                error = err.message,
-                            )
-                        },
-                    )
+                    }
                     publishCompletion(StreamLoadCompletion.Addon(group))
                 }
             }
@@ -532,7 +519,7 @@ object PlayerStreamsRepository {
             pluginProviderGroups.forEach { providerGroup ->
                 val includeScraperNameInSubtitle = false
                 providerGroup.scrapers.forEach { scraper ->
-                    launch {
+                    nonIptvLoads += launch {
                         log.d { "fetch $panelName request=$requestKey plugin=${scraper.name}" }
                         val completion = PluginRepository.executeScraper(
                             scraper = scraper,
@@ -572,6 +559,11 @@ object PlayerStreamsRepository {
                         publishCompletion(completion)
                     }
                 }
+            }
+
+            launch {
+                nonIptvLoads.joinAll()
+                othersSettled.complete()
             }
 
             repeat(totalTasks) {

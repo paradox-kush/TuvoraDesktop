@@ -7,7 +7,8 @@ package com.nuvio.app.features.iptv
  * Provider names are noisy ("UK: BBC ONE FHD", "UK | BBC-ONE"), so matching is by words: every word of
  * the query must appear in the name, in any order, ignoring case and punctuation. Names that start
  * with the query come first, then names with a word starting with it, then the rest, each group in
- * playlist order.
+ * playlist order. Provider heading rows ("==== Sky Germany ====") are never hits (UX44,
+ * [IptvSearchRowFilter]).
  *
  * Mirrors NuvioTV's `core/iptv/IptvChannelSearchPolicy`.
  */
@@ -42,7 +43,9 @@ internal object IptvChannelSearchPolicy {
         val first = words.first()
         return items
             .mapNotNull { item ->
-                val n = normalize(nameOf(item))
+                val name = nameOf(item)
+                if (IptvSearchRowFilter.isDivider(name)) return@mapNotNull null
+                val n = normalize(name)
                 if (!words.all { it in n }) return@mapNotNull null
                 val rank = when {
                     n.startsWith(phrase) -> 0

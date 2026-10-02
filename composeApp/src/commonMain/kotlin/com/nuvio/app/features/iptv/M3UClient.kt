@@ -205,7 +205,7 @@ object M3UClient : IptvClient {
     /** Ingest doubles as verify: a URL that streams at least one parseable entry is usable. */
     override suspend fun verify(acc: XtreamAccount): Result<Unit> = runCatching {
         val meta = ingest(acc).getOrThrow()
-        check(meta.liveCount + meta.vodCount + meta.seriesCount > 0) { "No channels, movies or series found in that M3U" }
+        if (meta.liveCount + meta.vodCount + meta.seriesCount <= 0) throw M3UNoContentException()
     }
 
     override suspend fun liveCategories(acc: XtreamAccount): Result<List<XtreamCategory>> = queryCats(acc, IptvContentKind.LIVE)
@@ -383,3 +383,8 @@ object M3UClient : IptvClient {
     /** The playlist's custom User-Agent, or a VLC default many providers gate on. */
     private fun XtreamAccount.userAgent(): String = userAgent?.takeIf { it.isNotBlank() } ?: DEFAULT_USER_AGENT
 }
+
+internal const val M3U_NO_CONTENT_MESSAGE = "No channels, movies or series found in that M3U"
+
+/** The playlist downloaded fine but held nothing playable — our own sentence, safe to show. */
+internal class M3UNoContentException : IllegalStateException(M3U_NO_CONTENT_MESSAGE)

@@ -41,11 +41,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.core.ui.NuvioAsyncImage as AsyncImage
+import com.nuvio.app.core.ui.NuvioActionLabel
 import com.nuvio.app.core.ui.NuvioIconActionButton
 import com.nuvio.app.core.ui.NuvioInfoBadge
 import com.nuvio.app.core.ui.NuvioInputField
@@ -88,6 +91,7 @@ internal fun AddonsSettingsPageContent(
     }
 
     val uiState by AddonRepository.uiState.collectAsStateWithLifecycle()
+    val syncStatus by AddonRepository.syncStatus.collectAsStateWithLifecycle()
     val uriHandler = LocalUriHandler.current
     val coroutineScope = rememberCoroutineScope()
     var addonUrl by rememberSaveable { mutableStateOf("") }
@@ -141,6 +145,9 @@ internal fun AddonsSettingsPageContent(
         )
 
         SectionHeader(stringResource(Res.string.addons_section_installed))
+        if (syncStatus == AddonSyncStatus.NotSynced) {
+            NotSyncedRow(onRetryClick = AddonRepository::retrySync)
+        }
         if (uiState.addons.isEmpty()) {
             EmptyStateCard(usePersonalMediaCopy = usePersonalMediaCopy)
         } else {
@@ -233,6 +240,24 @@ internal fun AddonsSettingsPageContent(
                     installModalState = null
                 }
             },
+        )
+    }
+}
+
+/** UX71: local add-on edits haven't reached the account (skipped or failed push). */
+@Composable
+private fun NotSyncedRow(onRetryClick: () -> Unit) {
+    val retryDescription = stringResource(Res.string.addons_not_synced_retry_description)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        NuvioInfoBadge(text = stringResource(Res.string.addons_not_synced_yet))
+        NuvioActionLabel(
+            text = stringResource(Res.string.action_retry),
+            modifier = Modifier.semantics { contentDescription = retryDescription },
+            onClick = onRetryClick,
         )
     }
 }

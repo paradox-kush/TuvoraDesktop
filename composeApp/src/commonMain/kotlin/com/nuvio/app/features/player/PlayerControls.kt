@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeContent
@@ -78,6 +79,9 @@ import com.nuvio.app.core.ui.gradientMask
 import com.nuvio.app.core.ui.nuvioTypeScale
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
+
+/** Space between the top bar's buttons and the stream-info readout beneath them (B105). */
+private val StreamInfoBelowTopBarGap = 8.dp
 
 @Composable
 internal fun PlayerControlsShell(
@@ -223,12 +227,19 @@ internal fun PlayerControlsShell(
                     modifier = Modifier.align(Alignment.TopStart),
                 )
                 // Fork: stream-info panel, trailing edge (the parental guide takes the leading one).
+                // B105: it sits BELOW the toolbar's slot — never over Lock/Back — and keeps that
+                // offset while the toolbar is hidden so it doesn't jump when the controls fade.
                 StreamInfoOverlay(
                     lines = streamInfoLines,
                     isVisible = showStreamInfo,
                     onAnimationComplete = onStreamInfoAnimationComplete,
-                    contentPadding = PaddingValues(horizontal = metrics.horizontalPadding, vertical = metrics.verticalPadding),
-                    modifier = Modifier.align(Alignment.TopEnd),
+                    contentPadding = PaddingValues(
+                        end = metrics.horizontalPadding,
+                        top = metrics.verticalPadding / 4 + PlayerToolbarHeight + StreamInfoBelowTopBarGap,
+                    ),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .windowInsetsPadding(WindowInsets.safeContent.only(WindowInsetsSides.Top)),
                 )
             }
 
@@ -449,7 +460,14 @@ private fun PlayerHeader(
                 )
             }
 
-            Box(contentAlignment = Alignment.TopEnd) {
+            // B105: actions on top, stream info underneath — they used to share this slot, so the
+            // readout was drawn over Lock/Back. The action row's height stays reserved while the
+            // actions are hidden so the readout doesn't jump when the controls fade.
+            Column(horizontalAlignment = Alignment.End) {
+            Box(
+                modifier = Modifier.heightIn(min = metrics.headerIconSize + 16.dp),
+                contentAlignment = Alignment.TopEnd,
+            ) {
             if (showActions) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -503,13 +521,13 @@ private fun PlayerHeader(
                     )
                 }
             }
-            // Fork: same slot as the action buttons, which fade out while this is on screen —
-            // the mirror of the parental guide occupying the leading edge.
+            }
+            // Fork: trailing-edge readout, the mirror of the parental guide on the leading edge.
             StreamInfoOverlay(
                 lines = streamInfoLines,
                 isVisible = showStreamInfo,
                 onAnimationComplete = onStreamInfoAnimationComplete,
-                contentPadding = PaddingValues(0.dp),
+                contentPadding = PaddingValues(top = StreamInfoBelowTopBarGap),
             )
             }
         }

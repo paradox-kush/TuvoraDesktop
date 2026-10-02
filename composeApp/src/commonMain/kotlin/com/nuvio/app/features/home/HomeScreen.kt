@@ -880,6 +880,14 @@ fun HomeScreen(
     }
 
     val hasActiveAddons = enabledAddons.any { it.manifest != null }
+    val hasAnyIptvPlaylist by remember {
+        com.nuvio.app.core.contracts.IptvCatalogAccess.catalogOrNull?.hasAnyPlaylist
+            ?: kotlinx.coroutines.flow.MutableStateFlow(false)
+    }.collectAsStateWithLifecycle()
+    val noAddonsCard = HomeNoAddonsCardPolicy.card(
+        addonsEnabled = AppFeaturePolicy.addonsEnabled,
+        hasAnyIptvPlaylist = hasAnyIptvPlaylist,
+    )
     val addonManifestsLoading = enabledAddons.any { it.isRefreshing }
     val addonManifestErrorMessage = enabledAddons.firstEnabledManifestError()
     val isResolvingHeroSources = addonManifestsLoading || homeUiState.isLoading
@@ -1155,7 +1163,7 @@ fun HomeScreen(
                         onLivePosterLongPress = { liveRecentActionTarget = it.toLiveRecentActionTarget() },
                         disintegrationRequest = continueWatchingDisintegrationRequest,
                     )
-                    item(key = "home_empty", contentType = "empty") {
+                    if (addonManifestErrorMessage != null || noAddonsCard != HomeNoAddonsCard.None) item(key = "home_empty", contentType = "empty") {
                         when {
                             networkStatusUiState.isOfflineLike && addonManifestErrorMessage != null -> {
                                 NuvioNetworkOfflineCard(
@@ -1185,21 +1193,25 @@ fun HomeScreen(
                                 )
                             }
 
-                            else -> {
-                                // Store builds hide the addon system, so point at IPTV setup instead.
+                            // Store builds hide the addon system, so point at IPTV setup instead -
+                            // until a playlist exists (UX38), then there is nothing to suggest.
+                            noAddonsCard == HomeNoAddonsCard.NoActiveAddons -> {
                                 HomeEmptyStateCard(
                                     modifier = Modifier.padding(
                                         horizontal = if (isDesktop) homeSectionPadding else 16.dp,
                                     ),
-                                    // Store builds hide the addon system, so point at IPTV setup instead.
-                                    title = stringResource(
-                                        if (AppFeaturePolicy.addonsEnabled) Res.string.compose_search_empty_no_active_addons_title
-                                        else Res.string.home_empty_iptv_hint_title
+                                    title = stringResource(Res.string.compose_search_empty_no_active_addons_title),
+                                    message = stringResource(Res.string.home_empty_no_active_addons_message),
+                                )
+                            }
+
+                            noAddonsCard == HomeNoAddonsCard.AddIptvPlaylist -> {
+                                HomeEmptyStateCard(
+                                    modifier = Modifier.padding(
+                                        horizontal = if (isDesktop) homeSectionPadding else 16.dp,
                                     ),
-                                    message = stringResource(
-                                        if (AppFeaturePolicy.addonsEnabled) Res.string.home_empty_no_active_addons_message
-                                        else Res.string.home_empty_iptv_hint_message
-                                    ),
+                                    title = stringResource(Res.string.home_empty_iptv_hint_title),
+                                    message = stringResource(Res.string.home_empty_iptv_hint_message),
                                 )
                             }
                         }

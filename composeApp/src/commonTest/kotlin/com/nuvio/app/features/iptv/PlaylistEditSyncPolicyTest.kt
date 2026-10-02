@@ -31,17 +31,17 @@ class PlaylistEditSyncPolicyTest {
 
     @Test
     fun `a failed provider check on a URL edit still saves - with a warning`() {
-        val outcome = PlaylistEditVerifyPolicy.outcome(Result.failure(RuntimeException("Could not reach the panel")))
+        val outcome = PlaylistEditVerifyPolicy.outcome(Result.failure(RuntimeException("Could not reach the panel")), SOURCE_TYPE_XTREAM)
         assertTrue(outcome.save, "what the user typed is never discarded")
-        val warning = assertNotNull(outcome.warning, "the failure is surfaced, not swallowed")
-        assertTrue(warning.contains("Could not reach the panel"), "the warning carries the reason: $warning")
+        val failure = assertNotNull(outcome.failure, "the failure is surfaced, not swallowed")
+        assertEquals(PlaylistSaveMessage.Known(PlaylistSaveError.UNREACHABLE), failure, "the reason is mapped, not raw (UX11)")
     }
 
     @Test
     fun `a passed provider check saves with no warning`() {
-        val outcome = PlaylistEditVerifyPolicy.outcome(Result.success(Unit))
+        val outcome = PlaylistEditVerifyPolicy.outcome(Result.success(Unit), SOURCE_TYPE_XTREAM)
         assertTrue(outcome.save)
-        assertNull(outcome.warning)
+        assertNull(outcome.failure)
     }
 
     @Test

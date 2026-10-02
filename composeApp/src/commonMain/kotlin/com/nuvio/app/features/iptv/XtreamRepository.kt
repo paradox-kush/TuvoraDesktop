@@ -62,6 +62,9 @@ object XtreamRepository : IptvCatalog {
     // --- IptvCatalog read port (S3a) ---
     override fun hasEnabledAccounts(): Boolean = _uiState.value.accounts.any { it.enabled }
     override val enabledAccountCount: Int get() = _uiState.value.accounts.count { it.enabled }
+    override val hasAnyPlaylist: StateFlow<Boolean> = uiState
+        .map { it.accounts.isNotEmpty() }
+        .stateIn(scope, SharingStarted.Eagerly, false)
     override val servedStreamTypes: StateFlow<Set<String>> = uiState
         .map { servedStreamTypesOf(it.accounts) }
         .stateIn(scope, SharingStarted.Eagerly, emptySet())
@@ -212,14 +215,14 @@ object XtreamRepository : IptvCatalog {
 
     /** Parse a pasted portal/M3U URL, verify the credentials live, then persist. */
     fun addFromUrl(input: String, name: String?, onResult: (Boolean) -> Unit) {
-        verifyAndSave(parseXtreamAccount(input, name), "Couldn't read a username & password from that URL", onResult)
+        verifyAndSave(parseXtreamAccount(input, name), PARSE_URL_ERROR, onResult)
     }
 
     /** Add from manually-entered server URL + username + password. */
     fun addManual(serverUrl: String, username: String, password: String, name: String?, onResult: (Boolean) -> Unit) {
         verifyAndSave(
             xtreamAccountFromFields(serverUrl, username, password, name),
-            "Enter a server URL, username and password",
+            xtreamFieldsError(serverUrl, username, password),
             onResult
         )
     }
@@ -231,6 +234,12 @@ object XtreamRepository : IptvCatalog {
      * [xtreamAccountFromForm] layers the option fields on before the live verify + persist.
      */
     internal fun addFromForm(input: XtreamFormInput, onResult: (Boolean) -> Unit) {
+        // UX21: say WHICH problem the form has (empty fields vs. an address that isn't one) before
+        // any network — the builders below return a bare null for both.
+        PlaylistSaveErrorPolicy.validate(input)?.let { error ->
+            reportFormError(PlaylistSaveMessage.Known(error), onResult)
+            return
+        }
         when (input.sourceType) {
             SOURCE_TYPE_M3U_FILE -> addFileFromForm(input, existingId = null, onResult = onResult)
             SOURCE_TYPE_M3U_URL -> {
@@ -240,16 +249,16 @@ object XtreamRepository : IptvCatalog {
                 // get.php serves (CDN-fronted panels do this), the M3U lane still works.
                 val panel = recogniseXtreamPanelInM3uField(input)
                 if (panel == null) {
-                    verifyAndSave(m3uAccountFromForm(input), "Enter an M3U playlist URL", onResult)
+                    verifyAndSave(m3uAccountFromForm(input), INVALID_ADDRESS, onResult)
                 } else {
-                    verifyAndSave(panel, "Enter an M3U playlist URL") { ok ->
+                    verifyAndSave(panel, INVALID_ADDRESS) { ok ->
                         if (ok) onResult(true)
-                        else verifyAndSave(m3uAccountFromForm(input), "Enter an M3U playlist URL", onResult)
+                        else verifyAndSave(m3uAccountFromForm(input), INVALID_ADDRESS, onResult)
                     }
                 }
             }
-            SOURCE_TYPE_STALKER -> verifyAndSave(stalkerAccountFromForm(input), "Enter a portal URL and MAC address", onResult)
-            else -> verifyAndSave(xtreamAccountFromForm(input), "Enter a server URL, username and password", onResult)
+            SOURCE_TYPE_STALKER -> verifyAndSave(stalkerAccountFromForm(input), INVALID_ADDRESS, onResult)
+            else -> verifyAndSave(xtreamAccountFromForm(input), INVALID_ADDRESS, onResult)
         }
     }
 
@@ -264,8 +273,7 @@ object XtreamRepository : IptvCatalog {
             // Step 0: an edit keeps the playlist's (not-on-the-form) backup list.
             ?.let { acc -> _uiState.value.accounts.firstOrNull { it.id == existingId }?.let { acc.copy(backupUrls = it.backupUrls) } ?: acc }
         if (account == null) {
-            _uiState.update { it.copy(error = "Choose an M3U file to import") }
-            onResult(false)
+            reportFormError(PlaylistSaveMessage.Known(PlaylistSaveError.MISSING_M3U_FILE), onResult)
             return
         }
         scope.launch {
@@ -275,13 +283,15 @@ object XtreamRepository : IptvCatalog {
                 input.pickedFile?.let { copyM3UFileToStorage(account.id, it) }
             }.isSuccess
             if (!copyOk) {
-                _uiState.update { it.copy(isValidating = false, error = "Could not read the selected file") }
+                val text = PlaylistSaveError.FILE_UNREADABLE.text()
+                _uiState.update { it.copy(isValidating = false, error = text) }
                 onResult(false)
                 return@launch
             }
             // No pick + no existing local copy = nothing to ingest.
             if (input.pickedFile == null && !M3UFileStore.hasLocalCopy(account)) {
-                _uiState.update { it.copy(isValidating = false, error = "Choose an M3U file to import") }
+                val text = PlaylistSaveError.MISSING_M3U_FILE.text()
+                _uiState.update { it.copy(isValidating = false, error = text) }
                 onResult(false)
                 return@launch
             }
@@ -293,7 +303,9 @@ object XtreamRepository : IptvCatalog {
                     persistAndReport(onResult)
                 }
                 .onFailure { e ->
-                    _uiState.update { it.copy(isValidating = false, error = e.message ?: "Could not read that playlist file") }
+                    // UX11: a mapped sentence, never a parser's or the platform's raw message.
+                    val text = PlaylistSaveErrorPolicy.classify(e, account.sourceType).text()
+                    _uiState.update { it.copy(isValidating = false, error = text) }
                     onResult(false)
                 }
         }
@@ -312,6 +324,10 @@ object XtreamRepository : IptvCatalog {
             addFileFromForm(input, existingId = oldId, onResult = onResult)
             return
         }
+        PlaylistSaveErrorPolicy.validate(input)?.let { error ->
+            reportFormError(PlaylistSaveMessage.Known(error), onResult)
+            return
+        }
         val candidate = when (input.sourceType) {
             SOURCE_TYPE_M3U_URL -> m3uAccountFromForm(input)
             SOURCE_TYPE_STALKER -> stalkerAccountFromForm(input)
@@ -320,11 +336,7 @@ object XtreamRepository : IptvCatalog {
         verifyAndReplace(
             oldId,
             candidate,
-            when (input.sourceType) {
-                SOURCE_TYPE_M3U_URL -> "Enter an M3U playlist URL"
-                SOURCE_TYPE_STALKER -> "Enter a portal URL and MAC address"
-                else -> "Enter a server URL, username and password"
-            },
+            INVALID_ADDRESS,
             onResult,
             // The form shows EPG/DNS/auto-refresh, so its candidate already carries the user's choices —
             // don't let carry-over revert them to the old account's values.
@@ -332,10 +344,9 @@ object XtreamRepository : IptvCatalog {
         )
     }
 
-    private fun verifyAndSave(account: XtreamAccount?, parseError: String, onResult: (Boolean) -> Unit) {
+    private fun verifyAndSave(account: XtreamAccount?, parseError: PlaylistSaveMessage, onResult: (Boolean) -> Unit) {
         if (account == null) {
-            _uiState.update { it.copy(error = parseError) }
-            onResult(false)
+            reportFormError(parseError, onResult)
             return
         }
         val profileAtStart = currentProfileId
@@ -359,7 +370,10 @@ object XtreamRepository : IptvCatalog {
                     persistAndReport(onResult)
                 }
                 .onFailure { e ->
-                    _uiState.update { it.copy(isValidating = false, error = e.message ?: "Could not reach the panel") }
+                    // UX11/UX20: a plain, mapped sentence — "unreachable" is no longer reported as
+                    // "Authentication failed", and the platform's raw text never reaches the form.
+                    val text = PlaylistSaveErrorPolicy.classify(e, account.sourceType).text()
+                    _uiState.update { it.copy(isValidating = false, error = text) }
                     onResult(false)
                 }
         }
@@ -368,7 +382,7 @@ object XtreamRepository : IptvCatalog {
     /** Re-verify + replace an existing account from a pasted portal/M3U URL (playlist edit). */
     fun editFromUrl(oldId: String, input: String, onResult: (Boolean) -> Unit) {
         val oldName = _uiState.value.accounts.firstOrNull { it.id == oldId }?.name
-        verifyAndReplace(oldId, parseXtreamAccount(input, oldName), "Couldn't read a username & password from that URL", onResult)
+        verifyAndReplace(oldId, parseXtreamAccount(input, oldName), PARSE_URL_ERROR, onResult)
     }
 
     /** Re-verify + replace an existing account from manually-edited fields (playlist edit). */
@@ -376,7 +390,7 @@ object XtreamRepository : IptvCatalog {
         verifyAndReplace(
             oldId,
             xtreamAccountFromFields(serverUrl, username, password, name),
-            "Enter a server URL, username and password",
+            xtreamFieldsError(serverUrl, username, password),
             onResult
         )
     }
@@ -396,14 +410,13 @@ object XtreamRepository : IptvCatalog {
     private fun verifyAndReplace(
         oldId: String,
         candidate: XtreamAccount?,
-        parseError: String,
+        parseError: PlaylistSaveMessage,
         onResult: (Boolean) -> Unit,
         keepCandidateFormOptions: Boolean = false,
     ) {
         val old = _uiState.value.accounts.firstOrNull { it.id == oldId }
         if (old == null || candidate == null) {
-            _uiState.update { it.copy(error = if (old == null) "Account no longer exists" else parseError) }
-            onResult(false)
+            reportFormError(if (old == null) PlaylistSaveMessage.Authored("Account no longer exists") else parseError, onResult)
             return
         }
         // A credential/URL edit must not wipe the playlist options — but provider-specific
@@ -422,7 +435,9 @@ object XtreamRepository : IptvCatalog {
                 if (!PlaylistEditVerifyPolicy.needsVerify(old, account)) Result.success(Unit)
                 else verifyForTest?.invoke(account) ?: IptvClient.forAccount(account).verify(account)
             // Decision 2026-09-27: a failed check saves anyway and warns (never discards the edit).
-            val outcome = PlaylistEditVerifyPolicy.outcome(verified)
+            val outcome = PlaylistEditVerifyPolicy.outcome(verified, account.sourceType)
+            // UX11: the row warning carries the mapped sentence, never the raw exception text.
+            val warning = outcome.failure?.let { playlistSavedUnverifiedWarning(it) }
             // Profile switched while verifying — see verifyAndSave.
             if (currentProfileId != profileAtStart) {
                 _uiState.update { it.copy(isValidating = false) }
@@ -435,7 +450,7 @@ object XtreamRepository : IptvCatalog {
                     accounts = st.accounts.map { if (it.id == oldId) account else it },
                     isValidating = false,
                     saveWarnings = (st.saveWarnings - oldId) +
-                        (outcome.warning?.let { mapOf(account.id to it) } ?: emptyMap()),
+                        (warning?.let { mapOf(account.id to it) } ?: emptyMap()),
                 )
             }
             // A changed M3U URL invalidates the old catalog rows (same id, other source) — drop them.
@@ -641,6 +656,32 @@ object XtreamRepository : IptvCatalog {
     }
 
     fun clearError() = _uiState.update { it.copy(error = null) }
+
+    /**
+     * Shows a form error resolved to its localized sentence. Resolution suspends (string resources),
+     * so the error lands — and [onResult] fires — from [scope], like every verify failure already did.
+     */
+    private fun reportFormError(message: PlaylistSaveMessage, onResult: (Boolean) -> Unit) {
+        scope.launch {
+            val text = message.text()
+            _uiState.update { it.copy(isValidating = false, error = text) }
+            onResult(false)
+        }
+    }
+
+    /** The form error for manually-entered Xtream fields that did not build an account. */
+    private fun xtreamFieldsError(serverUrl: String, username: String, password: String): PlaylistSaveMessage =
+        PlaylistSaveMessage.Known(
+            PlaylistSaveErrorPolicy.validate(
+                XtreamFormInput(
+                    serverUrl = serverUrl, username = username, password = password, name = null,
+                    epgUrl = null, dnsProvider = "system", autoRefreshHours = 0,
+                ),
+            ) ?: PlaylistSaveError.INVALID_ADDRESS,
+        )
+
+    private val INVALID_ADDRESS = PlaylistSaveMessage.Known(PlaylistSaveError.INVALID_ADDRESS)
+    private val PARSE_URL_ERROR = PlaylistSaveMessage.Authored("Couldn't read a username & password from that URL")
 
     /** Replace this profile's accounts from a remote pull WITHOUT echoing a push back. */
     fun applyFromRemote(profileId: Int, accounts: List<XtreamAccount>) {

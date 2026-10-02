@@ -670,7 +670,13 @@ private fun PlayerScreenRuntime.currentInitialPositionRequestKey(): String? {
 private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, isEpisode: Boolean) {
     val isInPip = rememberIsInPictureInPicture()
     AnimatedVisibility(
-        visible = (controlsVisible || showParentalGuide) && !playerControlsLocked && !isInPip,
+        visible = PlayerChromeVisibilityPolicy.shellVisible(
+            controlsVisible = controlsVisible,
+            showParentalGuide = showParentalGuide,
+            showStreamInfo = showStreamInfoOverlay,
+            controlsLocked = playerControlsLocked,
+            inPictureInPicture = isInPip,
+        ),
         enter = fadeIn(),
         exit = fadeOut(),
     ) {

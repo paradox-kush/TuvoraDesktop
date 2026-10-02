@@ -524,6 +524,7 @@ fun NuvioToastHost(
     val tokens = MaterialTheme.nuvio
     val toast by NuvioToastController.currentToast.collectAsState()
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val navBarBottom = nuvioBottomNavigationBarInsets().asPaddingValues().calculateBottomPadding()
     val visibilityState = remember { MutableTransitionState(false) }
     var renderedToast by remember { mutableStateOf<NuvioToastMessage?>(null) }
 
@@ -549,41 +550,74 @@ fun NuvioToastHost(
         }
     }
 
-    AnimatedVisibility(
-        visibleState = visibilityState,
-        modifier = modifier,
-        enter = fadeIn() + slideInVertically { -it },
-        exit = fadeOut() + slideOutVertically { -it },
-    ) {
-        val currentToast = renderedToast ?: return@AnimatedVisibility
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = statusBarTop + tokens.spacing.listGap)
-                .padding(horizontal = tokens.spacing.screenHorizontal),
-            contentAlignment = Alignment.TopCenter,
+    // UX35: a bottom toast sits above the bottom navigation (same clearance as the floating
+    // resume prompt) so it never covers a screen's own top tabs while it shows.
+    val bottom = renderedToast?.placement == NuvioToastPlacement.Bottom
+    Box(modifier = modifier.fillMaxSize()) {
+        AnimatedVisibility(
+            visibleState = visibilityState,
+            modifier = Modifier.align(if (bottom) Alignment.BottomCenter else Alignment.TopCenter),
+            enter = fadeIn() + slideInVertically { if (bottom) it else -it },
+            exit = fadeOut() + slideOutVertically { if (bottom) it else -it },
         ) {
-            Surface(
-                shape = RoundedCornerShape(NuvioTokens.Radius.xl),
-                color = tokens.colors.surfacePopover,
-                tonalElevation = tokens.elevation.raised,
-                shadowElevation = tokens.elevation.overlay,
+            val currentToast = renderedToast ?: return@AnimatedVisibility
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        top = if (bottom) 0.dp else statusBarTop + tokens.spacing.listGap,
+                        bottom = if (bottom) navBarBottom + NuvioTokens.Space.s80 + tokens.spacing.listGap else 0.dp,
+                    )
+                    .padding(horizontal = tokens.spacing.screenHorizontal),
+                contentAlignment = if (bottom) Alignment.BottomCenter else Alignment.TopCenter,
             ) {
-                Text(
-                    text = currentToast.message,
-                    modifier = Modifier.padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s12),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = tokens.colors.textPrimary,
-                )
+                Surface(
+                    shape = RoundedCornerShape(NuvioTokens.Radius.xl),
+                    color = tokens.colors.surfacePopover,
+                    tonalElevation = tokens.elevation.raised,
+                    shadowElevation = tokens.elevation.overlay,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = currentToast.message,
+                            modifier = Modifier
+                                .weight(1f, fill = false)
+                                .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s12),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = tokens.colors.textPrimary,
+                        )
+                        val actionLabel = currentToast.actionLabel
+                        if (actionLabel != null && currentToast.onAction != null) {
+                            androidx.compose.material3.TextButton(
+                                onClick = { NuvioToastController.performAction(currentToast.id) },
+                                modifier = Modifier.padding(end = NuvioTokens.Space.s6),
+                            ) {
+                                Text(
+                                    text = actionLabel,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = tokens.colors.accent,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 }
 
+/** Where a toast shows: the top by default; the bottom (above the bottom navigation) when the top holds a screen's own tabs. */
+enum class NuvioToastPlacement { Top, Bottom }
+
 data class NuvioToastMessage(
     val id: Long,
     val message: String,
     val durationMillis: Long,
+    val placement: NuvioToastPlacement = NuvioToastPlacement.Top,
+    /** An optional one-tap action (e.g. Undo); tapping it runs [onAction] and dismisses the toast. */
+    val actionLabel: String? = null,
+    val onAction: (() -> Unit)? = null,
 )
 
 object NuvioToastController {
@@ -594,13 +628,27 @@ object NuvioToastController {
     fun show(
         message: String,
         durationMillis: Long = 2500L,
+        placement: NuvioToastPlacement = NuvioToastPlacement.Top,
+        actionLabel: String? = null,
+        onAction: (() -> Unit)? = null,
     ) {
         nextToastId += 1L
         _currentToast.value = NuvioToastMessage(
             id = nextToastId,
             message = message,
             durationMillis = durationMillis,
+            placement = placement,
+            actionLabel = actionLabel,
+            onAction = onAction,
         )
+    }
+
+    /** Runs the action of the toast [id] once and dismisses it. A toast already replaced or gone does nothing. */
+    fun performAction(id: Long) {
+        val activeToast = _currentToast.value ?: return
+        if (activeToast.id != id) return
+        _currentToast.value = null
+        activeToast.onAction?.invoke()
     }
 
     fun dismiss(id: Long? = null) {
