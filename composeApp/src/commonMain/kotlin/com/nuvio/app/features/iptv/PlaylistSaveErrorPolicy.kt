@@ -132,6 +132,8 @@ internal object PlaylistSaveErrorPolicy {
         transportFailureIn(error, transport)?.let { return PlaylistSaveMessage.Known(it.toSaveError()) }
         return when {
             error is XtreamAuthRejectedException -> PlaylistSaveMessage.Known(PlaylistSaveError.WRONG_CREDENTIALS)
+            // Step 0.3: the failover probe's definitive refusal (auth=0 / banned) is the same answer on every server.
+            error is FailoverAuthRejectedException -> PlaylistSaveMessage.Known(PlaylistSaveError.WRONG_CREDENTIALS)
             error is XtreamAccountInactiveException -> PlaylistSaveMessage.Authored(error.message.orEmpty())
             error is M3UNoContentException -> PlaylistSaveMessage.Authored(M3U_NO_CONTENT_MESSAGE)
             // The provider's edge (WAF/Cloudflare) turned us away: the server is up, the password is not the problem.
