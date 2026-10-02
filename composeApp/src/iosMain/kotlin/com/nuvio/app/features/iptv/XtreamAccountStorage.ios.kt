@@ -66,4 +66,11 @@ internal actual object XtreamAccountStorage {
     actual fun saveServerFailoverJson(profileId: Int, json: String) {
         NSUserDefaults.standardUserDefaults.setObject(json, forKey = "xtream_server_failover_$profileId")
     }
+
+    actual fun loadManagedInfoJson(profileId: Int): String? =
+        NSUserDefaults.standardUserDefaults.stringForKey("xtream_managed_info_$profileId")
+
+    actual fun saveManagedInfoJson(profileId: Int, json: String) {
+        NSUserDefaults.standardUserDefaults.setObject(json, forKey = "xtream_managed_info_$profileId")
+    }
 }

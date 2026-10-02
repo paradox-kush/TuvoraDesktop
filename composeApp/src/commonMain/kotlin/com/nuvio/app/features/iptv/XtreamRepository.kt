@@ -318,6 +318,12 @@ object XtreamRepository : IptvCatalog {
      * the form's own option fields (EPG/DNS/auto-refresh) always win because the form shows them.
      */
     internal fun editFromForm(oldId: String, input: XtreamFormInput, onResult: (Boolean) -> Unit) {
+        // A MANAGED playlist's edit is a rename only, built from the pulled account (never from form
+        // fields): re-normalising its address would silently detach it from its provider.
+        managedRenameCandidate(oldId, input.name)?.let { candidate ->
+            verifyAndReplace(oldId, candidate, INVALID_ADDRESS, onResult)
+            return
+        }
         // A file playlist edit keeps its id (so its local copy + saved data carry over); a re-pick just
         // overwrites the copy. Route through the same add-file path with the existing id.
         if (input.sourceType == SOURCE_TYPE_M3U_FILE) {
@@ -362,6 +368,14 @@ object XtreamRepository : IptvCatalog {
                         onResult(false)
                         return@onSuccess
                     }
+                    // Step 2: adding the server + login of a playlist a provider MANAGES must not replace it with a
+                    // form-built copy (re-normalised, no backups/EPG/user agent, a host as its name): the server
+                    // would silently detach it. The pulled row stays exactly as it is; nothing is recorded or pushed.
+                    if (_uiState.value.accounts.any { it.id == account.id } && isManagedPlaylist(account.id)) {
+                        _uiState.update { it.copy(isValidating = false) }
+                        persistAndReport(onResult)
+                        return@onSuccess
+                    }
                     val updated = _uiState.value.accounts.filterNot { it.id == account.id } + account
                     _uiState.update { it.copy(accounts = updated, isValidating = false) }
                     // Start the catalog index now, not on first play — minutes on budget devices.
@@ -381,18 +395,35 @@ object XtreamRepository : IptvCatalog {
 
     /** Re-verify + replace an existing account from a pasted portal/M3U URL (playlist edit). */
     fun editFromUrl(oldId: String, input: String, onResult: (Boolean) -> Unit) {
+        managedRenameCandidate(oldId, null)?.let { candidate ->
+            verifyAndReplace(oldId, candidate, PARSE_URL_ERROR, onResult)
+            return
+        }
         val oldName = _uiState.value.accounts.firstOrNull { it.id == oldId }?.name
         verifyAndReplace(oldId, parseXtreamAccount(input, oldName), PARSE_URL_ERROR, onResult)
     }
 
     /** Re-verify + replace an existing account from manually-edited fields (playlist edit). */
     fun editManual(oldId: String, serverUrl: String, username: String, password: String, name: String?, onResult: (Boolean) -> Unit) {
+        managedRenameCandidate(oldId, name)?.let { candidate ->
+            verifyAndReplace(oldId, candidate, xtreamFieldsError(serverUrl, username, password), onResult)
+            return
+        }
         verifyAndReplace(
             oldId,
             xtreamAccountFromFields(serverUrl, username, password, name),
             xtreamFieldsError(serverUrl, username, password),
             onResult
         )
+    }
+
+    private fun isManagedPlaylist(id: String): Boolean = ManagedInfoRepository.isManaged(currentProfileId, id)
+
+    /** For a managed playlist: the pulled account with only the name changed; null for any other playlist. */
+    private fun managedRenameCandidate(id: String, requestedName: String?): XtreamAccount? {
+        if (!isManagedPlaylist(id)) return null
+        val pulled = _uiState.value.accounts.firstOrNull { it.id == id } ?: return null
+        return ManagedEditPolicy.renamed(pulled, requestedName)
     }
 
     /**
@@ -421,7 +452,10 @@ object XtreamRepository : IptvCatalog {
         }
         // A credential/URL edit must not wipe the playlist options — but provider-specific
         // ones only carry when the edit still targets the same playlist (see carryPlaylistOptions).
-        val account = carryPlaylistOptions(old, candidate, keepCandidateFormOptions).copy(id = oldId)
+        val carried = carryPlaylistOptions(old, candidate, keepCandidateFormOptions).copy(id = oldId)
+        // Whatever built the candidate, a managed playlist never leaves here with a provider-owned field
+        // changed: the server would silently detach it (ManagedEditPolicy).
+        val account = if (isManagedPlaylist(oldId)) ManagedEditPolicy.lockProviderFields(old, carried) else carried
         val profileAtStart = currentProfileId
         // Step 0.3: an edited server list (main or backups) starts over on the main server — the old
         // active index may now name a different server or none. Before the verify below, which itself
@@ -653,6 +687,8 @@ object XtreamRepository : IptvCatalog {
         XtreamItemRegistry.resetForProfile()
         XtreamHubRepository.resetForProfile()
         XtreamSearchIndex.resetForProfile()
+        ManagedInfoRepository.clearLocalState()
+        ManagedInfoRefresher.clearLocalState()
     }
 
     fun clearError() = _uiState.update { it.copy(error = null) }

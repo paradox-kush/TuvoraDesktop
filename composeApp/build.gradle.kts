@@ -52,6 +52,10 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
     @get:Input
     abstract val supabaseFallbackUrl: Property<String>
 
+    /** Debug builds only: where the setup-code preview route lives (default blank = tuvora.co). */
+    @get:Input
+    abstract val providerWebUrl: Property<String>
+
     @get:Input
     abstract val nuvioSupabaseUrl: Property<String>
 
@@ -95,6 +99,7 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
                 |    const val URL = "${supabaseUrl.get()}"
                 |    const val ANON_KEY = "${supabaseAnonKey.get()}"
                 |    const val FALLBACK_URL = "${supabaseFallbackUrl.get()}"
+                |    const val PROVIDER_WEB_URL = "${providerWebUrl.get()}"
                 |    const val NUVIO_URL = "${nuvioSupabaseUrl.get()}"
                 |    const val NUVIO_ANON_KEY = "${nuvioSupabaseAnonKey.get()}"
                 |}
@@ -706,6 +711,7 @@ val generateRuntimeConfigs = tasks.register<GenerateRuntimeConfigsTask>("generat
     supabaseUrl.set(runtimeConfigValue("SUPABASE_URL"))
     supabaseAnonKey.set(runtimeConfigValue("SUPABASE_ANON_KEY"))
     supabaseFallbackUrl.set(runtimeConfigValue("SUPABASE_FALLBACK_URL"))
+    providerWebUrl.set(runtimeConfigValue("PROVIDER_WEB_URL"))
     nuvioSupabaseUrl.set(runtimeConfigValue("NUVIO_SUPABASE_URL"))
     nuvioSupabaseAnonKey.set(runtimeConfigValue("NUVIO_SUPABASE_ANON_KEY"))
     syncBackendManifestUrl.set(runtimeConfigValue("SYNC_BACKEND_MANIFEST_URL"))

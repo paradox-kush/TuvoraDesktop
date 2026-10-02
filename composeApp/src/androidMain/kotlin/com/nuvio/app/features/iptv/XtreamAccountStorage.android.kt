@@ -68,4 +68,11 @@ internal actual object XtreamAccountStorage {
     actual fun saveServerFailoverJson(profileId: Int, json: String) {
         preferences?.edit()?.putString("xtream_server_failover_$profileId", json)?.apply()
     }
+
+    actual fun loadManagedInfoJson(profileId: Int): String? =
+        preferences?.getString("xtream_managed_info_$profileId", null)
+
+    actual fun saveManagedInfoJson(profileId: Int, json: String) {
+        preferences?.edit()?.putString("xtream_managed_info_$profileId", json)?.apply()
+    }
 }
