@@ -219,34 +219,17 @@ object StalkerClient : IptvClient {
             IptvContentDb.ingestMeta(acc.id)?.takeIf { !force && now - it.builtAtMs < LINEUP_TTL_MS }
                 ?.let { return@withLock it.liveCount > 0 }   // raced: another caller mirrored
             val cats = runCatching { categories(acc, "itv", "get_genres").getOrThrow() }.getOrNull()
-            val js = runCatching {
-                browse(acc, mapOf("type" to "itv", "action" to "get_all_channels"))
-            }.getOrNull()
-            var items = ((js as? JsonObject)?.get("data") as? JsonArray ?: js as? JsonArray)
-                ?.mapNotNull { it as? JsonObject }.orEmpty()
-            // A portal without get_all_channels: bounded paged fetch (rowCache keeps the raw rows).
-            if (items.isEmpty()) items = orderedList(acc, "itv", null)
-            val rows = items.mapNotNull { item ->
-                val id = item.int("id")?.takeIf { it > 0 } ?: return@mapNotNull null
-                // The raw 13MB rows are dropped after this mapping, so the static-vs-mint flags
-                // must be picked off here or the whole lineup would lose its evidence.
-                rememberLinkFlags(acc.id, "itv", item, id)
-                com.nuvio.app.features.iptv.content.IptvStreamRow(
-                    sid = id,
-                    name = item.str("name").orEmpty(),
-                    logo = item.str("logo")?.takeIf { it.isNotBlank() },
-                    tvgId = item.str("xmltv_id")?.takeIf { it.isNotBlank() },
-                    categoryId = item.str("tv_genre_id") ?: item.str("genre_id"),
-                    url = "",
-                    ext = null,
-                    cmd = item.str("cmd"),
-                    hasArchive = (item.int("tv_archive") ?: 0) > 0,
-                    // Stored as plain booleans (false = flag absent OR panel said false — the
-                    // column cannot tell them apart), so reads treat only TRUE as evidence.
-                    useHttpTmpLink = item.flag("use_http_tmp_link") ?: false,
-                    useLoadBalancing = item.flag("use_load_balancing") ?: false,
-                )
+            // B76: the whole lineup in ONE get_all_channels, STREAMED (see StalkerJsArrayStreamParser
+            // for why a 13 MB body must not go through the whole-request text client).
+            val streamed = runCatching { streamAllChannels(acc) }.getOrNull().orEmpty()
+            val mapped = streamed.ifEmpty {
+                // A portal without get_all_channels: bounded paged fetch (rowCache keeps the raw rows).
+                orderedList(acc, "itv", null).mapNotNull { liveRowOf(it) }
             }
+            // The raw rows are dropped after mapping, so the static-vs-mint flags were picked off
+            // per row; recorded here, on this coroutine, not on the transport's reader thread.
+            mapped.forEach { (row, flags) -> rememberLinkFlags(acc.id, "itv", row.sid, flags) }
+            val rows = mapped.map { it.first }
             // Nothing usable fetched: keep whatever lineup is already stored (stale beats empty),
             // and don't stamp freshness — the next browse retries.
             if (rows.isEmpty()) {
@@ -255,6 +238,49 @@ object StalkerClient : IptvClient {
             IptvContentDb.replaceLiveLineup(acc.id, rows, cats.orEmpty().map { it.id to it.name })
             true
         }
+    }
+
+    /** One get_all_channels row as a stored lineup row + its link flags; null for a row without an id. */
+    private fun liveRowOf(item: JsonObject): Pair<com.nuvio.app.features.iptv.content.IptvStreamRow, LinkFlags>? {
+        val id = item.int("id")?.takeIf { it > 0 } ?: return null
+        return com.nuvio.app.features.iptv.content.IptvStreamRow(
+            sid = id,
+            name = item.str("name").orEmpty(),
+            logo = item.str("logo")?.takeIf { it.isNotBlank() },
+            tvgId = item.str("xmltv_id")?.takeIf { it.isNotBlank() },
+            categoryId = item.str("tv_genre_id") ?: item.str("genre_id"),
+            url = "",
+            ext = null,
+            cmd = item.str("cmd"),
+            hasArchive = (item.int("tv_archive") ?: 0) > 0,
+            // Stored as plain booleans (false = flag absent OR panel said false — the
+            // column cannot tell them apart), so reads treat only TRUE as evidence.
+            useHttpTmpLink = item.flag("use_http_tmp_link") ?: false,
+            useLoadBalancing = item.flag("use_load_balancing") ?: false,
+        ) to LinkFlags(item.flag("use_http_tmp_link"), item.flag("use_load_balancing"))
+    }
+
+    /**
+     * `get_all_channels` through the session's STREAMING request (same auth + single re-auth retry
+     * as [StalkerSession.request]), split row by row. Fails over (Step 0.3) only until the first
+     * chunk arrived, exactly like the bulk EPG. Empty = the portal offers no such call.
+     */
+    private suspend fun streamAllChannels(acc: XtreamAccount): List<Pair<com.nuvio.app.features.iptv.content.IptvStreamRow, LinkFlags>> {
+        fun newParser() = StalkerJsArrayStreamParser(epgJson) { liveRowOf(it) }
+        var parser = newParser()
+        var delivered = false
+        PlaylistServerFailover.run(acc, canRetry = { !delivered }, probe = { a -> sessionFor(acc, a).probe() }) { a ->
+            parser = newParser()
+            sessionFor(acc, a).requestStream(
+                params = mapOf("type" to "itv", "action" to "get_all_channels"),
+                onRestart = { parser = newParser() },
+                onChunk = {
+                    delivered = true
+                    parser.accept(it)
+                },
+            )
+        }
+        return parser.finish()
     }
 
     override suspend fun vodMovies(acc: XtreamAccount, categoryId: String?): Result<List<XtreamMovie>> = runCatching {
@@ -663,12 +689,13 @@ object StalkerClient : IptvClient {
     }
 
     /** Keep a row's flag evidence — only when the row actually carries a flag key. */
-    private fun rememberLinkFlags(accId: String, type: String, item: JsonObject, id: Int) {
-        val tmp = item.flag("use_http_tmp_link")
-        val lb = item.flag("use_load_balancing")
-        if (tmp == null && lb == null) return
+    private fun rememberLinkFlags(accId: String, type: String, item: JsonObject, id: Int) =
+        rememberLinkFlags(accId, type, id, LinkFlags(item.flag("use_http_tmp_link"), item.flag("use_load_balancing")))
+
+    private fun rememberLinkFlags(accId: String, type: String, id: Int, flags: LinkFlags) {
+        if (flags.useHttpTmpLink == null && flags.useLoadBalancing == null) return
         if (linkFlags.size > MAX_CACHED_ROWS) linkFlags.clear()   // same crude cap as rowCache
-        linkFlags[rowKey(accId, type, id)] = LinkFlags(tmp, lb)
+        linkFlags[rowKey(accId, type, id)] = flags
     }
 
     /**

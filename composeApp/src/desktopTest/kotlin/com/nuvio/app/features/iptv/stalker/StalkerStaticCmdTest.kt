@@ -62,7 +62,7 @@ class StalkerStaticCmdTest {
     fun setUp() {
         com.nuvio.app.features.iptv.content.IptvContentDbDriver.openForTests =
             { androidx.sqlite.driver.bundled.BundledSQLiteDriver().open(":memory:") }
-        StalkerClient.sessionFactory = { StalkerSession(it, fakePortal) }
+        StalkerClient.sessionFactory = { StalkerSession(it, fakePortal, { u, h, c -> c(fakePortal(u, h)) }) }
     }
 
     @AfterTest
