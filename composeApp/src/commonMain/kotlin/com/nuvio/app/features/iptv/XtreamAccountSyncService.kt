@@ -345,6 +345,11 @@ internal data class PlaylistRow(
     @SerialName("serial_number") val serialNumber: String? = null,
     @SerialName("device_id") val deviceId: String? = null,
     @SerialName("send_device_id") val sendDeviceId: Boolean = true,
+    // F46 (nuvio-backend 20261003120000_iptv_playlists_stalker_identity.sql)
+    @SerialName("device_id2") val deviceId2: String? = null,
+    val signature: String? = null,
+    @SerialName("stb_model") val stbModel: String? = null,
+    @SerialName("hw_version") val hwVersion: String? = null,
 )
 
 /**
@@ -429,6 +434,10 @@ private fun PlaylistRow.toDerivedAccount(): XtreamAccount? = when (sourceType) {
             serialNumber = serialNumber?.takeIf { it.isNotBlank() },
             deviceId = deviceId?.takeIf { it.isNotBlank() },
             sendDeviceId = sendDeviceId,
+            deviceId2 = deviceId2?.takeIf { it.isNotBlank() },
+            signature = signature?.takeIf { it.isNotBlank() },
+            stbModel = stbModel?.takeIf { it.isNotBlank() },
+            hwVersion = hwVersion?.takeIf { it.isNotBlank() },
         ).withOptions(this)
     }
     else -> null
@@ -537,6 +546,13 @@ internal fun playlistPushPayload(accounts: List<XtreamAccount>): JsonArray = bui
                     acc.serialNumber?.let { put("serial_number", it) }
                     acc.deviceId?.let { put("device_id", it) }
                     put("send_device_id", acc.sendDeviceId)
+                    // F46: ALWAYS present (null clears). The server carries a column forward when its
+                    // key is ABSENT, so a build that predates these fields can never wipe them — which
+                    // means a cleared field has to be sent as an explicit null to be cleared.
+                    put("device_id2", acc.deviceId2)
+                    put("signature", acc.signature)
+                    put("stb_model", acc.stbModel)
+                    put("hw_version", acc.hwVersion)
                 }
             }
             acc.epgUrl?.let { put("epg_url", it) }

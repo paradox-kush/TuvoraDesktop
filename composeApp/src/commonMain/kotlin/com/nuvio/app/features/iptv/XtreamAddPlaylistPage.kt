@@ -174,6 +174,11 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
         var stalkerPass by remember(editing?.id) { mutableStateOf(editing?.stalkerPassword ?: "") }
         var serial by remember(editing?.id) { mutableStateOf(editing?.serialNumber ?: "") }
         var deviceId by remember(editing?.id) { mutableStateOf(editing?.deviceId ?: "") }
+        // F46: the rest of a real box's identity (all optional, blank = derived / preset).
+        var deviceId2 by remember(editing?.id) { mutableStateOf(editing?.deviceId2 ?: "") }
+        var signature by remember(editing?.id) { mutableStateOf(editing?.signature ?: "") }
+        var stbModel by remember(editing?.id) { mutableStateOf(editing?.stbModel ?: "") }
+        var hwVersion by remember(editing?.id) { mutableStateOf(editing?.hwVersion ?: "") }
         // Step 0.3: backup server rows as typed (validated on save; hidden for M3U files).
         var backupRows by remember(editing?.id) { mutableStateOf(editing?.backupUrls ?: emptyList()) }
         // A file playlist synced from another device has a fileName but no local copy here.
@@ -257,6 +262,14 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
                     onSerialChange = { serial = it },
                     deviceId = deviceId,
                     onDeviceIdChange = { deviceId = it },
+                    deviceId2 = deviceId2,
+                    onDeviceId2Change = { deviceId2 = it },
+                    signature = signature,
+                    onSignatureChange = { signature = it },
+                    stbModel = stbModel,
+                    onStbModelChange = { stbModel = it },
+                    hwVersion = hwVersion,
+                    onHwVersionChange = { hwVersion = it },
                     stalkerUser = stalkerUser,
                     onStalkerUserChange = { stalkerUser = it },
                     stalkerPass = stalkerPass,
@@ -336,6 +349,10 @@ internal fun LazyListScope.xtreamAddPlaylistContent(
                         stalkerPassword = stalkerPass.trim().ifEmpty { null },
                         serialNumber = serial.trim().ifEmpty { null },
                         deviceId = deviceId.trim().ifEmpty { null },
+                        deviceId2 = deviceId2.trim().ifEmpty { null },
+                        signature = signature.trim().ifEmpty { null },
+                        stbModel = stbModel.trim().ifEmpty { null },
+                        hwVersion = hwVersion.trim().ifEmpty { null },
                         backupUrls = backupRows,
                     )
                     val editId = XtreamAddPage.editId
@@ -477,6 +494,14 @@ private fun StalkerFieldsSection(
     onSerialChange: (String) -> Unit,
     deviceId: String,
     onDeviceIdChange: (String) -> Unit,
+    deviceId2: String,
+    onDeviceId2Change: (String) -> Unit,
+    signature: String,
+    onSignatureChange: (String) -> Unit,
+    stbModel: String,
+    onStbModelChange: (String) -> Unit,
+    hwVersion: String,
+    onHwVersionChange: (String) -> Unit,
     stalkerUser: String,
     onStalkerUserChange: (String) -> Unit,
     stalkerPass: String,
@@ -511,8 +536,9 @@ private fun StalkerFieldsSection(
             )
             Text(
                 text = "Stalker portals sign in with the MAC address — no username or password. The " +
-                    "device serial and ID are derived from the MAC; only override them below if your " +
-                    "provider gave you specific values.",
+                    "device serial and IDs are derived from the MAC and Tuvora presents itself as a " +
+                    "MAG250; only fill in the fields below if your provider (or your old box) gave you " +
+                    "specific values. Leave them empty otherwise.",
                 style = MaterialTheme.typography.bodySmall,
                 color = tokens.colors.textMuted,
             )
@@ -525,6 +551,28 @@ private fun StalkerFieldsSection(
                 value = deviceId,
                 onValueChange = onDeviceIdChange,
                 label = "Device ID (optional)",
+            )
+            FormOutlinedField(
+                value = deviceId2,
+                onValueChange = onDeviceId2Change,
+                label = "Device ID 2 (optional)",
+            )
+            FormOutlinedField(
+                value = signature,
+                onValueChange = onSignatureChange,
+                label = "Signature (optional)",
+            )
+            FormOutlinedField(
+                value = stbModel,
+                onValueChange = onStbModelChange,
+                label = "STB model (optional)",
+                placeholder = "MAG250",
+            )
+            FormOutlinedField(
+                value = hwVersion,
+                onValueChange = onHwVersionChange,
+                label = "Hardware version (optional)",
+                placeholder = "1.7-BD-00",
             )
             FormOutlinedField(
                 value = stalkerUser,

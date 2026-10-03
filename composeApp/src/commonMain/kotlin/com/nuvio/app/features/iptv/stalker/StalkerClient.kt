@@ -137,6 +137,7 @@ object StalkerClient : IptvClient {
     // DNS choice wouldn't reach the portal until the process restarted.
     private fun fingerprint(a: XtreamAccount): String =
         listOf(a.baseUrl, a.macAddress, a.serialNumber, a.deviceId, a.sendDeviceId.toString(),
+            a.deviceId2, a.signature, a.stbModel, a.hwVersion,
             a.stalkerUsername, a.stalkerPassword, a.dnsProvider, a.backupUrls.joinToString(",")).joinToString("|")
 
     /** Verify = a successful get_genres proves the full handshake + get_profile + authorised-browse chain. */

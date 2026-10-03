@@ -199,6 +199,12 @@ data class XtreamAccount(
     val serialNumber: String? = null,                         // optional STB serial override (else derived from MAC)
     val deviceId: String? = null,                             // optional STB device id override (else derived from MAC)
     val sendDeviceId: Boolean = true,                         // send derived/overridden device identity on get_profile
+    // F46 — the rest of a MAG box's identity, for portals provisioned against a real box or another
+    // STB app. Blank = today's behaviour (device_id2 == device_id, derived signature, preset model/hw).
+    val deviceId2: String? = null,                            // optional device_id2 override
+    val signature: String? = null,                            // optional signature override
+    val stbModel: String? = null,                             // optional STB model (stb_type), e.g. MAG254
+    val hwVersion: String? = null,                            // optional hw_version, e.g. 2.6-IB-00
     // --- Catch-up (tv_archive replay) options -------------------------------------------------
     /**
      * Ask the panel for `.m3u8` catch-up first instead of `.ts`. Off by default: TS is what
@@ -281,7 +287,11 @@ fun XtreamAccount.sameConnectionAs(other: XtreamAccount): Boolean =
         stalkerPassword == other.stalkerPassword &&
         serialNumber == other.serialNumber &&
         deviceId == other.deviceId &&
-        sendDeviceId == other.sendDeviceId
+        sendDeviceId == other.sendDeviceId &&
+        deviceId2 == other.deviceId2 &&
+        signature == other.signature &&
+        stbModel == other.stbModel &&
+        hwVersion == other.hwVersion
 
 data class XtreamCategory(val id: String, val name: String)
 
