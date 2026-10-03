@@ -160,14 +160,20 @@ internal class StalkerSession(
             throw StalkerSessionUnavailableException("Stalker session for ${account.name} is held by another device — cooling down")
         }
         reauthenticate(staleToken)
+        var retryBody: String? = null
         val retried = try {
-            rawRequest(params).jsOrNull()
+            rawRequest(params, onBody = { retryBody = it }).jsOrNull()
         } catch (e: EmptyResponseBodyException) {
             null
         }
         if (retried == null) {
-            lastFailedReauthAtMs = now
-            throw StalkerSessionUnavailableException("Stalker portal returned no data for ${params["action"]} — the session is in use elsewhere")
+            // B02: name what the portal actually did (empty body / empty envelope / error page) —
+            // only the empty-body eviction is "in use elsewhere", and only it earns the cooldown.
+            val kind = StalkerEmptyReplyPolicy.classify(retryBody)
+            if (StalkerEmptyReplyPolicy.startsCooldown(kind)) lastFailedReauthAtMs = now
+            throw StalkerSessionUnavailableException(
+                StalkerEmptyReplyPolicy.message(kind, account.name, params, retryBody)
+            )
         }
         lastFailedReauthAtMs = 0L
         return retried
@@ -528,8 +534,8 @@ internal class StalkerSession(
 
     // --- HTTP -----------------------------------------------------------------
 
-    private suspend fun rawRequest(params: Map<String, String>): JsonElement =
-        rawRequestAt(resolvedEndpoint ?: StalkerProtocol.ENDPOINT_CANDIDATES.first(), params)
+    private suspend fun rawRequest(params: Map<String, String>, onBody: ((String) -> Unit)? = null): JsonElement =
+        rawRequestAt(resolvedEndpoint ?: StalkerProtocol.ENDPOINT_CANDIDATES.first(), params, onBody = onBody)
 
     /** One raw GET to [endpointPath] with full MAG headers. [tokenOverride] "" = the handshake call
      *  (no bearer yet); null = use the current session token. */
@@ -559,7 +565,9 @@ internal class StalkerSession(
         tokenOverride: String? = null,
         // Endpoint-discovery probe (WP6): admitted even while the breaker is open, its failures
         // never counted — discovery expects most candidates to fail. Successes still clear.
-        discovery: Boolean = false
+        discovery: Boolean = false,
+        // Sees the raw body (diagnostics only — see StalkerEmptyReplyPolicy).
+        onBody: ((String) -> Unit)? = null,
     ): JsonElement {
         val action = params["action"].orEmpty()
         // Captured at ENQUEUE: if the user switches providers while this call waits for a gate
@@ -615,6 +623,7 @@ internal class StalkerSession(
         // failed." (not JSON) — a stale token recovers via re-auth, but a persistent rejection would
         // otherwise surface as a vague "no data". Throw an actionable error instead; it only becomes
         // terminal when re-auth can't fix it (i.e. the MAC/Serial/Device ID is genuinely wrong).
+        onBody?.invoke(body)
         if (body.contains(AUTH_FAILED_MARKER, ignoreCase = true))
             throw StalkerAuthException("Stalker portal rejected this device for ${account.name} — check the MAC address (and Serial / Device ID if the portal requires them)")
         return runCatching { JSON.parseToJsonElement(body) }.getOrDefault(JsonObject(emptyMap()))
