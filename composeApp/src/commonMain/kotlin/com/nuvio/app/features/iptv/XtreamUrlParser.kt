@@ -179,6 +179,10 @@ internal fun stalkerAccountFromForm(input: XtreamFormInput): XtreamAccount? {
         serialNumber = input.serialNumber?.trim()?.takeIf { it.isNotEmpty() },
         deviceId = input.deviceId?.trim()?.takeIf { it.isNotEmpty() },
         sendDeviceId = input.sendDeviceId,
+        deviceId2 = input.deviceId2?.trim()?.takeIf { it.isNotEmpty() },
+        signature = input.signature?.trim()?.takeIf { it.isNotEmpty() },
+        stbModel = input.stbModel?.trim()?.takeIf { it.isNotEmpty() },
+        hwVersion = input.hwVersion?.trim()?.takeIf { it.isNotEmpty() },
         backupUrls = validBackups(SOURCE_TYPE_STALKER, base, input),
     )
 }

@@ -18,7 +18,8 @@ internal object ManagedEditPolicy {
     /**
      * [edited] with every provider-owned field put back exactly as [pulled] holds it. Safe to apply to
      * any candidate; for an unmanaged playlist it must not be called (an unmanaged edit is the user's).
-     * The connection identity the provider also supplies (serial number, device id, device-id flag)
+     * The connection identity the provider also supplies (serial number, device ids, signature, model,
+     * hw version, device-id flag)
      * rides along so a managed playlist is always reached exactly as installed.
      */
     fun lockProviderFields(pulled: XtreamAccount, edited: XtreamAccount): XtreamAccount = edited.copy(
@@ -32,6 +33,10 @@ internal object ManagedEditPolicy {
         serialNumber = pulled.serialNumber,
         deviceId = pulled.deviceId,
         sendDeviceId = pulled.sendDeviceId,
+        deviceId2 = pulled.deviceId2,
+        signature = pulled.signature,
+        stbModel = pulled.stbModel,
+        hwVersion = pulled.hwVersion,
         backupUrls = pulled.backupUrls,
         epgUrl = pulled.epgUrl,
         userAgent = pulled.userAgent,
