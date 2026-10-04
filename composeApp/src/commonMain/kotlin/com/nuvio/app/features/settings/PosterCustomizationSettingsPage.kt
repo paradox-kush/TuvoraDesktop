@@ -805,7 +805,7 @@ private fun PosterLandscapeModeToggleRow(
 }
 
 @Composable
-private fun PosterToggleRow(
+internal fun PosterToggleRow(
     title: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
@@ -817,6 +817,8 @@ private fun PosterToggleRow(
     ) {
         Text(
             text = title,
+            // Take only the width the switch leaves, wrapping a long label instead of pushing the switch out.
+            modifier = Modifier.weight(1f).padding(end = 12.dp),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.Medium,
