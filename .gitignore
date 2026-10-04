@@ -39,3 +39,8 @@ iosApp/Configuration/DeviceSigning.local.json
 # Local MPVKit iOS build environment (sparse APFS image, see MPVKit docs)
 .mpvkit-build.sparseimage
 iosApp/Configuration/PostHog.local.xcconfig
+
+# JVM crash / replay dumps (never commit)
+hs_err_pid*.log
+replay_pid*.log
+*.hprof
