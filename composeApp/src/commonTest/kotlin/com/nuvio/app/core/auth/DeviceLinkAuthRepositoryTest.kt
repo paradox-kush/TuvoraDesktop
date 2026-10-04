@@ -2,6 +2,7 @@ package com.nuvio.app.core.auth
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlinx.serialization.json.jsonPrimitive
 
 // Regression for 2026-09-28: "sign in with another device" pointed people at upstream's nuvio.tv/link,
 // and called an RPC this backend lacked. The backend now serves start_device_login_session and the
@@ -17,5 +18,11 @@ class DeviceLinkAuthRepositoryTest {
     fun `the six character code from the backend is shown split in two`() {
         assertEquals("ABC-D2F", formatDeviceLinkCode("ABCD2F"))
         assertEquals("ABC-D2F", formatDeviceLinkCode("abc-d2f"))
+    }
+
+    @Test
+    fun `phone sign-in keeps reporting the mobile device type`() {
+        val params = deviceLinkStartParams("nonce", "https://tuvora.co/link", "Pixel")
+        assertEquals("mobile", params.getValue("p_device_type").jsonPrimitive.content)
     }
 }

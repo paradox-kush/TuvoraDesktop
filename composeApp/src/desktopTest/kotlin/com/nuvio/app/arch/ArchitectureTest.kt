@@ -42,6 +42,8 @@ class ArchitectureTest {
         forkPaths.any { path.contains(it) } || forkFiles.any { path.endsWith("/$it") }
     private fun isWiringFile(path: String) =
         path.endsWith("/com/nuvio/app/FeatureWiring.kt") ||
+        // Logic-port half of the composition root, split out so Apple TV (:tvosCore) shares the list.
+        path.endsWith("/com/nuvio/app/FeatureContributions.kt") ||
         path.endsWith("/com/nuvio/app/AndroidFeatureWiring.kt")
 
     // fork FEATURE refs (R2b) + fork-only core SUBSYSTEM refs (R2d — rec+memory get ports;
