@@ -65,7 +65,8 @@ class IptvChannelQuickActionsPolicyTest {
  * K9 (wave 2): hide a channel in the hub, then Undo it (or unhide it in Settings) — the card must
  * come back in the row, in its provider position, without a re-fetch. A row fetched while the
  * channel was hidden used to cache the window WITHOUT it, so the unhide had nothing to restore
- * until the app was relaunched.
+ * until the app was relaunched. Since B108 the hub caches the raw provider window and applies the
+ * whole overlay when the row is shown ([IptvChannelQuickActionsPolicy.hubRow]).
  */
 class IptvHubRowUnhideTest {
 
@@ -76,39 +77,29 @@ class IptvHubRowUnhideTest {
     private val hidden = mapOf("e-news" to ChannelOverlay(hidden = true))
     private val unhidden = mapOf("e-news" to ChannelOverlay(hidden = false))
 
-    private fun cached(overlay: Map<String, ChannelOverlay>) =
-        IptvChannelQuickActionsPolicy.hubRowWindow(lineup, overlay, entityOf = { entities.getValue(it.id) })
-
-    private fun shown(cache: List<Card>, overlay: Map<String, ChannelOverlay>) =
-        IptvChannelQuickActionsPolicy.visibleInHub(cache, overlay) { entities[it.id] }
+    private fun shown(overlay: Map<String, ChannelOverlay>) =
+        IptvChannelQuickActionsPolicy.hubRow(lineup, overlay, entityOf = { entities[it.id] }, withName = { c, n -> c.copy(name = n) })
 
     @Test
-    fun `a row fetched while a channel is hidden still shows it once unhidden`() {
-        val cache = cached(hidden)
-        assertEquals(listOf(Card("sky-sports"), Card("sky-movies")), shown(cache, hidden), "the hidden channel must stay out of the row")
-        assertEquals(lineup, shown(cache, unhidden), "unhide must restore the card in provider order without a re-fetch")
+    fun `a row loaded while a channel is hidden still shows it once unhidden`() {
+        assertEquals(listOf(Card("sky-sports"), Card("sky-movies")), shown(hidden), "the hidden channel must stay out of the row")
+        assertEquals(lineup, shown(unhidden), "unhide must restore the card in provider order without a re-fetch")
     }
 
     @Test
     fun `hide then undo restores the card in its original position`() {
-        val cache = cached(emptyMap())
-        assertEquals(listOf(Card("sky-sports"), Card("sky-movies")), shown(cached(hidden), hidden))
-        assertEquals(lineup, shown(cache, unhidden))
-        assertEquals(lineup, shown(cached(hidden), emptyMap()), "a hide that was deleted outright restores the card too")
+        assertEquals(listOf(Card("sky-sports"), Card("sky-movies")), shown(hidden))
+        assertEquals(lineup, shown(unhidden))
+        assertEquals(lineup, shown(emptyMap()), "a hide that was deleted outright restores the card too")
     }
 
     @Test
-    fun `the cached window still applies renames and floats pins`() {
+    fun `the shown row applies renames floats pins and drops hides`() {
         val overlay = mapOf(
             "e-movies" to ChannelOverlay(pinned = true),
             "e-sports" to ChannelOverlay(rename = "Sports"),
             "e-news" to ChannelOverlay(hidden = true),
         )
-        val cache = IptvChannelQuickActionsPolicy.hubRowWindow(
-            lineup, overlay, entityOf = { entities.getValue(it.id) }, withName = { c, n -> c.copy(name = n) },
-        )
-        assertEquals(listOf("sky-movies", "sky-news", "sky-sports"), cache.map { it.id })
-        assertEquals("Sports", cache.single { it.id == "sky-sports" }.name)
-        assertEquals(listOf("sky-movies", "sky-sports"), shown(cache, overlay).map { it.id })
+        assertEquals(listOf(Card("sky-movies"), Card("sky-sports", "Sports")), shown(overlay))
     }
 }

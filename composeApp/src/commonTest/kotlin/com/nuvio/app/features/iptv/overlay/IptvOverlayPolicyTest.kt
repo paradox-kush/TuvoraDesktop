@@ -99,7 +99,7 @@ class IptvOverlayPolicyTest {
     private data class WindowRow(val entity: String, val title: String)
 
     @Test
-    fun `displayedWindow hides and renames and floats a pin to the top of the window`() {
+    fun `the hub row hides and renames and floats a pin to the top of the window`() {
         val window = listOf(
             WindowRow("e0", "Zero"), WindowRow("e1", "One"), WindowRow("e2", "Two"), WindowRow("e3", "Three"),
         )
@@ -112,8 +112,8 @@ class IptvOverlayPolicyTest {
             // a pin floats to the top of the window, so it sits at the top of the browse too (matches the guide).
             "e3" to ChannelOverlay(pinned = true),
         )
-        val out = IptvChannelOverlayPolicy.displayedWindow(
-            rows = window, overlay = overlay, entityOf = { it.entity }, withName = { r, n -> r.copy(title = n) },
+        val out = IptvChannelQuickActionsPolicy.hubRow(
+            items = window, overlay = overlay, entityOf = { it.entity }, withName = { r, n -> r.copy(title = n) },
         )
         assertEquals(
             listOf("Three", "Zero", "TWO!"), out.map { it.title },
@@ -122,11 +122,11 @@ class IptvOverlayPolicyTest {
     }
 
     @Test
-    fun `displayedWindow with an empty overlay leaves the window untouched`() {
+    fun `the hub row with an empty overlay leaves the window untouched`() {
         val window = listOf(WindowRow("e0", "Zero"), WindowRow("e1", "One"))
         assertEquals(
             window,
-            IptvChannelOverlayPolicy.displayedWindow(window, emptyMap(), entityOf = { it.entity }),
+            IptvChannelQuickActionsPolicy.hubRow(window, emptyMap(), entityOf = { it.entity }),
             "no overlay edits — the fetched window is returned as-is",
         )
     }

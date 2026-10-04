@@ -30,30 +30,47 @@ internal object IptvChannelQuickActionsPolicy {
     }
 
     /**
-     * The hub's rows without the channels the viewer hid. Rows are filtered when they are fetched,
-     * but a hide made afterwards (from the guide, the hub, or the website) must drop the channel from
-     * rows already on screen, and an Undo must bring it back without a re-fetch — so the hide is
-     * also applied whenever the rows are shown. A card whose identity is unknown ([entityOf] null)
-     * stays. Returns [items] itself when nothing in it is hidden.
+     * B108: what a provider row of the hub shows, worked out every time the row is SHOWN from the
+     * raw provider window the hub caches: hidden channels dropped, renames applied, pinned channels
+     * marked ([withPinned]) and floated to the top of the row (stable, provider order otherwise).
+     *
+     * The hub used to bake renames and pins into the window when it was fetched, so an un-pin or an
+     * un-rename (from the guide, Settings, or the website) left the loaded row stale until a
+     * re-fetch; only hides were applied at display time (UX73/K9). Applying all of it here makes
+     * every overlay edit, and its undo, show at once. Position/reorder stays deferred on this paged
+     * surface, and the cache keeps the RAW provider order, so the next window's offset is still the
+     * raw provider count the paging indexes.
+     *
+     * A card whose identity is unknown ([entityOf] null) is kept untouched. Returns [items] itself
+     * when no card in it carries an overlay edit, so an untouched row keeps its identity.
      */
-    /**
-     * What a fetched live window of the hub keeps in its row cache: renames applied and pins floated
-     * ([IptvChannelOverlayPolicy.displayedWindow]), in provider order otherwise — but hidden channels
-     * KEPT. Hiding is applied when rows are shown ([visibleInHub]); a window cached without its hidden
-     * channels left an unhide (Undo, or Settings) nothing to restore until a re-fetch (K9). Keeping
-     * them also makes the next window's offset the raw provider count the paging indexes.
-     */
-    fun <T> hubRowWindow(
-        rows: List<T>,
+    fun <T> hubRow(
+        items: List<T>,
         overlay: Map<String, ChannelOverlay>,
-        entityOf: (T) -> String,
+        entityOf: (T) -> String?,
         withName: (T, newName: String) -> T = { r, _ -> r },
+        withPinned: (T) -> T = { it },
     ): List<T> {
-        val unhidden = if (overlay.values.none { it.hidden }) overlay
-        else overlay.mapValues { (_, o) -> if (o.hidden) o.copy(hidden = false) else o }
-        return IptvChannelOverlayPolicy.displayedWindow(rows, unhidden, entityOf, withName)
+        if (items.isEmpty() || overlay.isEmpty()) return items
+        if (items.none { item -> entityOf(item)?.let { overlay[it] }?.isNoop == false }) return items
+        // Identity is taken from the card BEFORE any rename, then: hidden dropped, pinned floated
+        // (sortedBy is stable, so provider order holds within each group), rename + pin marker applied.
+        return items
+            .map { item -> item to entityOf(item)?.let { overlay[it] } }
+            .filter { (_, edit) -> edit?.hidden != true }
+            .sortedBy { (_, edit) -> if (edit?.pinned == true) 0 else 1 }
+            .map { (item, edit) ->
+                val renamed = edit?.rename?.takeIf { it.isNotBlank() }?.let { withName(item, it) } ?: item
+                if (edit?.pinned == true) withPinned(renamed) else renamed
+            }
     }
 
+    /**
+     * The hub's rows without the channels the viewer hid — hide only, no rename or pin. Used for a
+     * custom group's row, whose order and names are the group's own; provider rows go through
+     * [hubRow]. A card whose identity is unknown ([entityOf] null) stays. Returns [items] itself
+     * when nothing in it is hidden.
+     */
     fun <T> visibleInHub(items: List<T>, overlay: Map<String, ChannelOverlay>, entityOf: (T) -> String?): List<T> {
         if (items.isEmpty() || overlay.values.none { it.hidden }) return items
         val kept = items.filter { item -> entityOf(item)?.let { overlay[it]?.hidden } != true }

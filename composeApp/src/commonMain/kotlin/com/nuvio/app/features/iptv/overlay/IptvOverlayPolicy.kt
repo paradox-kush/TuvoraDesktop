@@ -67,29 +67,6 @@ internal object IptvChannelOverlayPolicy {
     ): List<T> =
         rows.groupBy { categoryOf(it.row) }.values
             .flatMap { group -> displayed(group, overlay, honorOrder = true, withName = withName) }
-
-    /**
-     * The browse hub's paged LIVE window (BUG #2). Hidden rows are DROPPED and renames APPLIED, but
-     * the order is left exactly as the provider paged it: a pin/position could sit on a page not yet
-     * fetched, and the offsets that drive the hub's paging index the RAW provider list — so this
-     * must never reorder a fetched window. [entityOf] gives each row its canon-v1 identity; an empty
-     * [overlay] returns the window untouched. Pure.
-     */
-    fun <T> displayedWindow(
-        rows: List<T>,
-        overlay: Map<String, ChannelOverlay>,
-        entityOf: (T) -> String,
-        withName: (T, newName: String) -> T = { r, _ -> r },
-    ): List<T> {
-        if (overlay.isEmpty()) return rows
-        val tagged = rows.mapIndexed { i, r -> Tagged(entityOf(r), i, r) }
-        // Hide + rename, provider order otherwise (position/reorder stays deferred on this paged surface),
-        // THEN float pinned channels to the top of the window (stable) so a pin sits at the top of the
-        // browse too — matching the guide. A very large category spans multiple windows, so a pin floats
-        // only within its own window; a typical category is one window (PAGE_SIZE 400) → pins at the top.
-        return displayed(tagged, overlay, honorOrder = false, withName = withName)
-            .sortedBy { if (overlay[entityOf(it)]?.pinned == true) 0 else 1 }
-    }
 }
 
 internal object IptvCategoryOverlayPolicy {

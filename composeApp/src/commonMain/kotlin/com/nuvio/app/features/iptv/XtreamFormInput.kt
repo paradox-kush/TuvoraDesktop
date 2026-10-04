@@ -32,6 +32,11 @@ internal data class XtreamFormInput(
     val serialNumber: String? = null,
     val deviceId: String? = null,
     val sendDeviceId: Boolean = true,
+    // F46: the optional rest of the STB identity (blank = derived / preset, as before).
+    val deviceId2: String? = null,
+    val signature: String? = null,
+    val stbModel: String? = null,
+    val hwVersion: String? = null,
     // Step 0.3: the backup-server rows as typed (Xtream base URLs / M3U playlist URLs / Stalker portal
     // URLs, in priority order). Validated + normalized by BackupServerValidation when the account is built.
     val backupUrls: List<String> = emptyList(),

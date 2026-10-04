@@ -263,13 +263,27 @@ object XtreamHubRepository {
     private fun applyCategoryOverlay(accountId: String, contentType: String, cats: List<XtreamHubCategory>): List<XtreamHubCategory> {
         val shown = applyCategoryOverlayToRows(accountId, contentType, cats)
         if (contentType != CONTENT_TYPE_LIVE) return shown
-        // UX73: a channel hidden after its row loaded (from the guide, here, or the website) leaves
-        // the rows already on screen, and an Undo brings it back — no re-fetch either way.
+        // UX73 + B108: the cache holds each row's RAW provider window, and the channel overlay (hide,
+        // rename, pin marker + float) is applied here, every time rows are shown. So an edit made
+        // after a row loaded (from the guide, here, or the website) and its undo (un-hide, un-pin,
+        // un-rename) show at once, with no re-fetch.
         val channels = overlaySnapshot.channels
-        if (channels.values.none { it.hidden }) return shown
+        if (channels.isEmpty()) return shown
         val entities = synchronized(categoryLock) { liveEntityIds.toMap() }
+        val policy = com.nuvio.app.features.iptv.overlay.IptvChannelQuickActionsPolicy
         return shown.map { cat ->
-            val kept = com.nuvio.app.features.iptv.overlay.IptvChannelQuickActionsPolicy.visibleInHub(cat.items, channels) { entities[it.id] }
+            val kept = if (isCustomGroupRow(cat.id)) {
+                // A custom group's row keeps the group's own order and names; only hides apply.
+                policy.visibleInHub(cat.items, channels) { entities[it.id] }
+            } else {
+                policy.hubRow(
+                    items = cat.items,
+                    overlay = channels,
+                    entityOf = { entities[it.id] },
+                    withName = { card, newName -> card.copy(name = newName) },
+                    withPinned = { card -> card.copy(pinned = true) },
+                )
+            }
             if (kept === cat.items) cat else cat.copy(items = kept)
         }
     }
@@ -363,35 +377,17 @@ object XtreamHubRepository {
         com.nuvio.app.features.iptv.overlay.IptvCustomGroupPolicy.groupIdOf(categoryId) != null
 
     /**
-     * BUG #2: the browse hub's LIVE window APPLIES renames (and floats pins) per the channel overlay
-     * (categories were already handled by [applyCategoryOverlay]; individual channels were not).
-     * honorOrder=false — a paged surface must never reorder: a pin/position could belong on a page not
-     * yet fetched, and the hub's offsets index the RAW provider list.
-     *
-     * Hidden channels are KEPT in the cached window (K9) and dropped only when rows are shown
-     * ([applyCategoryOverlay] → visibleInHub): a window cached without them had nothing to give back
-     * when the channel was unhidden (Undo, or Settings), so the card stayed gone until a relaunch.
-     * No-op when the overlay is empty. [entityIds] is parallel to [previews] (same order/length).
+     * A fetched LIVE window of the hub, as the row cache keeps it: RAW (provider order, provider
+     * names, nothing hidden, no pin marker). The channel overlay is applied when rows are shown
+     * ([applyCategoryOverlay] -> IptvChannelQuickActionsPolicy.hubRow), so an un-pin, un-rename or
+     * un-hide made after the row loaded shows without a re-fetch (B108, K9). The raw window also
+     * keeps the next window's offset equal to the raw provider count the paging indexes.
+     * Records each card's canon-v1 identity on the way through; [entityIds] is parallel to
+     * [previews] (same order/length).
      */
-    private fun applyLiveChannelOverlay(entityIds: List<String>, previews: List<MetaPreview>): List<MetaPreview> {
+    private fun rawLiveWindow(entityIds: List<String>, previews: List<MetaPreview>): List<MetaPreview> {
         rememberLiveEntities(previews.map { it.id }, entityIds)
-        // Tag pinned onto each card from the same snapshot that drives hide/rename, so the hub can draw a
-        // visible pin marker AND displayedWindow can float pinned channels to the top of the window. An
-        // empty overlay leaves pinned=false and displayedWindow returns the rows untouched.
-        val channels = overlaySnapshot.channels
-        val rows = entityIds.zip(previews).map { (eid, preview) ->
-            eid to if (com.nuvio.app.features.iptv.overlay.IptvChannelOverlayPolicy.isPinned(channels, eid)) {
-                preview.copy(pinned = true)
-            } else {
-                preview
-            }
-        }
-        return com.nuvio.app.features.iptv.overlay.IptvChannelQuickActionsPolicy.hubRowWindow(
-            rows = rows,
-            overlay = channels,
-            entityOf = { it.first },
-            withName = { pair, newName -> pair.first to pair.second.copy(name = newName) },
-        ).map { it.second }
+        return previews
     }
 
     private suspend fun fetchCategoryList(accountId: String, section: XtreamHubSection) {
@@ -620,12 +616,12 @@ object XtreamHubRepository {
                     }
                     XtreamItemRegistry.registerAll(resolved)
                     val previews = resolved.map { it.toMetaPreview() }
-                    // LIVE hub rows carry a personalization overlay (hide/rename); page + previews are 1:1.
+                    // LIVE hub rows: record each card's identity for the display-time overlay; page + previews are 1:1.
                     val shown = if (section == XtreamHubSection.LIVE) {
                         val entityIds = page.map {
                             com.nuvio.app.features.iptv.identity.IptvIdentity.entityId(accountId, it.name, it.epgId)
                         }
-                        applyLiveChannelOverlay(entityIds, previews)
+                        rawLiveWindow(entityIds, previews)
                     } else previews
                     return shown to (rows.size > PAGE_SIZE)
                 }
@@ -642,7 +638,7 @@ object XtreamHubRepository {
                         val entityIds = rows.map {
                             com.nuvio.app.features.iptv.identity.IptvIdentity.entityId(accountId, it.name, it.epgChannelId)
                         }
-                        applyLiveChannelOverlay(entityIds, rows.map { it.toMetaPreview(accountId) })
+                        rawLiveWindow(entityIds, rows.map { it.toMetaPreview(accountId) })
                     }
                     XtreamHubSection.MOVIES -> client.vodMovies(account, categoryId).getOrDefault(emptyList()).take(PAGE_SIZE).let { rows ->
                         XtreamItemRegistry.registerAll(rows.map { XtreamItemRegistry.resolvedMovie(accountId, it) })
@@ -663,7 +659,7 @@ object XtreamHubRepository {
                     val entityIds = page.map {
                         com.nuvio.app.features.iptv.identity.IptvIdentity.entityId(accountId, it.name, it.epgChannelId)
                     }
-                    return applyLiveChannelOverlay(entityIds, page.map { it.toMetaPreview(accountId) }) to (rows.size > PAGE_SIZE)
+                    return rawLiveWindow(entityIds, page.map { it.toMetaPreview(accountId) }) to (rows.size > PAGE_SIZE)
                 }
                 if (offset > 0) return emptyList<MetaPreview>() to false
                 val client = IptvClient.forAccount(account)
@@ -688,7 +684,7 @@ object XtreamHubRepository {
                         val entityIds = page.map {
                             com.nuvio.app.features.iptv.identity.IptvIdentity.entityId(accountId, it.name, it.epgChannelId)
                         }
-                        applyLiveChannelOverlay(entityIds, page.map { it.toMetaPreview(accountId) }) to (rows.size > PAGE_SIZE)
+                        rawLiveWindow(entityIds, page.map { it.toMetaPreview(accountId) }) to (rows.size > PAGE_SIZE)
                     }
                     XtreamHubSection.MOVIES -> M3UClient.vodMoviesPage(account, categoryId, offset, PAGE_SIZE + 1).let { rows ->
                         val page = rows.take(PAGE_SIZE)

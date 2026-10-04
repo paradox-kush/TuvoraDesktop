@@ -169,7 +169,7 @@ class BackupServerFailoverIntegrationTest {
 
     @Test
     fun `stalker browse fails over and create_link mints on the active backup portal`() = runBlocking {
-        StalkerClient.sessionFactory = { StalkerSession(it, fakePortal) }
+        StalkerClient.sessionFactory = { StalkerSession(it, fakePortal, { u, h, c -> c(fakePortal(u, h)) }) }
         val acc = stalker("st1")
         downHosts += "st1-main.test"
 
@@ -189,7 +189,7 @@ class BackupServerFailoverIntegrationTest {
         // portal, so every walk that touched another portal SWAPPED the session — the backup's
         // authenticated session was thrown away and re-handshaked (rotating the MAC token, and with
         // concurrent walkers defeating the single-flight reauth). One session per portal fixes it.
-        StalkerClient.sessionFactory = { StalkerSession(it, fakePortal) }
+        StalkerClient.sessionFactory = { StalkerSession(it, fakePortal, { u, h, c -> c(fakePortal(u, h)) }) }
         val acc = stalker("st3")
         downHosts += "st3-main.test"
         assertTrue(StalkerClient.verify(acc).isSuccess)
@@ -215,7 +215,7 @@ class BackupServerFailoverIntegrationTest {
 
     @Test
     fun `a failed create_link on main never tries a backup and never moves the active server`() = runBlocking {
-        StalkerClient.sessionFactory = { StalkerSession(it, fakePortal) }
+        StalkerClient.sessionFactory = { StalkerSession(it, fakePortal, { u, h, c -> c(fakePortal(u, h)) }) }
         val acc = stalker("st2")
         assertTrue(StalkerClient.verify(acc).isSuccess)
         assertEquals(0, PlaylistServerFailover.activeIndex(acc))
