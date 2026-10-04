@@ -40,6 +40,20 @@ internal object StreamCodecNames {
         "alac" to "ALAC",
         "pcm_s16le" to "PCM",
         "pcm_s24le" to "PCM",
+        // ExoPlayer MIME subtypes (Android ExoPlayer path: text after '/', "x-" stripped) and RFC 6381
+        // codec prefixes, mapped onto the same labels. Bare "mpeg" is left alone on purpose: it is MP3
+        // for audio/mpeg but MPEG-1 for video/mpeg.
+        "avc" to "H.264",
+        "av01" to "AV1",
+        "vnd.on2.vp8" to "VP8",
+        "vnd.on2.vp9" to "VP9",
+        "mp4a-latm" to "AAC",
+        "mp4a" to "AAC",
+        "vnd.dts" to "DTS",
+        "vnd.dts.hd" to "DTS-HD",
+        "true-hd" to "TrueHD",
+        "mpeg-l2" to "MP2",
+        "raw" to "PCM",
     )
 
     /**

@@ -90,4 +90,24 @@ class StreamInfoFormatTest {
         assertNull(StreamCodecNames.display(null))
         assertNull(StreamCodecNames.display("  "))
     }
+
+    // Sync-12 device pass (2026-10-04): ExoPlayer's AAC read "MP4A-LATM" and its H.264 read "AVC"
+    // while libmpv said "AAC"/"H.264" for the same file. ExoPlayer hands displayCodecName() the
+    // MIME subtype (text after '/', "x-" stripped); those must land on the same labels.
+    @Test
+    fun `exoplayer mime subtypes read the same as the mpv names`() {
+        mapOf(
+            "mp4a-latm" to "AAC",
+            "mp4a" to "AAC",
+            "avc" to "H.264",
+            "av01" to "AV1",
+            "vnd.on2.vp9" to "VP9",
+            "vnd.on2.vp8" to "VP8",
+            "vnd.dts" to "DTS",
+            "vnd.dts.hd" to "DTS-HD",
+            "true-hd" to "TrueHD",
+            "mpeg-l2" to "MP2",
+            "raw" to "PCM",
+        ).forEach { (subtype, label) -> assertEquals(label, StreamCodecNames.display(subtype), subtype) }
+    }
 }
