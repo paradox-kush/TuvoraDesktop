@@ -370,7 +370,9 @@ jobs:
           codesign --force --deep --sign - \"/Applications/Tuvora.app\"
           \`\`\`
 
-          **Linux note:** x86_64 only. The .deb installs its own dependencies. The AppImage uses
+          **Linux (beta):** new in this release and not yet tested across many distros, GPUs and
+          desktops — tell us how it runs in the Discord. x86_64 only. The .deb installs its own
+          dependencies. The AppImage uses
           your system's libmpv and WebKitGTK — on Debian/Ubuntu run
           \`sudo apt install libmpv2 libwebkit2gtk-4.1-0\` first, then \`chmod +x\` the AppImage." \
             dist/Tuvora-macOS-arm64-${VERSION}.dmg \
@@ -392,7 +394,7 @@ jobs:
           MSG=$(printf '%s\n' \
             "Tuvora Desktop ${VERSION} is out! 🎉" \
             "" \
-            "⬇️ macOS / Windows / Linux: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}" \
+            "⬇️ macOS / Windows / Linux (beta): https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}" \
             "📖 Guides: https://tuvora.co/guides")
           if [ -n "$DISCORD_WEBHOOK_URL" ]; then
             jq -n --arg c "$MSG" '{content: $c}' | \
