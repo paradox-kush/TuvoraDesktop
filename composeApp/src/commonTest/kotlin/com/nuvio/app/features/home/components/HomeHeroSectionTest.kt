@@ -53,7 +53,8 @@ class HomeHeroSectionTest {
             preferDesktopLayout = true,
         )
 
-        assertEquals(660f, layout.heroHeight.value, 0.001f)
+        // Upstream 50c5e3210 lowered the desktop hero cap from 660dp to 640dp.
+        assertEquals(640f, layout.heroHeight.value, 0.001f)
         assertEquals(2560f, layout.contentContainerMaxWidth.value, 0.001f)
         assertEquals(32f, layout.contentHorizontalPadding.value, 0.001f)
         assertEquals(40f, layout.contentVerticalPadding.value, 0.001f)

@@ -2038,6 +2038,8 @@ JNIEXPORT jboolean JNICALL NP(setWindowsDisplaySleepInhibited)(JNIEnv *, jobject
 }
 JNIEXPORT void JNICALL NP(beginWindowDrag)(JNIEnv *, jobject, jlong) {}
 JNIEXPORT void JNICALL NP(setWindowResizable)(JNIEnv *, jobject, jlong, jboolean) {}
+JNIEXPORT void JNICALL NP(setWindowAspectRatio)(JNIEnv *, jobject, jlong, jfloat) {}
+JNIEXPORT void JNICALL NP(layoutNativeSubviews)(JNIEnv *, jobject, jlong) {}
 JNIEXPORT void JNICALL NP(reparentSurfaceNative)(JNIEnv *, jobject, jlong, jlong) {}
 
 // Fork JNI surface the Linux bridge did not have. Named gaps, not emulation:

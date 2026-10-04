@@ -24,6 +24,7 @@ import com.nuvio.app.core.contracts.MemoryTierPolicy
 import com.nuvio.app.core.deeplink.handleAppUrl
 import com.nuvio.app.core.diagnostics.SentryInitializer
 import com.nuvio.app.core.ui.NuvioTheme
+import com.nuvio.app.core.ui.ProvideDesktopWindowInsets
 import com.nuvio.app.features.discordrpc.DiscordPresenceManager
 import com.nuvio.app.features.p2p.P2pStreamingEngine
 import com.nuvio.app.features.plugins.configureDesktopQuickJsLibrary
@@ -217,7 +218,9 @@ fun main(args: Array<String>) {
 
             if (smokePlayerUrl == null) {
                 installFeatures {
-                    App()
+                    ProvideDesktopWindowInsets(isFullscreen = windowState.placement == WindowPlacement.Fullscreen) {
+                        App()
+                    }
                 }
             } else {
                 // The player surface reads LocalNuvioPlatformDensity, which only

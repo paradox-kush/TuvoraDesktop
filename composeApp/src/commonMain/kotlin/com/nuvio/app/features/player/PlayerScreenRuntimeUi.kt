@@ -425,7 +425,13 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         openingArtwork = background ?: poster,
         openingLogo = logo,
         openingTitle = title,
-        openingMessage = p2pInitialLoadingMessage,
+        openingMessage = if (playerSettingsUiState.showPlayerLoadingStatus) {
+            p2pInitialLoadingMessage ?: playerLoadingStatusMessage(
+                showStatus = true,
+                controllerReady = playerController != null,
+                buffering = playbackSnapshot.isLoading,
+            )
+        } else null,
         openingProgress = p2pInitialLoadingProgress,
         skipPromptVisible = nativeSkipInterval != null && !playerControlsLocked,
         skipPromptLabel = if (nativeSkipAction?.skipsToPostCredits == true) {
@@ -447,6 +453,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             )
         }.orEmpty(),
         nextEpisodeThumbnail = nextEpisodeForControls?.thumbnail.orEmpty(),
+        nextEpisodeThumbnailBlurred = metaScreenSettingsUiState.blurUnwatchedEpisodes && nextEpisodeInfo?.isWatched == false,
         nextEpisodeStatus = nextEpisodeStatus,
         nextEpisodeActionLabel = if (nextEpisodeForControls?.hasAired == true) {
             stringResource(Res.string.detail_btn_play)
@@ -456,39 +463,47 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         nextEpisodePlayable = nextEpisodeInfo?.hasAired == true,
     )
     val gestureCallbacks = rememberSurfaceGestureCallbacks()
-    val playbackGesturesEnabled = initialLoadCompleted && errorMessage == null
+    val playbackGesturesEnabled = !isDesktop && !isInPip && initialLoadCompleted && errorMessage == null
+    val enableSurfaceGestures = !isDesktop && !isInPip
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .onSizeChanged { layoutSize = it }
-            .playerSurfaceTapGestures(
-                layoutSize = layoutSize,
-                playbackGesturesEnabled = playbackGesturesEnabled,
-                playerControlsLockedState = gestureCallbacks.playerControlsLocked,
-                onSurfaceTap = gestureCallbacks.onSurfaceTap,
-                onSurfaceDoubleTap = gestureCallbacks.onSurfaceDoubleTap,
-                activateHoldToSpeedState = gestureCallbacks.activateHoldToSpeed,
-                deactivateHoldToSpeedState = gestureCallbacks.deactivateHoldToSpeed,
-                revealLockedOverlayState = gestureCallbacks.revealLockedOverlay,
-            )
-            .playerSurfaceDragGestures(
-                gestureController = gestureController,
-                layoutSize = layoutSize,
-                playbackGesturesEnabled = playbackGesturesEnabled,
-                sideGestureSystemEdgeExclusionPx = sideGestureSystemEdgeExclusionPx,
-                playerControlsLockedState = gestureCallbacks.playerControlsLocked,
-                touchGesturesEnabledState = gestureCallbacks.touchGesturesEnabled,
-                isHoldToSpeedGestureActiveState = gestureCallbacks.isHoldToSpeedGestureActive,
-                currentPositionMsState = gestureCallbacks.currentPositionMs,
-                currentDurationMsState = gestureCallbacks.currentDurationMs,
-                deactivateHoldToSpeedState = gestureCallbacks.deactivateHoldToSpeed,
-                showHorizontalSeekPreviewState = gestureCallbacks.showHorizontalSeekPreview,
-                showBrightnessFeedbackState = gestureCallbacks.showBrightnessFeedback,
-                showVolumeFeedbackState = gestureCallbacks.showVolumeFeedback,
-                clearLiveGestureFeedbackState = gestureCallbacks.clearLiveGestureFeedback,
-                revealLockedOverlayState = gestureCallbacks.revealLockedOverlay,
-                commitHorizontalSeekState = gestureCallbacks.commitHorizontalSeek,
+            .then(
+                if (enableSurfaceGestures) {
+                    Modifier
+                        .playerSurfaceTapGestures(
+                            layoutSize = layoutSize,
+                            playbackGesturesEnabled = playbackGesturesEnabled,
+                            playerControlsLockedState = gestureCallbacks.playerControlsLocked,
+                            onSurfaceTap = gestureCallbacks.onSurfaceTap,
+                            onSurfaceDoubleTap = gestureCallbacks.onSurfaceDoubleTap,
+                            activateHoldToSpeedState = gestureCallbacks.activateHoldToSpeed,
+                            deactivateHoldToSpeedState = gestureCallbacks.deactivateHoldToSpeed,
+                            revealLockedOverlayState = gestureCallbacks.revealLockedOverlay,
+                        )
+                        .playerSurfaceDragGestures(
+                            gestureController = gestureController,
+                            layoutSize = layoutSize,
+                            playbackGesturesEnabled = playbackGesturesEnabled,
+                            sideGestureSystemEdgeExclusionPx = sideGestureSystemEdgeExclusionPx,
+                            playerControlsLockedState = gestureCallbacks.playerControlsLocked,
+                            touchGesturesEnabledState = gestureCallbacks.touchGesturesEnabled,
+                            isHoldToSpeedGestureActiveState = gestureCallbacks.isHoldToSpeedGestureActive,
+                            currentPositionMsState = gestureCallbacks.currentPositionMs,
+                            currentDurationMsState = gestureCallbacks.currentDurationMs,
+                            deactivateHoldToSpeedState = gestureCallbacks.deactivateHoldToSpeed,
+                            showHorizontalSeekPreviewState = gestureCallbacks.showHorizontalSeekPreview,
+                            showBrightnessFeedbackState = gestureCallbacks.showBrightnessFeedback,
+                            showVolumeFeedbackState = gestureCallbacks.showVolumeFeedback,
+                            clearLiveGestureFeedbackState = gestureCallbacks.clearLiveGestureFeedback,
+                            revealLockedOverlayState = gestureCallbacks.revealLockedOverlay,
+                            commitHorizontalSeekState = gestureCallbacks.commitHorizontalSeek,
+                        )
+                } else {
+                    Modifier
+                }
             ),
     ) {
         // Live channels reached through the full player (rather than the docked Live TV screen)
@@ -611,7 +626,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         }
 
         AnimatedVisibility(
-            visible = playerSettingsUiState.pauseOverlayEnabled && pausedOverlayVisible && !controlsVisible && !playerControlsLocked,
+            visible = playerSettingsUiState.pauseOverlayEnabled && pausedOverlayVisible && !controlsVisible && !playerControlsLocked && !isInPip,
             enter = fadeIn(animationSpec = tween(durationMillis = 220)),
             exit = fadeOut(animationSpec = tween(durationMillis = 180)),
         ) {

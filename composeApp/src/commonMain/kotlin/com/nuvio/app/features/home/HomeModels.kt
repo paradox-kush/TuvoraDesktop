@@ -26,6 +26,7 @@ data class MetaPreview(
     val pinned: Boolean = false,
     val rawPosterUrl: String? = null,
     val landscapePoster: String? = null,
+    val rawLandscapePosterUrl: String? = null,
 )
 
 fun MetaPreview.stableKey(): String = "$type:$id"

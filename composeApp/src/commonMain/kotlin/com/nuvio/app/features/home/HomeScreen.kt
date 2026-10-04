@@ -578,12 +578,22 @@ fun HomeScreen(
     )
     // Long-pressing a Live TV card opens the same kind of remove sheet the Movies/Series cards have.
     var liveRecentActionTarget by remember { mutableStateOf<LiveRecentActionTarget?>(null) }
+    val shuffleCandidates = remember(completedSeriesCandidates, continueWatchingPreferences.dismissedNextUpKeys) {
+        completedSeriesCandidates.filter { candidate ->
+            nextUpDismissKey(candidate.content.id, candidate.seasonNumber, candidate.episodeNumber) !in
+                continueWatchingPreferences.dismissedNextUpKeys
+        }
+    }
+    val shuffledContinueWatchingItems = rememberShuffleHomeItems(
+        activeProfileId, allContinueWatchingItems, shuffleCandidates,
+        watchProgressUiState.entries, watchedUiState.watchedKeys, visibleContinueWatchingEntries,
+    ).withCustomPosterUrls(cwPosterPattern)
     val (continueWatchingItems, upcomingItems) = remember(
-        allContinueWatchingItems,
+        shuffledContinueWatchingItems,
         continueWatchingPreferences.sortMode,
     ) {
         splitUpcomingItems(
-            items = allContinueWatchingItems,
+            items = shuffledContinueWatchingItems,
             mode = continueWatchingPreferences.sortMode,
         )
     }
@@ -1976,7 +1986,7 @@ internal fun buildHomeInProgressCacheSnapshot(
     }
 }
 
-private fun CompletedSeriesCandidate.toContinueWatchingSeed(meta: com.nuvio.app.features.details.MetaDetails) =
+internal fun CompletedSeriesCandidate.toContinueWatchingSeed(meta: com.nuvio.app.features.details.MetaDetails) =
     WatchProgressEntry(
         contentType = content.type,
         parentMetaId = content.id,

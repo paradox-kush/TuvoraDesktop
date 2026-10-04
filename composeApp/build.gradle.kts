@@ -827,6 +827,7 @@ val macosPlayerBridgeCommand = if (missingMacosPlayerBridgeInputs.isNotEmpty()) 
           -framework WebKit \
           -framework Metal \
           -framework Security \
+          -framework MediaPlayer \
           -lswiftCompatibility56 \
           -lswiftCompatibilityConcurrency \
           -lswiftCompatibilityPacks \
@@ -1481,6 +1482,7 @@ compose.desktop {
                 "java.instrument",
                 "java.management",
                 "java.net.http",
+                "jdk.accessibility",
                 "jdk.httpserver",
                 "jdk.unsupported",
             )

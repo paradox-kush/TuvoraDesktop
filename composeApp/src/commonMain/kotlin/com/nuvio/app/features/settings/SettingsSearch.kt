@@ -54,7 +54,6 @@ import org.jetbrains.compose.resources.stringResource
 
 internal sealed class SettingsSearchTarget {
     data class Page(val page: SettingsPage) : SettingsSearchTarget()
-    object Downloads : SettingsSearchTarget()
     object Collections : SettingsSearchTarget()
     object SwitchProfile : SettingsSearchTarget()
     object CheckForUpdates : SettingsSearchTarget()
@@ -85,7 +84,6 @@ internal fun settingsSearchEntries(
     addonsEnabled: Boolean,
     isTablet: Boolean,
     pluginsEnabled: Boolean,
-    downloadsEnabled: Boolean,
     notificationsEnabled: Boolean,
     externalPlayerSupported: Boolean,
     supportersContributorsPageEnabled: Boolean,
@@ -107,7 +105,6 @@ internal fun settingsSearchEntries(
     val layoutPage = stringResource(Res.string.compose_settings_page_appearance)
     val advancedPage = stringResource(Res.string.compose_settings_page_advanced)
     val contentDiscoveryPage = stringResource(Res.string.compose_settings_page_content_discovery)
-    val downloadsPage = stringResource(Res.string.compose_settings_root_downloads_title)
     val playbackPage = stringResource(Res.string.compose_settings_page_playback)
     val streamsPage = stringResource(Res.string.compose_settings_page_streams)
     val integrationsPage = stringResource(Res.string.compose_settings_page_integrations)
@@ -240,16 +237,6 @@ internal fun settingsSearchEntries(
             title = contentDiscoveryPage,
             description = stringResource(Res.string.compose_settings_root_content_discovery_description),
             icon = Icons.Rounded.Extension,
-        )
-    }
-    if (downloadsEnabled) {
-        add(
-            key = "downloads",
-            title = downloadsPage,
-            description = stringResource(Res.string.compose_settings_root_downloads_description),
-            category = generalCategory,
-            icon = Icons.Rounded.CloudDownload,
-            target = SettingsSearchTarget.Downloads,
         )
     }
     addRow(
@@ -880,6 +867,7 @@ internal fun settingsSearchEntries(
             ).joinToString(" "),
         ),
         PlaybackSearchRow("meta-episode-cards", stringResource(Res.string.settings_meta_episode_cards), stringResource(Res.string.settings_meta_episode_cards_description)),
+        PlaybackSearchRow("meta-shuffle", stringResource(Res.string.random_episode_title), stringResource(Res.string.layout_random_episode_sub)),
         PlaybackSearchRow("meta-blur-episodes", stringResource(Res.string.settings_meta_blur_unwatched_episodes), stringResource(Res.string.settings_meta_blur_unwatched_episodes_description)),
     ).forEach { row ->
         addRow(

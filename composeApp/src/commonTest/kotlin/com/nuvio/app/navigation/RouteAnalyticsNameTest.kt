@@ -66,7 +66,7 @@ class RouteAnalyticsNameTest {
             HomescreenSettingsRoute(),
             MetaScreenSettingsRoute(),
             ContinueWatchingSettingsRoute(),
-            DownloadsSettingsRoute(),
+            DownloadsRoute(),
             DownloadShowRoute("s", "t"),
             AddonsSettingsRoute(),
             PluginsSettingsRoute(),

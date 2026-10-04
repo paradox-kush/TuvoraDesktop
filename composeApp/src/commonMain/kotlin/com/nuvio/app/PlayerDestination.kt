@@ -108,6 +108,7 @@ internal fun PlayerDestination(
         initialPositionMs = launch.initialPositionMs,
         initialProgressFraction = launch.initialProgressFraction,
         contentLanguage = launch.contentLanguage,
+        launchId = route.launchId,
         onBack = onBack,
         onSystemBackHandlerChanged = registerSystemBack,
         // Fork: only offered when this device has an external player it can hand off to.

@@ -248,6 +248,8 @@ internal class PlayerScreenRuntime(
     var nextEpisodeAutoPlayCountdown by mutableStateOf<Int?>(null)
     var nextEpisodeAutoPlayJob by mutableStateOf<Job?>(null)
     var nextEpisodeAutoPlayAutomatic by mutableStateOf(false)
+    var nextEpisodePreloadJob by mutableStateOf<Job?>(null)
+    var nextEpisodePreloadTriggered by mutableStateOf(false)
     var pendingP2pSwitch by mutableStateOf<PendingPlayerP2pSwitch?>(null)
     var credentialRefreshJob by mutableStateOf<Job?>(null)
     // Bounded, URL-INDEPENDENT credential-refresh guard (see PlayerCredentialRefreshPolicy). A Stalker

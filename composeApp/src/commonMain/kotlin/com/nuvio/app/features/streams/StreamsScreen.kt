@@ -25,8 +25,8 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.border
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -40,7 +40,6 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SearchOff
-import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -96,6 +95,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.rememberModalBottomSheetState
 import com.nuvio.app.core.ui.NuvioAsyncImage as AsyncImage
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
+import com.nuvio.app.core.ui.shimmer
 import com.nuvio.app.features.debrid.DebridSettingsRepository
 import com.nuvio.app.features.debrid.DirectDebridPlayableResult
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
@@ -1120,18 +1120,12 @@ private fun StreamSectionHeader(
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.9f),
         )
         AnimatedVisibility(visible = isLoading, enter = fadeIn(), exit = fadeOut()) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                NuvioLoadingIndicator(
-                    modifier = Modifier.size(12.dp),
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = fetchingText,
-                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
+            Text(
+                text = fetchingText,
+                modifier = Modifier.shimmer(),
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
+                color = MaterialTheme.colorScheme.primary,
+            )
         }
     }
 }
@@ -1450,7 +1444,6 @@ private fun StreamActionsSheet(
                 },
             )
             if (externalPlayerSupported) {
-                NuvioBottomSheetDivider()
                 NuvioBottomSheetActionRow(
                     icon = Icons.AutoMirrored.Rounded.OpenInNew,
                     title = stringResource(
@@ -1469,7 +1462,6 @@ private fun StreamActionsSheet(
                 )
             }
             if (showDownloadAction) {
-                NuvioBottomSheetDivider()
                 NuvioBottomSheetActionRow(
                     icon = Icons.Rounded.Download,
                     title = stringResource(Res.string.streams_download_file),
@@ -1517,24 +1509,20 @@ private fun LoadingStateBlock(
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 48.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        NuvioLoadingIndicator(
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(32.dp),
-        )
         Text(
             text = findingStreamsText,
-            style = MaterialTheme.typography.bodySmall.copy(
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-            ),
+            modifier = Modifier
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .shimmer(),
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
             color = MaterialTheme.colorScheme.primary,
         )
+        repeat(4) {
+            StreamCardSkeleton()
+        }
     }
 }
 
@@ -1618,13 +1606,9 @@ private fun FooterLoadingBlock(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        NuvioLoadingIndicator(
-            modifier = Modifier.size(14.dp),
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Spacer(modifier = Modifier.width(8.dp))
         Text(
             text = checkingMoreAddonsText,
+            modifier = Modifier.shimmer(),
             style = MaterialTheme.typography.bodySmall.copy(
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,

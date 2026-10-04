@@ -38,7 +38,7 @@ fun analyticsNameOf(route: AppRoute): String = when (route) {
     is HomescreenSettingsRoute -> "settings_homescreen"
     is MetaScreenSettingsRoute -> "settings_meta_screen"
     is ContinueWatchingSettingsRoute -> "settings_continue_watching"
-    is DownloadsSettingsRoute -> "settings_downloads"
+    is DownloadsRoute -> "downloads"
     is AddonsSettingsRoute -> "settings_addons"
     is PluginsSettingsRoute -> "settings_plugins"
     is AccountSettingsRoute -> "settings_account"
