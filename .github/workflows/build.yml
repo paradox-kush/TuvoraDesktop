@@ -6,6 +6,11 @@ name: Build
 # Run this by hand when you want a pre-release compile/test check.
 on:
   workflow_dispatch:
+    inputs:
+      linux_packages:
+        description: Also build the Linux DEB + AppImage (the release packaging path, ~15 min)
+        type: boolean
+        default: false
 
 concurrency:
   group: build-${{ github.ref }}
@@ -54,3 +59,60 @@ jobs:
 
       - name: Compile desktop + run tests
         run: ./gradlew :composeApp:compileKotlinDesktop :composeApp:desktopTest --stacktrace
+
+  linux-packages:
+    name: Package Linux (DEB + AppImage)
+    if: inputs.linux_packages
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          lfs: false
+
+      - name: Install Linux build dependencies
+        run: bash ./scripts/linux/install-desktop-build-dependencies.sh fakeroot
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Configure runtime keys
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
+          TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
+          SIMKL_CLIENT_ID: ${{ secrets.SIMKL_CLIENT_ID }}
+          SIMKL_CLIENT_SECRET: ${{ secrets.SIMKL_CLIENT_SECRET }}
+          DONATIONS_DONATE_URL: ${{ secrets.DONATIONS_DONATE_URL }}
+        run: |
+          {
+            echo "SUPABASE_URL=${SUPABASE_URL}"
+            echo "SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}"
+            echo "TMDB_API_KEY=${TMDB_API_KEY}"
+            echo "TRAKT_CLIENT_ID=${TRAKT_CLIENT_ID}"
+            echo "TRAKT_CLIENT_SECRET=${TRAKT_CLIENT_SECRET}"
+            echo "SIMKL_CLIENT_ID=${SIMKL_CLIENT_ID}"
+            echo "SIMKL_CLIENT_SECRET=${SIMKL_CLIENT_SECRET}"
+            echo "DONATIONS_DONATE_URL=${DONATIONS_DONATE_URL}"
+          } > local.properties
+
+      - name: Build DEB + AppImage
+        run: bash ./scripts/linux/ci-package-linux.sh "0.0.${GITHUB_RUN_NUMBER}" "${GITHUB_RUN_NUMBER}"
+
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: tuvora-desktop-ci-${{ github.run_number }}-linux-x86_64
+          path: |
+            Tuvora-Linux-x86_64-*.deb
+            Tuvora-Linux-x86_64-*.AppImage
+          if-no-files-found: error
+          retention-days: 7

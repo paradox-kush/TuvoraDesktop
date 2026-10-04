@@ -1470,7 +1470,16 @@ compose.desktop {
         )
 
         nativeDistributions {
-            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
+            // AppImage only where it can be built: the plugin registers a notarizeAppImage task for it
+            // that throws "AppImage cannot be notarized!" when realised on a mac host (e.g. `tasks`).
+            targetFormats(
+                *listOfNotNull(
+                    TargetFormat.Dmg,
+                    TargetFormat.Msi,
+                    TargetFormat.Deb,
+                    TargetFormat.AppImage.takeIf { isLinuxHost },
+                ).toTypedArray(),
+            )
             packageName = "Tuvora"
             packageVersion = desktopReleasePackageVersion
             vendor = "Tuvora"
@@ -1530,6 +1539,8 @@ compose.desktop {
             }
             linux {
                 iconFile.set(project.file("src/desktopMain/resources/icons/tuvora-app-icon.png"))
+                // jpackage writes "Tuvora <noreply@tuvora.co>"; scripts/linux/verify-linux-deb.sh checks it.
+                debMaintainer = "noreply@tuvora.co"
                 shortcut = true
                 menuGroup = "Tuvora"
                 appCategory = "AudioVideo"

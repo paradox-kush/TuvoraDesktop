@@ -26,7 +26,8 @@ if [[ ! -f "$deb" ]]; then
     exit 1
 fi
 
-expected_maintainer="Nuvio Media <contact@nuvio.tv>"
+# Tuvora fork: jpackage writes "<vendor> <debMaintainer>" (composeApp/build.gradle.kts linux {}).
+expected_maintainer="Tuvora <noreply@tuvora.co>"
 maintainer="$(dpkg-deb -f "$deb" Maintainer)"
 if [[ "$maintainer" != "$expected_maintainer" ]]; then
     echo "Unexpected Maintainer: '$maintainer'" >&2
