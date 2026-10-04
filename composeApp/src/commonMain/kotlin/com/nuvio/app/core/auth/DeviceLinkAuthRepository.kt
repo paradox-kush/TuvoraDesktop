@@ -4,7 +4,9 @@ import co.touchlab.kermit.Logger
 import com.nuvio.app.core.network.ServerConfiguration
 import com.nuvio.app.core.network.ServerConfigurationRepository
 import com.nuvio.app.core.network.SupabaseProvider
+import com.nuvio.app.core.sync.DESKTOP_SYNC_PLATFORM
 import com.nuvio.app.core.sync.MOBILE_SYNC_PLATFORM
+import com.nuvio.app.isDesktop
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.user.UserInfo
 import io.github.jan.supabase.auth.user.UserSession
@@ -226,11 +228,14 @@ private class DeviceLinkAuthException(
     cause: Throwable? = null,
 ) : Exception(reason.name, cause)
 
-/** start_device_login_session arguments. The device type is this build's platform token ("tvos" on Apple TV). */
+/**
+ * start_device_login_session arguments. The device type is this build's platform token — the same one
+ * the sync payloads send: "desktop" on desktop, "mobile" on phones, "tvos" on Apple TV (tvosCore shim).
+ */
 internal fun deviceLinkStartParams(nonce: String, redirectBaseUrl: String, deviceName: String): JsonObject =
     buildJsonObject {
         put("p_device_nonce", nonce)
         put("p_redirect_base_url", redirectBaseUrl)
         put("p_device_name", deviceName)
-        put("p_device_type", MOBILE_SYNC_PLATFORM)
+        put("p_device_type", if (isDesktop) DESKTOP_SYNC_PLATFORM else MOBILE_SYNC_PLATFORM)
     }

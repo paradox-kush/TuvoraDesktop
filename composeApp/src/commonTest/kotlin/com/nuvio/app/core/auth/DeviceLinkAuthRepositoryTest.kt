@@ -20,9 +20,11 @@ class DeviceLinkAuthRepositoryTest {
         assertEquals("ABC-D2F", formatDeviceLinkCode("abc-d2f"))
     }
 
+    // Regression (2026-10-04): desktop device sign-in reported "mobile", so tuvora.co listed the
+    // Mac/PC session as a phone. It must use the same platform token the desktop sync payloads use.
     @Test
-    fun `phone sign-in keeps reporting the mobile device type`() {
-        val params = deviceLinkStartParams("nonce", "https://tuvora.co/link", "Pixel")
-        assertEquals("mobile", params.getValue("p_device_type").jsonPrimitive.content)
+    fun `desktop sign-in reports the desktop device type`() {
+        val params = deviceLinkStartParams("nonce", "https://tuvora.co/link", "MacBook")
+        assertEquals("desktop", params.getValue("p_device_type").jsonPrimitive.content)
     }
 }
