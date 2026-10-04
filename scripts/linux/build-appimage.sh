@@ -65,7 +65,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-app_dir="$work_dir/Nuvio.AppDir"
+app_dir="$work_dir/${NUVIO_LINUX_PACKAGE_NAME}.AppDir"
 mkdir -p "$app_dir"
 cp -a "$app_root"/. "$app_dir/"
 
@@ -78,7 +78,7 @@ if [[ -n "$update_information" ]]; then
     printf 'X-AppImage-UpdateInformation=%s\n' "$update_information" >> "$desktop_file"
 fi
 
-icon_source="$app_dir/lib/Nuvio.png"
+icon_source="$app_dir/lib/${NUVIO_LINUX_PACKAGE_NAME}.png"
 if [[ ! -f "$icon_source" ]]; then
     echo "Expected AppImage icon at $icon_source" >&2
     exit 1
@@ -90,12 +90,16 @@ cat > "$app_dir/AppRun" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-executable_path="$here/bin/Nuvio"
+executable_path="$here/bin/__PACKAGE_NAME__"
 if [[ ! -x "$executable_path" ]]; then
-    executable_path="$here/bin/nuvio"
+    executable_path="$here/bin/__PACKAGE_ID__"
 fi
 exec "$executable_path" "$@"
 EOF
+sed -i \
+    -e "s|__PACKAGE_NAME__|${NUVIO_LINUX_PACKAGE_NAME}|g" \
+    -e "s|__PACKAGE_ID__|${NUVIO_LINUX_PACKAGE_ID}|g" \
+    "$app_dir/AppRun"
 chmod +x "$app_dir/AppRun"
 
 mkdir -p "$(dirname "$output_appimage")"
