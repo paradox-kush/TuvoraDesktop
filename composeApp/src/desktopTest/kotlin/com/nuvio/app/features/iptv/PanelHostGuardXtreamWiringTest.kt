@@ -1,6 +1,5 @@
 package com.nuvio.app.features.iptv
 
-import java.net.ServerSocket
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertFalse
@@ -21,9 +20,9 @@ import kotlin.test.assertNotNull
  */
 class PanelHostGuardXtreamWiringTest {
 
-    /** A base URL with NOTHING listening: bind an ephemeral port, close it, use it. */
+    /** A base URL with NOTHING listening. Port 1 (tcpmux) — privileged, so no test process can bind it, and nothing listens there: every connect is refused at once. A closed ephemeral port raced: under parallel tests another socket could take it. */
     private fun deadPanel(): XtreamAccount {
-        val port = ServerSocket(0).use { it.localPort }
+        val port = 1
         val baseUrl = "http://127.0.0.1:$port"
         return XtreamAccount(id = baseUrl, name = "dead", baseUrl = baseUrl, username = "u", password = "p")
     }

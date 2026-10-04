@@ -4,7 +4,6 @@ import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.runBlocking
 import java.net.ConnectException
 import java.net.InetSocketAddress
-import java.net.ServerSocket
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertNotEquals
@@ -30,8 +29,8 @@ class PlaylistSaveErrorTransportTest {
         id = "$baseUrl|u", name = "p", baseUrl = baseUrl, username = "u", password = "p",
     )
 
-    /** A localhost port with nothing listening — the connection is refused, never answered. */
-    private fun closedPort(): Int = ServerSocket(0).use { it.localPort }
+    /** A localhost port with nothing listening — the connection is refused, never answered. Port 1 (tcpmux) — privileged, so no test process can bind it, and nothing listens there: every connect is refused at once. A closed ephemeral port raced: under parallel tests another socket could take it. */
+    private fun closedPort(): Int = 1
 
     private fun serve(body: String): String {
         val s = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
