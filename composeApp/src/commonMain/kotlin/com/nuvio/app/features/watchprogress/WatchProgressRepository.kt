@@ -1048,10 +1048,9 @@ object WatchProgressRepository {
                     val appliedEntries = if (targetSource.providerId == null) {
                         var appliedLocalEntries = 0
                         for (entry in result.entries) {
-                            val current = localEntry(entry.resolvedProgressKey()) ?: continue
-                            val enriched = enrichWatchProgressEntry(current = current, meta = meta)
-                            if (enriched == current) continue
-                            upsertLocalEntry(enriched)
+                            // One atomic read-patch: a re-key / removal between the snapshot and now
+                            // must not be undone by a stale write-back (B64, see patchExistingWithMetadata).
+                            if (!patchLocalEntryWithMetadata(entry.resolvedProgressKey(), meta)) continue
                             appliedLocalEntries += 1
                         }
                         appliedLocalEntries
@@ -1792,6 +1791,11 @@ object WatchProgressRepository {
             entriesByProgressKey[resolvedEntry.resolvedProgressKey()] = resolvedEntry
         }
     }
+
+    private fun patchLocalEntryWithMetadata(progressKey: String, meta: MetaDetails): Boolean =
+        synchronized(entriesLock) {
+            entriesByProgressKey.patchExistingWithMetadata(progressKey, meta)
+        }
 
     private fun removeLocalEntry(progressKey: String): WatchProgressEntry? =
         synchronized(entriesLock) {
