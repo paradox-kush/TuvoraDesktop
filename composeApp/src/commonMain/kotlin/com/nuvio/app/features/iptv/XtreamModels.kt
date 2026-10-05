@@ -409,3 +409,13 @@ data class XtreamEpisode(
     val still: String?,
     val containerExtension: String?
 )
+
+/**
+ * F10 — the name to SHOW for a saved live channel (a favourite or a recent): those rows carry the name
+ * stored with the item, so they get the same clean-up as the playlist's own rows. [contentId] names
+ * the playlist; an item of an unknown playlist keeps its stored name.
+ */
+fun savedChannelDisplayName(raw: String, contentId: String, accounts: List<XtreamAccount>): String {
+    val accountId = XtreamItemRegistry.parseId(contentId)?.accountId ?: return raw
+    return accounts.firstOrNull { it.id == accountId }?.displayChannelName(raw) ?: raw
+}

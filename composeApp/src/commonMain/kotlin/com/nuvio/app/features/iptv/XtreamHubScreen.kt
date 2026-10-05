@@ -189,7 +189,7 @@ fun XtreamHubScreen(
     // Both rails are scoped to the SELECTED account: the stores keep one flat profile-wide list
     // across every playlist, and these rails sit inside one provider's hub.
     val accountPrefix = state.selectedAccountId?.let { XtreamItemRegistry.accountPrefix(it) }
-    val liveSpecialCategories = remember(isLive, localLibraryItems, liveRecents, favoriteTitle, recentTitle, accountPrefix, accountIds) {
+    val liveSpecialCategories = remember(isLive, localLibraryItems, liveRecents, favoriteTitle, recentTitle, accountPrefix, accountIds, state.accounts) {
         if (!isLive || accountPrefix == null) {
             emptyList()
         } else {
@@ -198,18 +198,18 @@ fun XtreamHubScreen(
                 // synced favourites order — shown when it holds more than this playlist's own row.
                 LiveFavouritesRows.allPlaylists(localLibraryItems, accountIds)
                     .takeIf { all -> all.any { !it.id.startsWith(accountPrefix) } }
-                    ?.map { it.toMetaPreview() }
+                    ?.map { it.toMetaPreview().withSavedChannelName(state.accounts) }
                     ?.let { items -> add(XtreamHubCategory(SPECIAL_ALL_FAVORITES_ID, allFavoritesTitle, items, loaded = true)) }
                 localLibraryItems
                     .filter { XtreamItemRegistry.isLiveId(it.id) && it.id.startsWith(accountPrefix) }
-                    .map { it.toMetaPreview() }
+                    .map { it.toMetaPreview().withSavedChannelName(state.accounts) }
                     .takeIf { it.isNotEmpty() }
                     ?.let { items ->
                         add(XtreamHubCategory(SPECIAL_FAVORITES_ID, favoriteTitle, items, loaded = true))
                     }
                 liveRecents
                     .filter { it.contentId.startsWith(accountPrefix) }
-                    .map { it.toMetaPreview() }
+                    .map { it.toMetaPreview().withSavedChannelName(state.accounts) }
                     .takeIf { it.isNotEmpty() }
                     ?.let { items ->
                         add(XtreamHubCategory(SPECIAL_RECENT_ID, recentTitle, items, loaded = true))
@@ -951,3 +951,7 @@ private const val SPECIAL_CATEGORY_PREFIX = "__live_"
 private const val SPECIAL_FAVORITES_ID = "${SPECIAL_CATEGORY_PREFIX}favorites__"
 private const val SPECIAL_RECENT_ID = "${SPECIAL_CATEGORY_PREFIX}recent__"
 private const val SPECIAL_ALL_FAVORITES_ID = "${SPECIAL_CATEGORY_PREFIX}all_favorites__"
+
+/** F10: a favourite / recent shows the same cleaned name as the playlist's own rows. */
+private fun MetaPreview.withSavedChannelName(accounts: List<XtreamAccount>): MetaPreview =
+    copy(name = savedChannelDisplayName(name, id, accounts))
