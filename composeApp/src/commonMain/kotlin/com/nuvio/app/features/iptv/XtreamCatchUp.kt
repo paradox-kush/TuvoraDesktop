@@ -15,6 +15,20 @@ package com.nuvio.app.features.iptv
 object XtreamCatchUp {
 
     /**
+     * The offset the replay `start` is formatted with: the panel's measured clock-pair offset plus
+     * the playlist's manual correction (clamped to its settings range), or null when neither is
+     * known — a plain UTC start. The correction rides ON TOP of the measurement because it exists
+     * for panels whose own clock pair is wrong. NuvioTV shares this rule (B117: TV sent UTC to a
+     * Europe/London panel and "Start over" played the previous show).
+     */
+    fun replayOffsetMs(measuredClockOffsetMs: Long?, manualCorrectionMinutes: Int): Long? {
+        val manualMs = manualCorrectionMinutes
+            .coerceIn(CATCH_UP_CORRECTION_MIN_MINUTES, CATCH_UP_CORRECTION_MAX_MINUTES) * 60_000L
+        if (measuredClockOffsetMs == null && manualMs == 0L) return null
+        return (measuredClockOffsetMs ?: 0L) + manualMs
+    }
+
+    /**
      * Panels interpret `start` in THEIR OWN timezone, so a panel in New York replaying a programme
      * we describe in UTC lands hours off. [serverOffsetMs] is the measured clock-pair offset
      * ([ServerClockOffset]): panel-local wall time is the UTC instant plus the offset, formatted

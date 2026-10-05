@@ -213,5 +213,29 @@ class XtreamCatchUpTest {
         assertTrue(url.contains("2024-03-09:17-00"), "expected the +1h panel-local time in $url")
     }
 
+    // --- B117 parity: the replay offset rule TV now shares -------------------------------------
+    // (kotlin.test argument order: expected, actual, message)
+
+    @Test
+    fun replayOffsetUsesTheMeasuredPanelOffsetByDefault() {
+        assertEquals(60 * 60_000L, XtreamCatchUp.replayOffsetMs(60 * 60_000L, 0), "clock pair drives the start")
+    }
+
+    @Test
+    fun replayOffsetAddsTheManualCorrectionOnTop() {
+        assertEquals(0L, XtreamCatchUp.replayOffsetMs(60 * 60_000L, -60), "measured +1h corrected by -1h")
+        assertEquals(90 * 60_000L, XtreamCatchUp.replayOffsetMs(null, 90), "no measurement: correction alone")
+    }
+
+    @Test
+    fun replayOffsetStaysUnsetWhenNothingIsKnown() {
+        assertEquals(null, XtreamCatchUp.replayOffsetMs(null, 0), "unset stays null (UTC start)")
+    }
+
+    @Test
+    fun replayOffsetClampsTheManualCorrection() {
+        assertEquals(840 * 60_000L, XtreamCatchUp.replayOffsetMs(null, 5_000), "+14h ceiling")
+    }
+
     private companion object { const val DAY = 24L * 60 * 60 * 1000 }
 }
