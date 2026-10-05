@@ -597,6 +597,17 @@ object SyncManager {
                     runCatching { ProfileRepository.pullProfiles() }
                         .onFailure { log.e(it) { "Realtime profiles pull failed" } }
                 }
+                else -> {
+                    // Fork surfaces (e.g. the IPTV overlay) are routed to the SyncParticipant that
+                    // declares them — this file never names a fork feature.
+                    val participants = com.nuvio.app.core.contracts.SyncParticipantRegistry
+                        .participantsForRealtimeSurface(surface)
+                    if (participants.isEmpty()) log.d { "Ignoring unknown realtime surface=$surface" }
+                    participants.forEach { participant ->
+                        runCatching { participant.pullFromServer(profileId) }
+                            .onFailure { log.e(it) { "Realtime ${participant.name} pull failed" } }
+                    }
+                }
             }
         }
     }
