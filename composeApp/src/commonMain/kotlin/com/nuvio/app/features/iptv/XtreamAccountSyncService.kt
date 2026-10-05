@@ -487,6 +487,8 @@ internal fun preserveDeviceLocalPrefs(
         catchUpTimeCorrectionMinutes = match.catchUpTimeCorrectionMinutes,
         catchUpWinner = match.catchUpWinner,
         guideEpgCorrectionMinutes = match.guideEpgCorrectionMinutes,
+        cleanChannelNames = match.cleanChannelNames,
+        channelNameTags = match.channelNameTags,
     )
 }
 

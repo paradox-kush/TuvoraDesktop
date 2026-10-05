@@ -49,6 +49,12 @@ internal fun IptvLiveChannelMenu(
             }
         },
         onDismiss = onDismiss,
+        // F14: assign this channel's guide by hand (TiviMate's "Assign EPG").
+        onChooseGuide = if (com.nuvio.app.features.iptv.epg.GuideChannelPickerController.canOpen(channel.contentId)) {
+            { com.nuvio.app.features.iptv.epg.GuideChannelPickerController.open(channel.contentId, channel.name) }
+        } else {
+            null
+        },
     )
 }
 

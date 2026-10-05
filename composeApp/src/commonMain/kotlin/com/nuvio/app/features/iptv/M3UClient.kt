@@ -238,11 +238,11 @@ object M3UClient : IptvClient {
      * lazily+cached by [XmltvClient.ensureEpg]; here we just read what's stored (a cheap indexed range).
      */
     override suspend fun shortEpg(acc: XtreamAccount, streamId: Int, limit: Int): Result<List<XtreamProgram>> = runCatching {
-        val tvgId = IptvContentDb.channelRow(acc.id, streamId)?.tvgId?.takeIf { it.isNotBlank() }
-            ?: return@runCatching emptyList()
         // Kick a background guide refresh if none/stale (no-op when fresh or no EPG source), then read.
+        // B10: by the ingest's channel map, so a channel with NO tvg-id still gets the guide its
+        // name matched (it used to return empty right here, before even looking).
         XmltvClient.ensureEpg(acc)
-        XmltvClient.nowNext(acc, tvgId, limit)
+        XmltvClient.storedNowNext(acc, streamId, limit)
     }
 
     /** M3U carries no rich detail — surface just the stored name; enrichment (TMDB) still applies upstream. */

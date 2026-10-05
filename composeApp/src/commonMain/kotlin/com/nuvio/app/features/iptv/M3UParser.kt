@@ -70,12 +70,13 @@ object M3UParser {
             if (epgUrl != null) return
             // Read the header's tvg-url attribute DIRECTLY (not via parseAttributes, which truncates at
             // the first ',' — and a url-tvg value is often a comma-separated list). Providers use either
-            // spelling; the first URL in a list wins.
+            // spelling. F14: the WHOLE list is kept, in order — every URL is a guide source
+            // ([com.nuvio.app.features.iptv.epg.EpgSourcePlan] splits it); only the first used to be read.
             val raw = quotedHeaderAttr(headerLine, "url-tvg")
                 ?: quotedHeaderAttr(headerLine, "x-tvg-url")
                 ?: quotedHeaderAttr(headerLine, "tvg-url")
                 ?: return
-            epgUrl = raw.split(',').firstOrNull { it.isNotBlank() }?.trim()?.takeIf { it.isNotBlank() }
+            epgUrl = com.nuvio.app.features.iptv.epg.EpgSourcePlan.splitUrls(raw).joinToString(",").takeIf { it.isNotBlank() }
         }
 
         /** Reads `name="…"` from the #EXTM3U header, allowing commas inside the quoted value. */

@@ -2,7 +2,13 @@ package com.nuvio.app.features.iptv.epg
 
 import co.touchlab.kermit.Logger
 import com.nuvio.app.features.addons.httpStreamLines
+import com.nuvio.app.features.epg.GuideChannelMatcher
+import com.nuvio.app.features.iptv.SOURCE_TYPE_STALKER
 import com.nuvio.app.features.iptv.SOURCE_TYPE_XTREAM
+import com.nuvio.app.features.iptv.channelNameRules
+import com.nuvio.app.features.iptv.content.EpgCensusRow
+import com.nuvio.app.features.iptv.content.EpgGuideChannelRow
+import com.nuvio.app.features.iptv.content.EpgMappingWrite
 import com.nuvio.app.features.iptv.XtreamAccount
 import com.nuvio.app.features.iptv.XtreamProgram
 import com.nuvio.app.features.iptv.content.EpgProgrammeRow
@@ -51,6 +57,11 @@ object XmltvClient {
         scope.launch { runCatching { ensureEpg(acc) } }
     }
 
+    /** Re-match + re-ingest now (a user changed something the match depends on). Ingest scope, never a screen's. */
+    fun refreshNow(acc: XtreamAccount) {
+        scope.launch { runCatching { ensureEpg(acc, force = true) } }
+    }
+
     private val fetchLock = Mutex()
     private val fetching = mutableSetOf<String>()
     /** Playlist id → when its last whole-guide fetch failed (in-memory, like TV's). */
@@ -62,16 +73,20 @@ object XmltvClient {
      * or the playlist has no resolvable EPG source. Returns true when programmes are available after.
      */
     suspend fun ensureEpg(acc: XtreamAccount, force: Boolean = false): Boolean {
-        val meta = IptvContentDb.epgMeta(acc.id)
+        val partition = partitionOf(acc)
+        val meta = IptvContentDb.epgMeta(partition)
         if (!force && meta != null && !isStale(meta.builtAtMs)) return meta.programmeCount > 0
-        val source = resolveSource(acc) ?: return (meta?.programmeCount ?: 0) > 0
+        val sources = resolveSources(acc)
+        if (sources.isEmpty()) return (meta?.programmeCount ?: 0) > 0
         val shouldRun = fetchLock.withLock {
-            val backedOff = !force && !XmltvFailureBackoff.allows(lastFailedMs[acc.id], TraktPlatformClock.nowEpochMs())
-            if (backedOff || acc.id in fetching) false else { fetching.add(acc.id); true }
+            val nowMs = TraktPlatformClock.nowEpochMs()
+            val backedOff = !force && !XmltvFailureBackoff.allows(lastFailedMs[acc.id], nowMs)
+            val notReady = !force && lineupNotReadyMs[acc.id]?.let { nowMs - it < LINEUP_RETRY_MS } == true
+            if (backedOff || notReady || acc.id in fetching) false else { fetching.add(acc.id); true }
         }
-        if (!shouldRun) return (IptvContentDb.epgMeta(acc.id)?.programmeCount ?: 0) > 0
+        if (!shouldRun) return (IptvContentDb.epgMeta(partition)?.programmeCount ?: 0) > 0
         return try {
-            val result = refresh(acc, source)
+            val result = refresh(acc, sources)
             fetchLock.withLock {
                 if (result.isFailure) lastFailedMs[acc.id] = TraktPlatformClock.nowEpochMs()
                 else lastFailedMs.remove(acc.id)
@@ -82,21 +97,34 @@ object XmltvClient {
         }
     }
 
+    /** Playlist id -> when its lineup was last found empty (index not built yet): a short retry, not a 12h stamp. */
+    private val lineupNotReadyMs = mutableMapOf<String, Long>()
+    private const val LINEUP_RETRY_MS = 2L * 60 * 1000
+
+    /** Guide `<channel>` entries harvested per source; a bigger guide is still parsed, just not all offered. */
+    private const val MAX_GUIDE_CHANNELS = 100_000
+
     /**
-     * Streams the guide, filters programmes to this playlist's channels, chunk-inserts them, then
-     * writes the EPG meta row LAST. Memory stays flat: at most one parsed chunk + the parser's single
-     * open element are ever held; the 50-100 MB body is never fully in RAM.
+     * Streams every source in priority order ([EpgSourcePlan]), matches the lineup onto each source's
+     * `<channel>` list at the moment its channel list is complete ([GuideChannelMatcher], B10), keeps
+     * only the matched (and manually picked) channels' programmes, and writes programmes + channel map
+     * + census in ONE swap. Memory stays flat: one parsed chunk + the parser's open element + the
+     * guide's channel list (ids and names, no programmes).
+     *
+     * A later source is only downloaded while eligible channels are still unmatched; one source
+     * failing does not lose the others (the ingest fails only if every attempted source failed).
      */
-    internal suspend fun refresh(acc: XtreamAccount, source: EpgSource): Result<Int> = runCatching {
+    internal suspend fun refresh(acc: XtreamAccount, sources: List<EpgSource>): Result<Int> = runCatching {
         val startedAtMs = TraktPlatformClock.nowEpochMs()
-        // The allow-set: normalized tvg-ids of THIS playlist's channels. If the playlist has none,
-        // there is nothing an EPG could attach to, so skip the (expensive) download entirely.
-        val allow = channelIdsFor(acc).map { normalizeChannelId(it) }.toHashSet()
-        if (allow.isEmpty()) {
-            IptvContentDb.beginEpg(acc.id)
-            IptvContentDb.finishEpg(acc.id, 0)
-            // SKIPPED, not ERROR: "this playlist has no tvg-ids" is a different support answer
-            // from "the guide failed to download", and on screen they look identical.
+        val partition = partitionOf(acc)
+        val lineup = lineupFor(acc)
+        val picked = runCatching { com.nuvio.app.features.iptv.overlay.IptvOverlayStore.epgOverrideGuideIds(acc.id) }
+            .getOrDefault(emptySet()).map { normalizeChannelId(it) }.toHashSet()
+        if (lineup.isEmpty() && picked.isEmpty()) {
+            // Nothing to attach a guide to YET — an Xtream index still building, an M3U not
+            // ingested. Not stamped (a 12h "empty" stamp here blanked new playlists' guides for half
+            // a day); retried after LINEUP_RETRY_MS instead.
+            fetchLock.withLock { lineupNotReadyMs[acc.id] = TraktPlatformClock.nowEpochMs() }
             EpgTelemetry.ingestFinished(
                 source = EpgTelemetry.Source.PLAYLIST_XMLTV,
                 outcome = EpgTelemetry.Outcome.SKIPPED,
@@ -104,9 +132,92 @@ object XmltvClient {
             )
             return@runCatching 0
         }
+        fetchLock.withLock { lineupNotReadyMs.remove(acc.id) }
 
-        IptvContentDb.beginEpg(acc.id)
-        val collector = EpgCollector(acc.id)
+        IptvContentDb.beginEpg(partition)
+        val collector = EpgCollector(partition)
+        val rules = acc.channelNameRules()
+        val assignments = HashMap<Int, Pair<String, String>>()
+        val guideRows = ArrayList<EpgGuideChannelRow>()
+        var remaining = lineup
+        var byId = 0; var byName = 0; var fuzzy = 0
+        var attempted = 0; var failed = 0
+        var lastError: Throwable? = null
+        for ((index, source) in sources.withIndex()) {
+            if (index > 0 && remaining.none { GuideChannelMatcher.isEligible(it.name) }) break
+            attempted++
+            val outcome = runCatching { ingestSource(acc, index, source, remaining, picked, rules, collector, guideRows) }
+            val result = outcome.getOrElse {
+                failed++; lastError = it
+                log.w(it) { "XMLTV source ${index + 1}/${sources.size} (${source.kind}) failed for ${acc.id}" }
+                null
+            } ?: continue
+            val matched = HashSet<Int>(result.assignments.size)
+            for (a in result.assignments) {
+                assignments[a.streamId] = EpgSourcePlan.storedKey(index, a.guideId) to a.tier.slug
+                matched.add(a.streamId)
+            }
+            byId += result.census.id; byName += result.census.name; fuzzy += result.census.fuzzy
+            remaining = remaining.filter { it.streamId !in matched }
+        }
+        if (attempted > 0 && failed == attempted) throw lastError ?: IllegalStateException("every EPG source failed")
+        collector.finish()
+        val census = EpgCensusRow(
+            lineup = lineup.size,
+            eligible = lineup.count { GuideChannelMatcher.isEligible(it.name) },
+            manual = 0, byId = byId, byName = byName, fuzzy = fuzzy,
+            sources = attempted, sourcesFailed = failed,
+            builtAtMs = TraktPlatformClock.nowEpochMs(),
+        )
+        // A completed fetch that parsed to nothing (truncated/garbage body) must not blank a good
+        // guide — keep the prior generation (and its map); the throttle still advances inside finishEpg.
+        IptvContentDb.finishEpg(
+            partition, collector.count, keepPriorIfEmpty = true,
+            mapping = EpgMappingWrite(assignments, guideRows, census),
+        )
+        log.i {
+            "XMLTV ingest done acc=${acc.id} sources=$attempted failed=$failed programmes=${collector.count} " +
+                "lineup=${lineup.size} matched=${assignments.size} (id=$byId name=$byName)"
+        }
+        EpgTelemetry.ingestFinished(
+            source = EpgTelemetry.Source.PLAYLIST_XMLTV,
+            outcome = if (collector.count > 0) EpgTelemetry.Outcome.OK else EpgTelemetry.Outcome.EMPTY,
+            programmes = collector.count,
+            channels = lineup.size,
+            channelsCovered = collector.channelsCovered,
+            durationMs = TraktPlatformClock.nowEpochMs() - startedAtMs,
+        )
+        // A guide just landed, so every "this channel had nothing" verdict taken before it is
+        // stale. Observed on the emulator (2026-08-18): two tiles asked 1s apart on a cold
+        // playlist — the later one joined the in-flight ingest and got its programmes, the earlier
+        // one checked an empty table, answered n=0, and the cooldown then pinned it on "No
+        // information" for a further minute with the data already on disk beside it.
+        com.nuvio.app.features.iptv.XtreamHubRepository.onGuideDataChanged()
+        collector.count
+    }.onFailure {
+        log.w(it) { "XMLTV ingest failed for ${acc.id}" }
+        EpgTelemetry.ingestFinished(
+            source = EpgTelemetry.Source.PLAYLIST_XMLTV,
+            outcome = EpgTelemetry.Outcome.ERROR,
+            // Class only — a panel's message routinely quotes the request URL, credentials included.
+            errorClass = it::class.simpleName,
+        )
+    }
+
+    /** One source: stream it, match at the end of its channel list, keep the matched programmes. */
+    private suspend fun ingestSource(
+        acc: XtreamAccount,
+        index: Int,
+        source: EpgSource,
+        lineup: List<GuideChannelMatcher.LineupChannel>,
+        picked: Set<String>,
+        rules: com.nuvio.app.features.epg.ChannelNameCleaner.Rules,
+        collector: EpgCollector,
+        guideRows: MutableList<EpgGuideChannelRow>,
+    ): GuideChannelMatcher.Result {
+        val allow = HashSet<String>()
+        val guide = ArrayList<GuideChannelMatcher.GuideChannel>()
+        var result: GuideChannelMatcher.Result? = null
         // Bounded on the way IN ([XmltvIngestWindow]), not cleaned up afterwards: a feed carrying a
         // week of schedule for thousands of channels must never reach the disk in the first place
         // on a 1 GB box. The parse is streaming, so a refused row costs nothing beyond the parse
@@ -114,8 +225,21 @@ object XmltvClient {
         val nowMs = TraktPlatformClock.nowEpochMs()
         val parser = XmltvStreamingParser(
             keepChannelIds = allow,
+            onChannelNames = { id, names ->
+                if (guide.size < MAX_GUIDE_CHANNELS) guide.add(GuideChannelMatcher.GuideChannel(id, names))
+            },
+            // The DTD puts every <channel> before the first <programme>: match here, once, and
+            // open the allow-set before a single programme is filtered.
+            onChannelsDone = {
+                val r = GuideChannelMatcher.match(lineup, guide, rules)
+                result = r
+                for (a in r.assignments) allow.add(a.guideId)
+                if (picked.isNotEmpty()) for (g in guide) normalizeChannelId(g.id).let { if (it in picked) allow.add(it) }
+            },
             onProgramme = { p ->
-                if (XmltvIngestWindow.keeps(p.startMs, p.endMs, nowMs)) collector.add(p)
+                if (XmltvIngestWindow.keeps(p.startMs, p.endMs, nowMs)) {
+                    collector.add(p, EpgSourcePlan.storedKey(index, normalizeChannelId(p.channelId)))
+                }
             },
         )
         if (source.kind == EpgSourceKind.XTREAM_DERIVED) {
@@ -138,61 +262,95 @@ object XmltvClient {
             }
         }
         parser.finish()
-        collector.finish()
-        // A completed fetch that parsed to nothing (truncated/garbage body) must not blank a good
-        // guide — keep the prior generation; the throttle still advances inside finishEpg.
-        IptvContentDb.finishEpg(acc.id, collector.count, keepPriorIfEmpty = true)
-        log.i { "XMLTV ingest done acc=${acc.id} src=${source.kind} programmes=${collector.count} channels=${allow.size}" }
-        EpgTelemetry.ingestFinished(
-            source = EpgTelemetry.Source.PLAYLIST_XMLTV,
-            outcome = if (collector.count > 0) EpgTelemetry.Outcome.OK else EpgTelemetry.Outcome.EMPTY,
-            programmes = collector.count,
-            channels = allow.size,
-            channelsCovered = collector.channelsCovered,
-            durationMs = TraktPlatformClock.nowEpochMs() - startedAtMs,
-        )
-        // A guide just landed, so every "this channel had nothing" verdict taken before it is
-        // stale. Observed on the emulator (2026-08-18): two tiles asked 1s apart on a cold
-        // playlist — the later one joined the in-flight ingest and got its programmes, the earlier
-        // one checked an empty table, answered n=0, and the cooldown then pinned it on "No
-        // information" for a further minute with the data already on disk beside it.
-        com.nuvio.app.features.iptv.XtreamHubRepository.onGuideDataChanged()
-        collector.count
-    }.onFailure {
-        log.w(it) { "XMLTV ingest failed for ${acc.id}" }
-        EpgTelemetry.ingestFinished(
-            source = EpgTelemetry.Source.PLAYLIST_XMLTV,
-            outcome = EpgTelemetry.Outcome.ERROR,
-            // Class only — a panel's message routinely quotes the request URL, credentials included.
-            errorClass = it::class.simpleName,
-        )
+        for (g in guide) {
+            val id = normalizeChannelId(g.id)
+            if (id.isEmpty()) continue
+            guideRows.add(EpgGuideChannelRow(EpgSourcePlan.storedKey(index, id), id, g.names.firstOrNull() ?: g.id, index))
+        }
+        return result ?: GuideChannelMatcher.Result(emptyList(), GuideChannelMatcher.Census(lineup.size, 0, 0, 0, 0))
     }
 
     /**
-     * now/next for one channel: the currently-airing programme + the following one, read from the
-     * stored guide. Returns [] when the channel has no programmes (or the playlist has no EPG). This is
-     * what [M3UClient.shortEpg] returns, so the hub's ensureEpg surfaces it exactly like Xtream's.
+     * now/next for one channel, read from the stored guide by the channel's TVG id — the pre-B10
+     * join, kept for callers that only know an id.
      */
     suspend fun nowNext(acc: XtreamAccount, tvgId: String, limit: Int = 4): List<XtreamProgram> {
         val key = normalizeChannelId(tvgId)
         if (key.isEmpty()) return emptyList()
         val now = TraktPlatformClock.nowEpochMs()
-        val rows = IptvContentDb.epgAround(acc.id, key, now, limit)
+        val rows = IptvContentDb.epgAround(partitionOf(acc), key, now, limit)
         return selectNowNext(rows, now)
     }
 
     /**
-     * This playlist's channel ids, from whichever store owns its lineup. Empty is a normal answer:
-     * a panel that leaves `epg_channel_id` blank cannot be matched by id at all (the name matcher
-     * is the answer there, not a bigger download).
+     * The store rung for one channel by STREAM id (B10): the ingest's match (provider id, then the
+     * cleaned name), else the provider's raw id for a playlist ingested before the map existed.
+     * [] when the channel has no stored guide.
      */
-    private suspend fun channelIdsFor(acc: XtreamAccount): List<String> =
-        if (acc.sourceType == SOURCE_TYPE_XTREAM) XtreamMatchIndex.liveEpgIds(acc.id)
-        else IptvContentDb.distinctTvgIds(acc.id)
+    suspend fun storedNowNext(acc: XtreamAccount, streamId: Int, limit: Int = 4): List<XtreamProgram> {
+        val partition = partitionOf(acc)
+        val key = EpgGuideKeyPolicy.resolve(
+            manualGuideId = null,
+            keyForGuideId = { null },
+            mappedKey = IptvContentDb.epgGuideKey(partition, streamId),
+            providerId = providerIdFor(acc, streamId),
+        ) ?: return emptyList()
+        val now = TraktPlatformClock.nowEpochMs()
+        return selectNowNext(IptvContentDb.epgAround(partition, key, now, limit), now)
+    }
 
     /**
-     * Resolve the EPG source for a playlist: an explicit epgUrl wins, then an Xtream account's own
-     * derived `xmltv.php`, then the captured M3U `url-tvg`.
+     * The MANUAL rung (F14): the guide channel the active profile picked for this channel, or null
+     * when there is no pick (null falls through the ladder; a pick is never second-guessed).
+     */
+    suspend fun manualNowNext(acc: XtreamAccount, streamId: Int, limit: Int = 4): List<XtreamProgram>? {
+        val picks = EpgOverrides.forPlaylist(acc.id)
+        if (picks.isEmpty()) return null
+        val entity = entityIdFor(acc, streamId) ?: return null
+        val guideId = picks[entity] ?: return null
+        val partition = partitionOf(acc)
+        val key = IptvContentDb.epgGuideKeyForGuideId(partition, guideId) ?: return null
+        val now = TraktPlatformClock.nowEpochMs()
+        return selectNowNext(IptvContentDb.epgAround(partition, key, now, limit), now)
+    }
+
+    /** The guide channels this playlist's sources offer, for the manual picker (F14). */
+    internal suspend fun guideChannels(acc: XtreamAccount, query: String, limit: Int = 200): List<EpgGuideChannelRow> =
+        IptvContentDb.epgGuideChannels(partitionOf(acc), query, limit)
+
+    /** The last ingest's coverage census (B10), or null before the first matched ingest. */
+    internal suspend fun census(acc: XtreamAccount): EpgCensusRow? = IptvContentDb.epgCensus(partitionOf(acc))
+
+    /** canon-v1 entity id of one live channel — the key a manual pick is stored under. */
+    suspend fun entityIdFor(acc: XtreamAccount, streamId: Int): String? =
+        if (acc.sourceType == SOURCE_TYPE_XTREAM) XtreamMatchIndex.liveEntityIdFor(acc.id, streamId)
+        else IptvContentDb.channelRow(acc.id, streamId)?.let {
+            com.nuvio.app.features.iptv.identity.IptvIdentity.entityId(acc.id, it.name, it.tvgId)
+        }
+
+    private suspend fun providerIdFor(acc: XtreamAccount, streamId: Int): String? =
+        if (acc.sourceType == SOURCE_TYPE_XTREAM) XtreamMatchIndex.liveEpgIdFor(acc.id, streamId)
+        else IptvContentDb.channelRow(acc.id, streamId)?.tvgId
+
+    /**
+     * Where this playlist's XMLTV lane is stored. Stalker's own bulk guide swaps the playlist's main
+     * partition, so an explicit EPG URL on a Stalker playlist gets its own; Xtream/M3U keep the main
+     * one (every existing reader, catch-up and sports search included, reads it).
+     */
+    fun partitionOf(acc: XtreamAccount): String =
+        if (acc.sourceType == SOURCE_TYPE_STALKER) acc.id + IptvContentDb.XMLTV_PARTITION_SUFFIX else acc.id
+
+    /** The lineup the matcher maps, from whichever store owns it. */
+    private suspend fun lineupFor(acc: XtreamAccount): List<GuideChannelMatcher.LineupChannel> =
+        if (acc.sourceType == SOURCE_TYPE_XTREAM) {
+            XtreamMatchIndex.liveLineup(acc.id).map { GuideChannelMatcher.LineupChannel(it.sid, it.name, it.epgId) }
+        } else {
+            IptvContentDb.liveLineup(acc.id).map { (sid, name, tvg) -> GuideChannelMatcher.LineupChannel(sid, name, tvg) }
+        }
+
+    /**
+     * The playlist's guide sources in priority order (F14, [EpgSourcePlan]): every URL the user
+     * typed, then the Xtream account's own derived `xmltv.php`, then the M3U `url-tvg` list.
      *
      * The derived rung is what makes the whole-guide lane real for Xtream. Before it, resolveSource
      * answered null for every Xtream playlist — so ensureEpg no-opped, nothing was ever stored, and
@@ -200,12 +358,15 @@ object XmltvClient {
      * Xtream guide route (same creds and host as player_api.php); a panel that does not serve it
      * fails the fetch once and the ladder falls through to the per-channel rung, i.e. old behaviour.
      */
-    internal suspend fun resolveSource(acc: XtreamAccount): EpgSource? {
-        acc.epgUrl?.trim()?.takeIf { it.isNotEmpty() }?.let { return EpgSource(it, EpgSourceKind.EXPLICIT) }
-        derivedXmltvUrl(acc)?.let { return EpgSource(it, EpgSourceKind.XTREAM_DERIVED) }
-        val tvg = IptvContentDb.ingestMeta(acc.id)?.epgUrl?.trim()?.takeIf { it.isNotEmpty() }
-        return tvg?.let { EpgSource(it, EpgSourceKind.URL_TVG) }
-    }
+    internal suspend fun resolveSources(acc: XtreamAccount): List<EpgSource> =
+        EpgSourcePlan.plan(
+            explicit = acc.epgUrl,
+            derivedXtream = derivedXmltvUrl(acc),
+            urlTvg = if (acc.sourceType == SOURCE_TYPE_XTREAM) null else IptvContentDb.ingestMeta(acc.id)?.epgUrl,
+        )
+
+    /** The first (highest-priority) source, or null — kept for callers/tests of the single-source era. */
+    internal suspend fun resolveSource(acc: XtreamAccount): EpgSource? = resolveSources(acc).firstOrNull()
 
     /**
      * `{base}/xmltv.php?username=…&password=…` for an Xtream account, else null. Pure and internal
@@ -230,7 +391,7 @@ object XmltvClient {
 
     private const val HEX = "0123456789ABCDEF"
 
-    suspend fun clear(acc: XtreamAccount) = IptvContentDb.beginEpg(acc.id).also { IptvContentDb.finishEpg(acc.id, 0) }
+    suspend fun clear(acc: XtreamAccount) = partitionOf(acc).let { IptvContentDb.beginEpg(it); IptvContentDb.finishEpg(it, 0) }
 
     // --- internals ---------------------------------------------------------------
 
@@ -247,11 +408,10 @@ object XmltvClient {
         /** Distinct channels that actually got rows — coverage, which every EPG report is about. */
         val channelsCovered: Int get() = covered.size
 
-        fun add(p: XmltvProgramme) {
-            covered.add(normalizeChannelId(p.channelId))
-            // Store the NORMALIZED channel id so the now/next lookup (which normalizes the M3U tvg-id)
-            // matches regardless of the two sources' casing/spacing.
-            buf.add(EpgProgrammeRow(normalizeChannelId(p.channelId), p.startMs, p.endMs, p.title, p.desc))
+        /** [key] = the stored channel key ([EpgSourcePlan.storedKey] over the NORMALIZED id). */
+        fun add(p: XmltvProgramme, key: String) {
+            covered.add(key)
+            buf.add(EpgProgrammeRow(key, p.startMs, p.endMs, p.title, p.desc))
             count++
             if (buf.size >= CHUNK) flush()
         }

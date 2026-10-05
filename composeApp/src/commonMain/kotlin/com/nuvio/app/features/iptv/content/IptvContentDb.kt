@@ -72,6 +72,35 @@ internal data class IngestMeta(
 /** EPG freshness marker for a playlist — non-null once XMLTV has been ingested at least once. */
 internal data class EpgMeta(val builtAtMs: Long, val programmeCount: Int)
 
+/** One guide `<channel>` the playlist's sources offer — what the manual-assign picker lists (F14). */
+internal data class EpgGuideChannelRow(val guideKey: String, val guideId: String, val name: String, val sourceIndex: Int)
+
+/**
+ * B10/F14 — the result of matching a playlist's lineup onto its guide sources, written in the SAME
+ * transaction as the programme swap so a reader never joins new keys against old rows.
+ * [assignments] = stream id → (stored programme key, tier slug).
+ */
+internal data class EpgMappingWrite(
+    val assignments: Map<Int, Pair<String, String>>,
+    val guideChannels: List<EpgGuideChannelRow>,
+    val census: EpgCensusRow,
+)
+
+/** Per-playlist coverage census (B10): what the playlist screen shows. Counts, no names. */
+internal data class EpgCensusRow(
+    val lineup: Int,
+    val eligible: Int,
+    val manual: Int,
+    val byId: Int,
+    val byName: Int,
+    val fuzzy: Int,
+    val sources: Int,
+    val sourcesFailed: Int,
+    val builtAtMs: Long,
+) {
+    val matched: Int get() = manual + byId + byName + fuzzy
+}
+
 /** One EPG programme row (already channel-filtered + UTC-normalized). [hasArchive] = the
  *  programme is inside the provider's replay window (catch-up). Windowed reads truncate
  *  [desc] to 600 chars — [IptvContentDb.epgFullDesc] fetches the whole text on demand. */
@@ -114,6 +143,16 @@ internal object IptvContentDb {
     /** Staging table for the EPG generation swap ([beginEpg]→[insertEpgChunk]→[finishEpg]); holds
      *  only the in-flight refresh's rows, never what readers are serving. */
     private const val EPG_SHADOW = "epg_programmes_shadow"
+
+    /**
+     * Suffix of the partition a Stalker playlist's XMLTV guide is stored under. Stalker's own bulk
+     * `get_epg_info` swaps the playlist's main partition; without a separate one, an explicit EPG
+     * URL on a Stalker playlist and the portal's bulk guide wiped each other on every refresh.
+     */
+    const val XMLTV_PARTITION_SUFFIX = "#xmltv"
+
+    /** B10/F14 mapping tables, replaced together with the programmes. */
+    private val EPG_MAP_TABLES = listOf("epg_channel_map", "epg_guide_channels", "epg_census")
 
     private fun activeGeneration(c: SQLiteConnection, playlistId: String): Long =
         c.prepare("SELECT active_generation FROM ingest_meta WHERE playlist_id = ?").use { st ->
@@ -165,6 +204,14 @@ internal object IptvContentDb {
         // Per-(playlist, channel) EPG fetch stamp — the guide's lazy-fetch gate (v4, but created
         // unconditionally like the other epg tables: IF NOT EXISTS is self-healing).
         it.execSQL("CREATE TABLE IF NOT EXISTS epg_channel_fetch(playlist_id TEXT NOT NULL, channel_id TEXT NOT NULL, fetched_at INTEGER NOT NULL, PRIMARY KEY(playlist_id, channel_id)) WITHOUT ROWID")
+        // B10/F14: which guide channel each lineup channel reads (stream id -> stored programme key),
+        // the guide's own channel list (the manual picker), and the coverage census. All three are
+        // rewritten with the programme swap ([finishEpg]); IF NOT EXISTS = no version bump needed,
+        // and an empty map simply means "fall back to the provider id" (pre-B10 behaviour).
+        it.execSQL("CREATE TABLE IF NOT EXISTS epg_channel_map(playlist_id TEXT NOT NULL, sid INTEGER NOT NULL, guide_key TEXT NOT NULL, tier TEXT NOT NULL, PRIMARY KEY(playlist_id, sid)) WITHOUT ROWID")
+        it.execSQL("CREATE TABLE IF NOT EXISTS epg_guide_channels(playlist_id TEXT NOT NULL, guide_key TEXT NOT NULL, guide_id TEXT NOT NULL, name TEXT NOT NULL, source_idx INTEGER NOT NULL, PRIMARY KEY(playlist_id, guide_key)) WITHOUT ROWID")
+        it.execSQL("CREATE INDEX IF NOT EXISTS epg_guide_channels_id ON epg_guide_channels(playlist_id, guide_id)")
+        it.execSQL("CREATE TABLE IF NOT EXISTS epg_census(playlist_id TEXT NOT NULL PRIMARY KEY, lineup INTEGER NOT NULL, eligible INTEGER NOT NULL, manual INTEGER NOT NULL, by_id INTEGER NOT NULL, by_name INTEGER NOT NULL, fuzzy INTEGER NOT NULL, sources INTEGER NOT NULL, sources_failed INTEGER NOT NULL, built_at INTEGER NOT NULL) WITHOUT ROWID")
         conn = it
     }
 
@@ -522,11 +569,19 @@ internal object IptvContentDb {
      * refetched on every browse; on a kept-prior empty result the meta count reports what is actually
      * live so callers gating on programmeCount stay consistent with [epgAround].
      */
-    suspend fun finishEpg(playlistId: String, programmeCount: Int, keepPriorIfEmpty: Boolean = false) = mutex.withLock {
+    suspend fun finishEpg(
+        playlistId: String,
+        programmeCount: Int,
+        keepPriorIfEmpty: Boolean = false,
+        mapping: EpgMappingWrite? = null,
+    ) = mutex.withLock {
         val c = connection()
         c.execSQL("BEGIN IMMEDIATE")
         try {
             val swap = programmeCount > 0
+            // The channel map rides the same swap: new keys appear exactly when the rows they point
+            // at do. An empty fetch that keeps the prior guide keeps the prior map with it.
+            if (mapping != null && (swap || !keepPriorIfEmpty)) writeMapping(c, playlistId, mapping)
             if (swap || !keepPriorIfEmpty) {
                 // A wholesale refresh supersedes the per-channel fetch stamps too. On an explicit
                 // clear (empty + !keepPrior) this empties the guide; on a swap it makes room for it.
@@ -556,6 +611,90 @@ internal object IptvContentDb {
             c.execSQL("COMMIT")
         } catch (t: Throwable) {
             c.execSQL("ROLLBACK"); throw t
+        }
+    }
+
+    private fun writeMapping(c: SQLiteConnection, playlistId: String, m: EpgMappingWrite) {
+        for (table in EPG_MAP_TABLES) {
+            c.prepare("DELETE FROM $table WHERE playlist_id = ?").use { st -> st.bindText(1, playlistId); st.step() }
+        }
+        c.prepare("INSERT OR REPLACE INTO epg_channel_map(playlist_id, sid, guide_key, tier) VALUES(?,?,?,?)").use { st ->
+            for ((sid, keyTier) in m.assignments) {
+                st.reset()
+                st.bindText(1, playlistId); st.bindLong(2, sid.toLong()); st.bindText(3, keyTier.first); st.bindText(4, keyTier.second)
+                st.step()
+            }
+        }
+        c.prepare("INSERT OR IGNORE INTO epg_guide_channels(playlist_id, guide_key, guide_id, name, source_idx) VALUES(?,?,?,?,?)").use { st ->
+            for (g in m.guideChannels) {
+                st.reset()
+                st.bindText(1, playlistId); st.bindText(2, g.guideKey); st.bindText(3, g.guideId); st.bindText(4, g.name)
+                st.bindLong(5, g.sourceIndex.toLong())
+                st.step()
+            }
+        }
+        val k = m.census
+        c.prepare("INSERT OR REPLACE INTO epg_census(playlist_id, lineup, eligible, manual, by_id, by_name, fuzzy, sources, sources_failed, built_at) VALUES(?,?,?,?,?,?,?,?,?,?)").use { st ->
+            st.bindText(1, playlistId)
+            st.bindLong(2, k.lineup.toLong()); st.bindLong(3, k.eligible.toLong()); st.bindLong(4, k.manual.toLong())
+            st.bindLong(5, k.byId.toLong()); st.bindLong(6, k.byName.toLong()); st.bindLong(7, k.fuzzy.toLong())
+            st.bindLong(8, k.sources.toLong()); st.bindLong(9, k.sourcesFailed.toLong()); st.bindLong(10, k.builtAtMs)
+            st.step()
+        }
+    }
+
+    /** The stored programme key a lineup channel reads (B10), or null when the map has no row for it. */
+    suspend fun epgGuideKey(playlistId: String, sid: Int): String? = mutex.withLock {
+        connection().prepare("SELECT guide_key FROM epg_channel_map WHERE playlist_id = ? AND sid = ?").use { st ->
+            st.bindText(1, playlistId); st.bindLong(2, sid.toLong())
+            if (st.step()) st.getText(0) else null
+        }
+    }
+
+    /** The stored key for a guide channel id (a manual pick), highest-priority source first. */
+    suspend fun epgGuideKeyForGuideId(playlistId: String, guideId: String): String? = mutex.withLock {
+        connection().prepare("SELECT guide_key FROM epg_guide_channels WHERE playlist_id = ? AND guide_id = ? ORDER BY source_idx LIMIT 1").use { st ->
+            st.bindText(1, playlistId); st.bindText(2, guideId)
+            if (st.step()) st.getText(0) else null
+        }
+    }
+
+    /** Whether this playlist has been matched at least once (a census row exists). */
+    suspend fun epgCensus(playlistId: String): EpgCensusRow? = mutex.withLock {
+        connection().prepare("SELECT lineup, eligible, manual, by_id, by_name, fuzzy, sources, sources_failed, built_at FROM epg_census WHERE playlist_id = ?").use { st ->
+            st.bindText(1, playlistId)
+            if (!st.step()) null else EpgCensusRow(
+                lineup = st.getLong(0).toInt(), eligible = st.getLong(1).toInt(), manual = st.getLong(2).toInt(),
+                byId = st.getLong(3).toInt(), byName = st.getLong(4).toInt(), fuzzy = st.getLong(5).toInt(),
+                sources = st.getLong(6).toInt(), sourcesFailed = st.getLong(7).toInt(), builtAtMs = st.getLong(8),
+            )
+        }
+    }
+
+    /**
+     * The guide channels this playlist's sources offer, for the manual-assign picker (F14): name
+     * contains [query] (case-insensitive), priority source first, capped at [limit].
+     */
+    suspend fun epgGuideChannels(playlistId: String, query: String, limit: Int = 200): List<EpgGuideChannelRow> = mutex.withLock {
+        val q = "%" + query.trim().lowercase() + "%"
+        connection().prepare(
+            "SELECT guide_key, guide_id, name, source_idx FROM epg_guide_channels WHERE playlist_id = ? " +
+                "AND (lower(name) LIKE ? OR guide_id LIKE ?) ORDER BY source_idx, name LIMIT ?",
+        ).use { st ->
+            st.bindText(1, playlistId); st.bindText(2, q); st.bindText(3, q); st.bindLong(4, limit.toLong())
+            val out = ArrayList<EpgGuideChannelRow>()
+            while (st.step()) out.add(EpgGuideChannelRow(st.getText(0), st.getText(1), st.getText(2), st.getLong(3).toInt()))
+            out
+        }
+    }
+
+    /** The live lineup of an M3U / Stalker playlist as (sid, name, tvg-id) — the matcher's input. */
+    suspend fun liveLineup(playlistId: String): List<Triple<Int, String, String?>> = mutex.withLock {
+        connection().prepare("SELECT sid, name, tvg_id FROM channels WHERE playlist_id = ? AND $GEN").use { st ->
+            st.bindText(1, playlistId); st.bindText(2, playlistId)
+            val out = ArrayList<Triple<Int, String, String?>>()
+            while (st.step()) out.add(Triple(st.getLong(0).toInt(), st.getText(1), if (st.isNull(2)) null else st.getText(2)))
+            out
         }
     }
 
@@ -641,8 +780,13 @@ internal object IptvContentDb {
         val c = connection()
         c.execSQL("BEGIN IMMEDIATE")
         try {
-            for (table in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta", "epg_programmes", "epg_meta", "epg_channel_fetch", EPG_SHADOW)) {
+            for (table in listOf("channels", "vod", "series", "episodes", "categories", "ingest_meta", "epg_programmes", "epg_meta", "epg_channel_fetch", EPG_SHADOW) + EPG_MAP_TABLES) {
                 c.prepare("DELETE FROM $table WHERE playlist_id = ?").use { st -> st.bindText(1, playlistId); st.step() }
+            }
+            // A Stalker playlist's XMLTV lane lives in its own partition (see XmltvClient.partitionOf).
+            val xmltv = playlistId + XMLTV_PARTITION_SUFFIX
+            for (table in listOf("epg_programmes", "epg_meta", EPG_SHADOW) + EPG_MAP_TABLES) {
+                c.prepare("DELETE FROM $table WHERE playlist_id = ?").use { st -> st.bindText(1, xmltv); st.step() }
             }
             c.execSQL("COMMIT")
             pendingGeneration.remove(playlistId)

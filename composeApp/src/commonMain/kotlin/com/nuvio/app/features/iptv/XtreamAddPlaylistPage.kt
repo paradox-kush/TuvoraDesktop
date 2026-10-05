@@ -701,7 +701,7 @@ private fun EpgUrlSection(
     onEpgUrlChange: (String) -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
-    SettingsSection(title = "EPG URL (optional)", isTablet = isTablet) {
+    SettingsSection(title = "EPG URLs (optional)", isTablet = isTablet) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -711,11 +711,14 @@ private fun EpgUrlSection(
             FormOutlinedField(
                 value = epgUrl,
                 onValueChange = onEpgUrlChange,
-                label = "XMLTV EPG URL",
-                placeholder = "http://host:port/xmltv.php?username=…&password=…",
+                label = "XMLTV EPG URLs",
+                placeholder = "https://example.com/guide.xml.gz",
+                singleLine = false,
             )
             Text(
-                text = "Override the guide source with a custom XMLTV URL. Leave blank to use the provider's built-in EPG.",
+                text = "Add one or more XMLTV guides, one per line. The first one wins for each channel; " +
+                    "the provider's own guide is still used for every channel these don't cover. " +
+                    "Leave blank to use only the provider's guide.",
                 style = MaterialTheme.typography.bodySmall,
                 color = tokens.colors.textMuted,
             )
@@ -984,13 +987,16 @@ internal fun FormOutlinedField(
     placeholder: String? = null,
     isError: Boolean = false,
     modifier: Modifier = Modifier.fillMaxWidth(),
+    singleLine: Boolean = true,
 ) {
     val tokens = MaterialTheme.nuvio
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
         modifier = modifier,
-        singleLine = true,
+        singleLine = singleLine,
+        minLines = 1,
+        maxLines = if (singleLine) 1 else 5,
         isError = isError,
         label = { Text(label) },
         placeholder = placeholder?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },

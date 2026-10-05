@@ -234,6 +234,14 @@ data class XtreamAccount(
      */
     val guideEpgCorrectionMinutes: Int = 0,
     /**
+     * F10 — show channel names cleaned of country prefixes, quality tags and decorations
+     * ([com.nuvio.app.features.epg.ChannelNameCleaner]) on this device. Display only and opt-in;
+     * the guide matcher always cleans. Device-local like the catch-up prefs (not on the wire).
+     */
+    val cleanChannelNames: Boolean = false,
+    /** F10 — extra tags the user wants stripped (comma / newline separated). Matching + display. */
+    val channelNameTags: String? = null,
+    /**
      * Step 0 — the playlist's alternate server addresses, in failover order (max 5). Client-owned and
      * synced (`iptv_playlists.backup_urls`). Step 0.3: edited on the Add/Edit form (validated by
      * [BackupServerValidation]) and walked by [PlaylistServerFailover]; which one is ACTIVE is
@@ -251,6 +259,16 @@ fun XtreamAccount.guideEpgCorrectionMs(): Long? = guideEpgCorrectionMinutes
     .takeIf { it != 0 }
     ?.coerceIn(CATCH_UP_CORRECTION_MIN_MINUTES, CATCH_UP_CORRECTION_MAX_MINUTES)
     ?.let { it * 60_000L }
+
+/** F10 — the name clean-up rules this playlist's matcher uses: the defaults plus the user's tags. */
+fun XtreamAccount.channelNameRules(): com.nuvio.app.features.epg.ChannelNameCleaner.Rules =
+    com.nuvio.app.features.epg.ChannelNameCleaner.Rules(
+        userTags = com.nuvio.app.features.epg.ChannelNameCleaner.parseTags(channelNameTags),
+    )
+
+/** F10 — the name to SHOW for a channel of this playlist: cleaned when the user opted in. */
+fun XtreamAccount.displayChannelName(raw: String): String =
+    if (cleanChannelNames) com.nuvio.app.features.epg.ChannelNameCleaner.clean(raw, channelNameRules()) else raw
 
 /** −12 h. Matches iptvsimple's `catchup-correction` range, which is the de-facto spec. */
 const val CATCH_UP_CORRECTION_MIN_MINUTES: Int = -12 * 60

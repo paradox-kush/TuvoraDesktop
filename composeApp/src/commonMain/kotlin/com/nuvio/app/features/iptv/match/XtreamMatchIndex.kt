@@ -28,6 +28,9 @@ internal enum class MatchKind(val slug: String) { MOVIE("movie"), SERIES("series
  * paid for (this index re-fetches the full catalog every 72h); now the hub reads it back instead
  * of re-fetching per category per session.
  */
+/** One live channel as the guide matcher sees it (B10). */
+internal data class LiveLineupRow(val sid: Int, val name: String, val epgId: String?, val entityId: String?)
+
 internal data class IndexedItem(
     val sid: Int,
     val name: String,
@@ -385,6 +388,38 @@ internal object XtreamMatchIndex {
                 if (lowest == null) lowest = sid
             }
             lowest
+        }
+    }
+
+    /**
+     * The live lineup as (sid, name, epg_channel_id, entity_id) — what the guide matcher maps onto
+     * the playlist's own XMLTV channel list (B10). One indexed scan, run on the ingest scope.
+     */
+    suspend fun liveLineup(provider: String): List<LiveLineupRow> = mutex.withLock {
+        connection().prepare(
+            "SELECT sid, name, epg_id, entity_id FROM items WHERE provider = ? AND kind = ?"
+        ).use { st ->
+            st.bindText(1, provider); st.bindText(2, MatchKind.LIVE.slug)
+            val out = ArrayList<LiveLineupRow>()
+            while (st.step()) out.add(
+                LiveLineupRow(
+                    sid = st.getLong(0).toInt(),
+                    name = st.getText(1),
+                    epgId = if (st.isNull(2)) null else st.getText(2),
+                    entityId = if (st.isNull(3)) null else st.getText(3),
+                )
+            )
+            out
+        }
+    }
+
+    /** One live channel's canon-v1 entity id (the key a manual guide pick is stored under, F14). */
+    suspend fun liveEntityIdFor(provider: String, sid: Int): String? = mutex.withLock {
+        connection().prepare(
+            "SELECT entity_id FROM items WHERE provider = ? AND kind = ? AND sid = ?"
+        ).use { st ->
+            st.bindText(1, provider); st.bindText(2, MatchKind.LIVE.slug); st.bindLong(3, sid.toLong())
+            if (st.step() && !st.isNull(0)) st.getText(0) else null
         }
     }
 

@@ -21,8 +21,22 @@ class XmltvStreamingParser(
     /** Channel ids to keep. null = keep all (used to first harvest the <channel> id set). */
     private val keepChannelIds: Set<String>?,
     private val onChannel: (id: String, displayName: String?) -> Unit = { _, _ -> },
+    /**
+     * Every `<display-name>` of a `<channel>`, in document order (the DTD's `display-name+`, "names
+     * listed earlier are more canonical"). The guide matcher indexes them all (B10).
+     */
+    private val onChannelNames: ((id: String, names: List<String>) -> Unit)? = null,
+    /**
+     * Fired ONCE, when the first `<programme>` opens. The XMLTV DTD orders every `<channel>` before
+     * any `<programme>` (`<!ELEMENT tv (channel*, programme*)>`), so this is the moment the whole
+     * channel list is known: the ingest matches the lineup here and fills [keepChannelIds] (a
+     * mutable set it owns) before the first programme is filtered — one download, one pass.
+     */
+    private val onChannelsDone: (() -> Unit)? = null,
     private val onProgramme: (XmltvProgramme) -> Unit,
 ) {
+    private var channelsDone = false
+    private val curNames = ArrayList<String>(2)
     // The tokenizer buffers raw text between tag boundaries; capped so a pathological doc with no
     // '<' can't grow unbounded (a real guide breaks into tags constantly, so this never trips).
     private val buf = StringBuilder()
@@ -75,10 +89,17 @@ class XmltvStreamingParser(
         }
     }
 
-    /** Call after the last chunk. A trailing partial token (truncated stream) is simply dropped. */
+    /**
+     * Call after the last chunk. A trailing partial token (truncated stream) is simply dropped. A
+     * guide with channels but no programmes still reports its channel list as done.
+     */
     fun finish() {
         buf.setLength(0)
         inTag = false
+        if (!channelsDone) {
+            channelsDone = true
+            onChannelsDone?.invoke()
+        }
     }
 
     private fun emitText(raw: String) {
@@ -86,7 +107,10 @@ class XmltvStreamingParser(
         when (textTarget) {
             TextTarget.TITLE -> prog?.let { if (it.title == null) it.title = text.ifBlank { null } }
             TextTarget.DESC -> prog?.let { if (it.desc == null) it.desc = text.ifBlank { null } }
-            TextTarget.DISPLAY_NAME -> if (curChannelName == null) curChannelName = text.ifBlank { null }
+            TextTarget.DISPLAY_NAME -> if (text.isNotBlank()) {
+                if (curChannelName == null) curChannelName = text
+                if (curNames.size < MAX_NAMES) curNames.add(text)
+            }
             TextTarget.NONE -> Unit
         }
     }
@@ -109,9 +133,14 @@ class XmltvStreamingParser(
             "channel" -> {
                 curChannelId = attr(inner, "id")
                 curChannelName = null
+                curNames.clear()
                 if (selfClosing) closeChannel()
             }
             "programme" -> {
+                if (!channelsDone) {
+                    channelsDone = true
+                    onChannelsDone?.invoke()
+                }
                 prog = ProgBuilder(
                     start = attr(inner, "start"),
                     stop = attr(inner, "stop"),
@@ -135,9 +164,13 @@ class XmltvStreamingParser(
 
     private fun closeChannel() {
         val id = curChannelId?.trim()?.ifBlank { null }
-        if (id != null) onChannel(id, curChannelName)
+        if (id != null) {
+            onChannel(id, curChannelName)
+            onChannelNames?.invoke(id, curNames.toList())
+        }
         curChannelId = null
         curChannelName = null
+        curNames.clear()
         textTarget = TextTarget.NONE
     }
 
@@ -164,6 +197,7 @@ class XmltvStreamingParser(
     private companion object {
         const val MAX_TOKEN = 64 * 1024      // a tag longer than this isn't a real XMLTV tag
         const val MAX_TEXT = 8 * 1024        // clamp a single title/desc's characters
+        const val MAX_NAMES = 8              // display-names kept per channel (real feeds list 1-3)
         const val DEFAULT_PROGRAMME_MS = 60L * 60 * 1000  // 1h fallback when stop is missing
     }
 }
