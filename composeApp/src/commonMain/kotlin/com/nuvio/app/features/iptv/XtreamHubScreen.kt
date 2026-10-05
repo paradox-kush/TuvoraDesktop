@@ -227,6 +227,18 @@ fun XtreamHubScreen(
     LaunchedEffect(scrollToTopRequests) {
         scrollToTopRequests.collect { listState.animateScrollToItem(0) }
     }
+    // F03 (device pass 2026-10-05): another playlist or section starts at the top. The lazy list
+    // otherwise re-anchors on a key both lists share (the Favorites row, category ids reused across
+    // sections) and parks the new top row — All favorites — above the viewport. Only on a CHANGE:
+    // coming back to the hub keeps its scroll position.
+    var shownList by remember { mutableStateOf(state.selectedAccountId to state.section) }
+    LaunchedEffect(state.selectedAccountId, state.section) {
+        val now = state.selectedAccountId to state.section
+        if (now != shownList) {
+            shownList = now
+            listState.scrollToItem(0)
+        }
+    }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize().background(tokens.colors.background)) {
         val sectionPadding = homeSectionHorizontalPaddingForWidth(maxWidth.value)
