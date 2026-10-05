@@ -435,6 +435,8 @@ object SyncManager {
             if (ProfileRepository.activeProfileId != profileId) return@launch
 
             log.i { "Full profile sync started profile=$profileId reason=$reason" }
+            // B03: read the version vector BEFORE pulling, so an edit landing mid-sync stays unseen.
+            val versionsBefore = SurfaceCatchUp.fetch(profileId)
             WatchProgressSourceCoordinator.pauseAutomaticTransitions()
             val syncResult = try {
                 runOrderedProfileSync(
@@ -460,6 +462,10 @@ object SyncManager {
                     "Full profile sync incomplete profile=$profileId reason=$reason " +
                         "failedSteps=${syncResult.failedSteps}"
                 }
+            } else if (versionsBefore != null) {
+                // Everything the ordered pipeline pulls is now current (fork participants are marked
+                // by the catch-up that pulls them).
+                SurfaceCatchUp.markPulled(versionsBefore.filter { it.surface in namedSurfaces })
             }
             // Now that the pull half is done, flush anything written while signed out. Order
             // matters: the merge that just ran preserves locally-dirty keys, so nothing sent here
@@ -561,53 +567,52 @@ object SyncManager {
 
         accountScopeSnapshot().launch {
             log.i { "requestRealtimeSurfacePull($profileId, $surface)" }
-            when (surface) {
-                "addons" -> {
-                    runCatching { AddonRepository.pullFromServer(profileId) }
-                        .onFailure { log.e(it) { "Realtime addons pull failed" } }
-                }
-                "plugins" -> {
-                    if (AppFeaturePolicy.pluginsEnabled) {
-                        runCatching { PluginRepository.pullFromServer(profileId) }
-                            .onFailure { log.e(it) { "Realtime plugins pull failed" } }
-                    }
-                }
-                "library" -> {
-                    runCatching { LibraryRepository.pullFromServer(profileId) }
-                        .onFailure { log.e(it) { "Realtime library pull failed" } }
-                }
-                "watch_progress", "watched_items" -> {
-                    runCatching {
-                        WatchProgressSourceCoordinator.refreshActiveSource(profileId = profileId, force = false)
-                    }.onFailure { log.e(it) { "Realtime active watch source pull failed" } }
-                }
-                "profile_settings" -> {
-                    runCatching { ProfileSettingsSync.pull(profileId) }
-                        .onFailure { log.e(it) { "Realtime profile settings pull failed" } }
-                }
-                "collections" -> {
-                    runCatching { CollectionSyncService.pullFromServer(profileId) }
-                        .onFailure { log.e(it) { "Realtime collections pull failed" } }
-                }
-                "home_catalog_settings" -> {
-                    runCatching { HomeCatalogSettingsSyncService.pullFromServer(profileId) }
-                        .onFailure { log.e(it) { "Realtime home catalog settings pull failed" } }
-                }
-                "profiles" -> {
-                    runCatching { ProfileRepository.pullProfiles() }
-                        .onFailure { log.e(it) { "Realtime profiles pull failed" } }
-                }
-                else -> {
-                    // Fork surfaces (e.g. the IPTV overlay) are routed to the SyncParticipant that
-                    // declares them — this file never names a fork feature.
-                    val participants = com.nuvio.app.core.contracts.SyncParticipantRegistry
-                        .participantsForRealtimeSurface(surface)
-                    if (participants.isEmpty()) log.d { "Ignoring unknown realtime surface=$surface" }
-                    participants.forEach { participant ->
-                        runCatching { participant.pullFromServer(profileId) }
-                            .onFailure { log.e(it) { "Realtime ${participant.name} pull failed" } }
-                    }
-                }
+            pullSurface(profileId, surface)
+        }
+    }
+
+    /** Surfaces [pullSurface] knows by name (fork surfaces come from their SyncParticipants). */
+    internal val namedSurfaces: Set<String> = setOf(
+        "addons", "plugins", "library", "watch_progress", "watched_items", "profile_settings",
+        "collections", "home_catalog_settings", "profiles", "provider_credentials",
+    )
+
+    /** Every surface this client can pull (B03: what a version-vector catch-up may plan). */
+    internal fun pullableSurfaces(): Set<String> =
+        namedSurfaces + com.nuvio.app.core.contracts.SyncParticipantRegistry.all.flatMap { it.realtimeSurfaces }
+
+    /**
+     * Pulls one sync surface for [profileId] — the shared dispatcher of a Realtime invalidation and of
+     * the B03 version-vector catch-up. True when the pull ran without an error (an unknown surface
+     * counts as done: nothing to pull).
+     */
+    internal suspend fun pullSurface(profileId: Int, surface: String): Boolean {
+        suspend fun attempt(what: String, block: suspend () -> Unit): Boolean =
+            runCatching { block() }
+                .onFailure { log.e(it) { "Realtime $what pull failed" } }
+                .isSuccess
+        return when (surface) {
+            "addons" -> attempt("addons") { AddonRepository.pullFromServer(profileId) }
+            "plugins" -> if (AppFeaturePolicy.pluginsEnabled) attempt("plugins") { PluginRepository.pullFromServer(profileId) } else true
+            "library" -> attempt("library") { LibraryRepository.pullFromServer(profileId) }
+            "watch_progress", "watched_items" -> attempt("active watch source") {
+                WatchProgressSourceCoordinator.refreshActiveSource(profileId = profileId, force = false)
+            }
+            "profile_settings" -> attempt("profile settings") { ProfileSettingsSync.pull(profileId) }
+            // B03: the website's Integrations tab writes credentials and emits this surface; it used
+            // to be ignored here (only a full foreground sync picked it up).
+            "provider_credentials" -> attempt("provider credentials") { ProviderCredentialSync.syncFromRemote(profileId) }
+            "collections" -> attempt("collections") { CollectionSyncService.pullFromServer(profileId) }
+            "home_catalog_settings" -> attempt("home catalog settings") { HomeCatalogSettingsSyncService.pullFromServer(profileId) }
+            "profiles" -> attempt("profiles") { ProfileRepository.pullProfiles() }
+            else -> {
+                // Fork surfaces (the IPTV overlay, IPTV playlists, Radar) are routed to the
+                // SyncParticipant that declares them — this file never names a fork feature.
+                val participants = com.nuvio.app.core.contracts.SyncParticipantRegistry
+                    .participantsForRealtimeSurface(surface)
+                if (participants.isEmpty()) log.d { "Ignoring unknown realtime surface=$surface" }
+                participants.map { participant -> attempt(participant.name) { participant.pullFromServer(profileId) } }
+                    .all { it }
             }
         }
     }

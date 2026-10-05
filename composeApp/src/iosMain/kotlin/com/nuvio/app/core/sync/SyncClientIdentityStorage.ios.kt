@@ -11,4 +11,11 @@ actual object SyncClientIdentityStorage {
     actual fun saveClientId(clientId: String) {
         NSUserDefaults.standardUserDefaults.setObject(clientId, forKey = clientIdKey)
     }
+
+    actual fun loadValue(key: String): String? =
+        NSUserDefaults.standardUserDefaults.stringForKey("nuvio_sync_$key")
+
+    actual fun saveValue(key: String, value: String) {
+        NSUserDefaults.standardUserDefaults.setObject(value, forKey = "nuvio_sync_$key")
+    }
 }

@@ -11,4 +11,10 @@ internal actual object SyncClientIdentityStorage {
     actual fun saveClientId(clientId: String) {
         store.putString("client_instance_id", clientId)
     }
+
+    actual fun loadValue(key: String): String? = store.getString(key)
+
+    actual fun saveValue(key: String, value: String) {
+        store.putString(key, value)
+    }
 }

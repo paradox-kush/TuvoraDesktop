@@ -47,4 +47,8 @@ internal fun JsonObjectBuilder.putSyncOriginClientId() {
 internal expect object SyncClientIdentityStorage {
     fun loadClientId(): String?
     fun saveClientId(clientId: String)
+
+    /** B03: small device-local sync bookkeeping (the surface versions this device last pulled). */
+    fun loadValue(key: String): String?
+    fun saveValue(key: String, value: String)
 }

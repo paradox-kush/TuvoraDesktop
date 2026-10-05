@@ -217,7 +217,10 @@ object LibraryRepository {
             )
             if (!isActiveOperation(operationToken)) return
             publish()
-            return
+            // B03/D5: live favourites always live in the local synced library, even under Trakt/Simkl,
+            // so its delta is still pulled — this used to return here, and a phone with a tracking
+            // provider never received favourites made on the TV.
+            if (!LibraryPullPolicy.pullsNuvioLibrary(trackingProviderActive = true)) return
         }
 
         nuvioSyncMutex.withLock {
