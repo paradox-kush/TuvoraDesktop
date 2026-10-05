@@ -38,7 +38,9 @@ internal object M3uIdRekey {
         fun library(item: LibraryItem): LibraryItem? {
             renames[item.id]?.let { return item.copy(id = it) }
             val p = promoted[item.id] ?: return null
-            return item.copy(id = p.seriesId, type = "series", name = p.seriesName)
+            // Device pass T2: the show name comes from the catalog's series join ("" on a miss) — a blank
+            // one keeps the saved name rather than leaving the item untitled.
+            return item.copy(id = p.seriesId, type = "series", name = p.seriesName.ifBlank { item.name })
         }
 
         fun progress(entry: WatchProgressEntry): WatchProgressEntry? {
@@ -51,7 +53,7 @@ internal object M3uIdRekey {
                     seasonNumber = p.season,
                     episodeNumber = p.episode,
                     episodeTitle = entry.episodeTitle ?: entry.title,
-                    title = p.seriesName,
+                    title = p.seriesName.ifBlank { entry.title },
                     lastSourceUrl = null,
                     progressKey = null,
                 )
@@ -71,7 +73,7 @@ internal object M3uIdRekey {
 
         fun watched(item: WatchedItem): WatchedItem? {
             promoted[item.id]?.let { p ->
-                return item.copy(id = p.seriesId, type = "series", name = p.seriesName, season = p.season, episode = p.episode, videoId = p.episodeId)
+                return item.copy(id = p.seriesId, type = "series", name = p.seriesName.ifBlank { item.name }, season = p.season, episode = p.episode, videoId = p.episodeId)
             }
             val id = renames[item.id]
             val video = item.videoId?.let { renames[it] }

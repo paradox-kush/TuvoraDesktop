@@ -420,7 +420,7 @@ object LibraryRepository {
         if (changes.isEmpty()) return 0
         var snapshot = localState.snapshot()
         changes.forEach { (old, _) -> snapshot = localState.remove(old.id, old.type).snapshot }
-        changes.forEach { (_, new) -> if (!localState.contains(new.id, new.type)) snapshot = localState.upsert(new) }
+        LibraryRekey.upserts(localState.snapshot().items, changes.map { it.second }).forEach { snapshot = localState.upsert(it) }
         persist(snapshot)
         publish()
         pushToServer(snapshot)

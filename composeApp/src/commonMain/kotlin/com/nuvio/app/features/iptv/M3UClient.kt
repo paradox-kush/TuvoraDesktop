@@ -60,7 +60,7 @@ object M3UClient : IptvClient {
             ingest(acc).isSuccess.also { ok ->
                 // B64: move this profile's saved refs onto the ids the catalog now carries. Off the
                 // browse path; idempotent, so a second run (next ingest) finds nothing to move.
-                if (ok) rekeyScope.launch { M3uIdRekeyRunner.run(acc) }
+                if (ok) rekeyScope.launch { M3uIdRekeyRunner.runAfterIngest(acc) }
             }
         } finally {
             ingestLock.withLock { ingesting.remove(acc.id) }
