@@ -224,8 +224,9 @@ internal object XtreamStreamSource {
         episode: Int?,
     ): List<StreamItem> {
         val query = titles.primary?.takeIf { it.isNotBlank() } ?: return emptyList()
-        val wantKeys = listOfNotNull(titles.primary, titles.original)
-            .map { TitleNormalizer.normKey(it) }.filter { it.isNotEmpty() }.toSet()
+        // B122: matched under the SAME keys the Xtream index uses (StalkerTitleMatchPolicy), so
+        // "EN - The Matrix (1999)" is the TMDB "The Matrix" here exactly as it is for Xtream.
+        val wantKeys = StalkerTitleMatchPolicy.wantKeys(listOf(titles.primary, titles.original))
         if (wantKeys.isEmpty()) return emptyList()
 
         return when (kind) {
@@ -249,7 +250,7 @@ internal object XtreamStreamSource {
                 val e = episode ?: return emptyList()
                 // Year is NOT guarded here: a panel names a series "Breaking Bad", rarely with a year,
                 // and TMDB's year is the FIRST-air year — guarding would drop later-season matches.
-                stalkerSeriesEditions(acc, StalkerClient.searchSeries(acc, query), wantKeys)
+                stalkerSeriesEditions(acc, StalkerClient.searchSeries(acc, query), wantKeys, s)
                     .map { series ->
                         val url = deferredEpisode(acc, series.seriesId, s, e)
                         StreamItem(
@@ -302,7 +303,7 @@ internal object XtreamStreamSource {
             season,
         ).take(MAX_SERIES_EDITIONS)
 
-    /** Stalker movie editions: name-key + year match, category-filtered, then capped
+    /** Stalker movie editions: index-key + year match (B122), category-filtered, then capped
      *  (a catalog carries 4K/HD/language cuts of one film). */
     internal fun stalkerMovieEditions(
         acc: XtreamAccount,
@@ -311,9 +312,7 @@ internal object XtreamStreamSource {
         year: Int?,
     ): List<XtreamMovie> = IptvSourceCategoryPolicy.keepCapped(
         acc, CONTENT_TYPE_MOVIES,
-        results
-            .filter { TitleNormalizer.normKey(it.name) in wantKeys }
-            .filter { yearCompatible(TitleNormalizer.yearOf(it.name), year) },
+        results.filter { StalkerTitleMatchPolicy.movieMatches(it.name, wantKeys, year) },
         cap = MAX_STALKER_EDITIONS,
     ) { it.categoryId }
 
@@ -323,14 +322,12 @@ internal object XtreamStreamSource {
         acc: XtreamAccount,
         results: List<XtreamSeriesItem>,
         wantKeys: Set<String>,
+        season: Int,
     ): List<XtreamSeriesItem> = IptvSourceCategoryPolicy.keepCapped(
         acc, CONTENT_TYPE_SERIES,
-        results.filter { TitleNormalizer.normKey(it.name) in wantKeys },
+        results.filter { StalkerTitleMatchPolicy.seriesMatches(it.name, wantKeys, season) },
         cap = MAX_STALKER_EDITIONS,
     ) { it.categoryId }
-
-    private fun yearCompatible(a: Int?, b: Int?): Boolean =
-        a == null || b == null || (if (a > b) a - b else b - a) <= 1
 
     /**
      * Editions of the same title on panels that ship no tmdb ids: items sharing the matched
