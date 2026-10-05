@@ -815,6 +815,8 @@ fun LiveTvScreen(
                 onDismiss = { channelMenu = null },
             )
         }
+        // F14: the "Choose guide channel" dialog outlives the menu that opened it.
+        com.nuvio.app.features.iptv.epg.GuideChannelPickerHost()
 
         sheetTarget?.let { target ->
             ProgrammeSheet(

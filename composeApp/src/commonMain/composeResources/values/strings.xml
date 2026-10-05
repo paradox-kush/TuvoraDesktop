@@ -2611,6 +2611,7 @@
     <string name="iptv_channel_action_add_favorite">Add to Favorites</string>
     <string name="iptv_channel_action_remove_favorite">Remove from Favorites</string>
     <string name="iptv_channel_action_hide">Hide channel</string>
+    <string name="iptv_channel_action_choose_guide">Choose guide channel</string>
     <string name="iptv_channel_hidden_toast">“%1$s” hidden. Unhide it in Settings → Integrations → IPTV playlists → %2$s.</string>
     <string name="iptv_channel_hidden_toast_generic">“%1$s” hidden. Unhide it in Settings → Integrations → IPTV playlists.</string>
     <string name="iptv_toast_undo">Undo</string>

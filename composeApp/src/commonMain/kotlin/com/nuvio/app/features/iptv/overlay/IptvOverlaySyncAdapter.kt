@@ -49,6 +49,7 @@ internal object IptvOverlaySyncAdapter {
         if (!SyncSession.canSync()) return false
         var since = IptvOverlayStore.getCursor(profileId)
         var changed = false
+        val epgPlaylists = HashSet<String>()
         while (true) {
             val rows = SupabaseProvider.client.postgrest.rpc(
                 "sync_pull_iptv_overlay_delta",
@@ -77,12 +78,18 @@ internal object IptvOverlaySyncAdapter {
                         val parts = r.okey.split("|", limit = 2)
                         if (parts.size == 2) IptvOverlayStore.applyRemoteMember(profileId, parts[0], parts[1], v.int("position") ?: 0, r.updatedAt, deleted)
                     }
+                    // F14 (lane G): a manual guide-channel pick made on another device / the web.
+                    IptvOverlayStore.EPG_KIND -> {
+                        IptvOverlayStore.applyRemoteEpg(profileId, r.okey, r.playlistId, v.str("guide_id"), v.str("guide_name"), r.updatedAt, deleted)
+                        r.playlistId?.let { epgPlaylists.add(it) }
+                    }
                 }
                 changed = true
             }
             IptvOverlayStore.setCursor(profileId, since)
             if (rows.size < 500) break
         }
+        if (epgPlaylists.isNotEmpty()) com.nuvio.app.features.iptv.epg.EpgOverrides.onRemoteChanged(profileId, epgPlaylists)
         return changed
     }
 

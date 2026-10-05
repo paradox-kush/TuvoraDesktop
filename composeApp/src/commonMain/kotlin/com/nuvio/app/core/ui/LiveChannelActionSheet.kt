@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -17,6 +18,7 @@ import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.iptv_channel_action_add_favorite
 import nuvio.composeapp.generated.resources.iptv_channel_action_hide
+import nuvio.composeapp.generated.resources.iptv_channel_action_choose_guide
 import nuvio.composeapp.generated.resources.iptv_channel_action_remove_favorite
 import org.jetbrains.compose.resources.stringResource
 
@@ -33,6 +35,8 @@ fun NuvioLiveChannelActionSheet(
     onToggleFavorite: () -> Unit,
     onHide: (() -> Unit)?,
     onDismiss: () -> Unit,
+    /** F14: pick which guide channel feeds this channel's EPG; null leaves the row out. */
+    onChooseGuide: (() -> Unit)? = null,
 ) {
     if (channel == null) return
     val tokens = MaterialTheme.nuvio
@@ -69,6 +73,13 @@ fun NuvioLiveChannelActionSheet(
                     icon = Icons.Default.VisibilityOff,
                     title = stringResource(Res.string.iptv_channel_action_hide),
                     onClick = { dismissAfter(onHide) },
+                )
+            }
+            if (onChooseGuide != null) {
+                NuvioBottomSheetActionRow(
+                    icon = Icons.Default.DateRange,
+                    title = stringResource(Res.string.iptv_channel_action_choose_guide),
+                    onClick = { dismissAfter(onChooseGuide) },
                 )
             }
         }
