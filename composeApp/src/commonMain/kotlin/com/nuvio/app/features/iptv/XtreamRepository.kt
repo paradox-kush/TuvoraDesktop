@@ -877,9 +877,16 @@ internal fun carryPlaylistOptions(
         // Step 0.3: the full form shows the backup list, so its candidate wins; every other edit
         // path (paste-URL / manual fields) doesn't carry it and must not clear it.
         backupUrls = if (keepCandidateFormOptions) candidate.backupUrls else old.backupUrls,
-        // F10: not on the form (Content & categories owns them), so an edit never resets them.
+        // Device-local prefs set from the playlist's own cards, never from the edit form (F10 clean-up +
+        // tags, prefer-m3u8 catch-up, catch-up and guide offsets) — an edit used to reset them all
+        // (device pass 2026-10-05; TV twin: asEditOf). The LEARNED catch-up winner is a fact about the
+        // server, so it only carries while the server is unchanged.
         cleanChannelNames = old.cleanChannelNames,
         channelNameTags = old.channelNameTags,
+        catchUpPreferM3u8 = old.catchUpPreferM3u8,
+        catchUpTimeCorrectionMinutes = old.catchUpTimeCorrectionMinutes,
+        guideEpgCorrectionMinutes = old.guideEpgCorrectionMinutes,
+        catchUpWinner = if (old.baseUrl == candidate.baseUrl) old.catchUpWinner else null,
     )
 }
 
