@@ -1859,6 +1859,21 @@ JNIEXPORT jfloat JNICALL NP(speed)(JNIEnv *, jobject, jlong handle) {
     return static_cast<jfloat>(mpvGetDouble(p->mpv, "speed"));
 }
 
+// Generic setter for the shared Kotlin policies (VideoZoomPolicy, SubtitleStyleMpvMapping).
+JNIEXPORT void JNICALL NP(setStringProperties)(JNIEnv *env, jobject, jlong handle, jobjectArray names, jobjectArray values) {
+    Player *p = asPlayer(handle);
+    if (!p || !names || !values) return;
+    jsize count = env->GetArrayLength(names);
+    if (count != env->GetArrayLength(values)) return;
+    for (jsize index = 0; index < count; index++) {
+        auto name = static_cast<jstring>(env->GetObjectArrayElement(names, index));
+        auto value = static_cast<jstring>(env->GetObjectArrayElement(values, index));
+        mpv_set_property_string(p->mpv, jstringToUtf8(env, name).c_str(), jstringToUtf8(env, value).c_str());
+        env->DeleteLocalRef(name);
+        env->DeleteLocalRef(value);
+    }
+}
+
 JNIEXPORT void JNICALL NP(setResizeMode)(JNIEnv *, jobject, jlong handle, jint mode) {
     Player *p = asPlayer(handle);
     if (!p) return;

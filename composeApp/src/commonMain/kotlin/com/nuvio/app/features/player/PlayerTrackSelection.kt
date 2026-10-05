@@ -524,8 +524,16 @@ internal fun findPersistedSubtitleTrackIndex(
     tracks: List<SubtitleTrack>,
     preference: PersistedPlayerTrackPreference,
 ): Int {
+    // F37: an id is only trusted when its language agrees. mpv numbers tracks 1..n per file, so the
+    // next episode's track "3" can be another language entirely (the audio twin already guards this).
     preference.subtitleTrackId?.takeIf { it.isNotBlank() }?.let { trackId ->
-        tracks.firstOrNull { it.id == trackId }?.let { return it.index }
+        tracks.firstOrNull { track ->
+            track.id == trackId && (
+                preference.subtitleLanguage.isNullOrBlank() ||
+                    SubtitleLanguageMatching.matchesLanguageCode(track.language, preference.subtitleLanguage) ||
+                    subtitleTrackMatchesLanguage(track, preference.subtitleLanguage)
+                )
+        }?.let { return it.index }
     }
 
     val languageCandidates = preference.subtitleLanguage?.takeIf { it.isNotBlank() }?.let { language ->

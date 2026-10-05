@@ -40,6 +40,12 @@ data class PlayerSettingsUiState(
     val showParentalGuide: Boolean = true,
     val showStreamInfo: Boolean = true,
     val resizeMode: PlayerResizeMode = PlayerResizeMode.Fit,
+    /**
+     * F37 "Remember my player preferences": per-series memory of tracks, subtitles on/off, aspect and
+     * manual zoom ([PlayerPreferencePolicy]). Device-local for now — NOT in the settings-sync payload
+     * (adding it is a sync payload change, held for an owner decision).
+     */
+    val rememberPlayerPreferences: Boolean = PlayerPreferencePolicy.DEFAULT_REMEMBER,
     val holdToSpeedEnabled: Boolean = true,
     val holdToSpeedValue: Float = 2f,
     val touchGesturesEnabled: Boolean = true,
@@ -122,6 +128,7 @@ object PlayerSettingsRepository {
     private var showParentalGuide = true
     private var showStreamInfo = true
     private var resizeMode = PlayerResizeMode.Fit
+    private var rememberPlayerPreferences = PlayerPreferencePolicy.DEFAULT_REMEMBER
     private var holdToSpeedEnabled = true
     private var holdToSpeedValue = 2f
     private var touchGesturesEnabled = true
@@ -200,6 +207,7 @@ object PlayerSettingsRepository {
         showParentalGuide = true
         showStreamInfo = true
         resizeMode = PlayerResizeMode.Fit
+        rememberPlayerPreferences = PlayerPreferencePolicy.DEFAULT_REMEMBER
         holdToSpeedEnabled = true
         holdToSpeedValue = 2f
         touchGesturesEnabled = true
@@ -273,6 +281,8 @@ object PlayerSettingsRepository {
         resizeMode = PlayerSettingsStorage.loadResizeMode()
             ?.let { runCatching { PlayerResizeMode.valueOf(it) }.getOrNull() }
             ?: PlayerResizeMode.Fit
+        rememberPlayerPreferences = PlayerSettingsStorage.loadRememberPlayerPreferences()
+            ?: PlayerPreferencePolicy.DEFAULT_REMEMBER
         holdToSpeedEnabled = PlayerSettingsStorage.loadHoldToSpeedEnabled() ?: true
         holdToSpeedValue = PlayerSettingsStorage.loadHoldToSpeedValue() ?: 2f
         touchGesturesEnabled = PlayerSettingsStorage.loadTouchGesturesEnabled() ?: true
@@ -322,6 +332,8 @@ object PlayerSettingsRepository {
                 ?: SubtitleStyleState.DEFAULT.useForcedSubtitles,
             showOnlyPreferredLanguages = PlayerSettingsStorage.loadSubtitleShowOnlyPreferredLanguages()
                 ?: SubtitleStyleState.DEFAULT.showOnlyPreferredLanguages,
+            sideMarginPercent = (PlayerSettingsStorage.loadSubtitleSideMarginPercent()
+                ?: SubtitleStyleState.DEFAULT.sideMarginPercent).coerceIn(0, SubtitleSideMargin.MAX_PERCENT),
         )
         streamReuseLastLinkEnabled = PlayerSettingsStorage.loadStreamReuseLastLinkEnabled() ?: false
         streamReuseLastLinkCacheHours = PlayerSettingsStorage.loadStreamReuseLastLinkCacheHours() ?: 24
@@ -471,6 +483,14 @@ object PlayerSettingsRepository {
         PlayerSettingsStorage.saveResizeMode(mode.name)
     }
 
+    fun setRememberPlayerPreferences(enabled: Boolean) {
+        ensureLoaded()
+        if (rememberPlayerPreferences == enabled) return
+        rememberPlayerPreferences = enabled
+        publish()
+        PlayerSettingsStorage.saveRememberPlayerPreferences(enabled)
+    }
+
     fun setHoldToSpeedEnabled(enabled: Boolean) {
         ensureLoaded()
         if (holdToSpeedEnabled == enabled) return
@@ -581,7 +601,10 @@ object PlayerSettingsRepository {
 
     fun setSubtitleStyle(style: SubtitleStyleState) {
         ensureLoaded()
-        val normalized = style.copy(fontSizeSp = style.fontSizeSp.coerceIn(subtitleFontSizeRangeSp))
+        val normalized = style.copy(
+            fontSizeSp = style.fontSizeSp.coerceIn(subtitleFontSizeRangeSp),
+            sideMarginPercent = style.sideMarginPercent.coerceIn(0, SubtitleSideMargin.MAX_PERCENT),
+        )
         if (subtitleStyle == normalized) return
         subtitleStyle = normalized
         publish()
@@ -596,6 +619,7 @@ object PlayerSettingsRepository {
         PlayerSettingsStorage.saveSubtitleStripSdh(normalized.stripSdh)
         PlayerSettingsStorage.saveSubtitleUseForcedSubtitles(normalized.useForcedSubtitles)
         PlayerSettingsStorage.saveSubtitleShowOnlyPreferredLanguages(normalized.showOnlyPreferredLanguages)
+        PlayerSettingsStorage.saveSubtitleSideMarginPercent(normalized.sideMarginPercent)
     }
 
     fun setStreamReuseLastLinkEnabled(enabled: Boolean) {
@@ -1031,6 +1055,7 @@ object PlayerSettingsRepository {
             showParentalGuide = showParentalGuide,
             showStreamInfo = showStreamInfo,
             resizeMode = resizeMode,
+            rememberPlayerPreferences = rememberPlayerPreferences,
             holdToSpeedEnabled = holdToSpeedEnabled,
             holdToSpeedValue = holdToSpeedValue,
             touchGesturesEnabled = touchGesturesEnabled,

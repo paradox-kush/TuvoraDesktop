@@ -26,6 +26,9 @@ import com.nuvio.app.features.player.SUBTITLE_DELAY_MIN_MS
 import com.nuvio.app.features.player.SubtitleColorSwatches
 import com.nuvio.app.features.player.SubtitleOutlineColorSwatches
 import com.nuvio.app.features.player.SubtitleStyleState
+import com.nuvio.app.features.player.SubtitleStyleMpvMapping
+import com.nuvio.app.features.player.VideoZoom
+import com.nuvio.app.features.player.VideoZoomPolicy
 import com.nuvio.app.features.player.SubtitleTrack
 import com.nuvio.app.features.player.inferForcedSubtitleTrack
 import com.nuvio.app.features.player.toStorageHexString
@@ -98,6 +101,9 @@ internal class NativePlayerController(
 
         @Volatile
         var rememberedResizeMode: PlayerResizeMode = PlayerResizeMode.Fit
+
+        @Volatile
+        var rememberedVideoZoom: VideoZoom = VideoZoom.IDENTITY
     }
 
     private data class ReleaseCallback(
@@ -378,6 +384,7 @@ internal class NativePlayerController(
                         applyRememberedVolume()
                         updateControls(controlsState)
                         setResizeMode(rememberedResizeMode)
+                        setVideoZoom(rememberedVideoZoom)
                         if (currentNowPlayingTitle.isNotEmpty() || currentArtworkUrl.isNotEmpty()) {
                             setNowPlayingMetadata(currentNowPlayingTitle, currentNowPlayingSubtitle, currentArtworkUrl)
                         }
@@ -559,6 +566,14 @@ internal class NativePlayerController(
                     PlayerResizeMode.Stretch -> 3
                 },
             )
+        }
+    }
+
+    /** F36: video-scale-x/y + video-pan-x/y (VideoZoomPolicy). No effect under Stretch (keepaspect=no). */
+    fun setVideoZoom(zoom: VideoZoom) {
+        rememberedVideoZoom = zoom
+        handle.takeIf { it != 0L }?.let { current ->
+            NativePlayerBridge.setStringPropertiesSafely(current, VideoZoomPolicy.mpvProperties(zoom))
         }
     }
 
@@ -1197,6 +1212,21 @@ internal class NativePlayerController(
             useLibass = useLibass,
             stripSdh = style.stripSdh,
         )
+        // UX61/F47: box, outline and side padding from the shared mapping. Skipped with libass on,
+        // where the track's own ASS styling is kept (the bridges skip their colours then too). The
+        // sub-border-* names also cover the bundled macOS mpv 0.38, which lacks sub-outline-*.
+        if (!useLibass) {
+            NativePlayerBridge.setStringPropertiesSafely(
+                handle,
+                SubtitleStyleMpvMapping.properties(
+                    backgroundColorHex = style.backgroundColor.toMpvColorString(),
+                    backgroundAlpha = style.backgroundColor.alpha,
+                    outlineColorHex = style.outlineColor.toMpvColorString(),
+                    outlineSize = if (style.outlineEnabled) style.outlineWidth.toDouble() else 0.0,
+                    sideMarginPercent = style.sideMarginPercent,
+                ),
+            )
+        }
     }
 
     private fun decodeTracks(readJson: (Long) -> String): List<NativeMpvTrack> {
@@ -1488,6 +1518,8 @@ private fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
         appendJsonField("boldLabel", boldLabel)
         append(',')
         appendJsonField("bottomOffsetLabel", bottomOffsetLabel)
+        append(',')
+        appendJsonField("sidePaddingLabel", sidePaddingLabel)
         append(',')
         appendJsonField("colorLabel", colorLabel)
         append(',')
@@ -1943,6 +1975,8 @@ private fun StringBuilder.appendSubtitleStyleJson(style: SubtitleStyleState) {
     appendJsonField("fontSizeSp", style.fontSizeSp)
     append(',')
     appendJsonField("bottomOffset", style.bottomOffset)
+    append(',')
+    appendJsonField("sideMarginPercent", style.sideMarginPercent)
     append('}')
 }
 

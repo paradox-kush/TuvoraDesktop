@@ -114,6 +114,7 @@ static constexpr double kMaxVolumePercent = 200.0;
 - (void)setVolume:(double)level;
 - (double)volume;
 - (void)setResizeMode:(int)mode;
+- (void)setStringProperties:(NSArray<NSString *> *)names values:(NSArray<NSString *> *)values;
 - (long long)durationMs;
 - (long long)positionMs;
 - (long long)bufferedPositionMs;
@@ -2128,6 +2129,16 @@ static void nuvioMpvWakeup(void *ctx) {
     return fmax(0.0, fmin(kMaxVolumePercent, soft * device / 100.0)) / 100.0;
 }
 
+// Generic setter for the shared Kotlin policies (VideoZoomPolicy, SubtitleStyleMpvMapping): names and
+// values are chosen in commonMain; a name this mpv lacks (0.38 has no sub-border-style) fails alone.
+- (void)setStringProperties:(NSArray<NSString *> *)names values:(NSArray<NSString *> *)values {
+    if (!_mpv) return;
+    NSUInteger count = MIN(names.count, values.count);
+    for (NSUInteger index = 0; index < count; index++) {
+        [self setStringProperty:names[index].UTF8String value:values[index]];
+    }
+}
+
 - (void)setResizeMode:(int)mode {
     if (!_mpv) return;
     NSString *panscan = @"0.0";
@@ -2392,7 +2403,7 @@ static void nuvioMpvWakeup(void *ctx) {
         if (modeChanged || backgroundColorChanged) {
             [self setStringProperty:"sub-back-color" value:resolvedBackgroundColor];
             [self setStringProperty:"sub-border-style"
-                              value:[resolvedBackgroundColor hasPrefix:@"#00"] ? @"outline-and-shadow" : @"opaque-box"];
+                              value:[resolvedBackgroundColor hasPrefix:@"#00"] ? @"outline-and-shadow" : @"background-box"];
         }
         if (modeChanged || outlineColorChanged) {
             [self setStringProperty:"sub-outline-color" value:resolvedOutlineColor];
@@ -3062,6 +3073,24 @@ static NSArray<NSString *> *jstringArrayToNSArray(JNIEnv *env, jobjectArray valu
         env->DeleteLocalRef(item);
     }
     return result;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setStringProperties(
+    JNIEnv *env,
+    jobject /* bridge */,
+    jlong handle,
+    jobjectArray names,
+    jobjectArray values
+) {
+    if (handle == 0) return;
+    MpvWebPlayer *player = (__bridge MpvWebPlayer *)(void *)(intptr_t)handle;
+    NSArray<NSString *> *nameList = jstringArrayToNSArray(env, names);
+    NSArray<NSString *> *valueList = jstringArrayToNSArray(env, values);
+    if (nameList.count != valueList.count) return;
+    runOnMainAsync(^{
+        [player setStringProperties:nameList values:valueList];
+    });
 }
 
 extern "C" JNIEXPORT void JNICALL

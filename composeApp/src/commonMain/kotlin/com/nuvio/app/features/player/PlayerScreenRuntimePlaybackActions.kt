@@ -133,6 +133,7 @@ internal fun PlayerScreenRuntime.resetIdentityStateIfNeeded() {
         pendingSeekScrobbleRestart = false
         autoFetchedAddonSubtitlesForKey = null
         resetTrackSelectionState()
+        restorePicturePreference()
     }
 
     val videoIdentity = "$identity:$activeVideoId:$activeSeasonNumber:$activeEpisodeNumber"

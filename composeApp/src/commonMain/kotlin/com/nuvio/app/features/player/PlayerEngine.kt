@@ -184,6 +184,7 @@ data class PlayerControlsState(
     val outlineLabel: String = "Outline",
     val boldLabel: String = "Bold",
     val bottomOffsetLabel: String = "Bottom Offset",
+    val sidePaddingLabel: String = "Side padding",
     val colorLabel: String = "Color",
     val textOpacityLabel: String = "Text Opacity",
     val outlineColorLabel: String = "Outline Color",
@@ -427,6 +428,8 @@ expect fun PlatformPlayerSurface(
     initialPositionMs: Long? = null,
     initialPositionRequestKey: String? = null,
     resizeMode: PlayerResizeMode = PlayerResizeMode.Fit,
+    /** F36 manual zoom on top of [resizeMode] — see [VideoZoomPolicy] for how each engine applies it. */
+    videoZoom: VideoZoom = VideoZoom.IDENTITY,
     useNativeController: Boolean = false,
     playerControlsState: PlayerControlsState = PlayerControlsState(),
     onPlayerControlsAction: (PlayerControlsAction) -> Boolean = { false },

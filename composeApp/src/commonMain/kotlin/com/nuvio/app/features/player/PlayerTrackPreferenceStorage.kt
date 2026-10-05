@@ -13,6 +13,13 @@ data class PersistedPlayerTrackPreference(
     val audioName: String? = null,
     val audioTrackId: String? = null,
     val subtitleIsForced: Boolean? = null,
+    /** F37: the series' last in-player resize mode ([PlayerResizeMode] name); null = global default. */
+    val resizeMode: String? = null,
+    /** F36: the series' manual zoom ([VideoZoom]); all null = no zoom. */
+    val zoomScaleX: Float? = null,
+    val zoomScaleY: Float? = null,
+    val zoomPanX: Float? = null,
+    val zoomPanY: Float? = null,
 )
 
 object PersistedSubtitleSelectionType {
