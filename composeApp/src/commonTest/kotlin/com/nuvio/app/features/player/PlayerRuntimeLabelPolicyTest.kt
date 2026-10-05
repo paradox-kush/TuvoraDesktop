@@ -2,7 +2,8 @@ package com.nuvio.app.features.player
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNull
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * P1 (W2 device pass): fullscreen live showed "00:15 / 00:40" — the buffered window of a live
@@ -13,23 +14,13 @@ class PlayerRuntimeLabelPolicyTest {
 
     @Test
     fun liveStreamShowsNoRuntime() {
-        assertNull(PlayerRuntimeLabelPolicy.label(isLive = true, positionMs = 15_000, durationMs = 40_000, showRemainingTime = false))
-        assertNull(PlayerRuntimeLabelPolicy.label(isLive = true, positionMs = 15_000, durationMs = 40_000, showRemainingTime = true))
+        assertFalse(PlayerRuntimeLabelPolicy.showsRuntime(isLive = true))
     }
 
     @Test
-    fun vodAndReplayKeepElapsedAndTotal() {
-        assertEquals(
-            "00:15 / 00:40",
-            PlayerRuntimeLabelPolicy.label(isLive = false, positionMs = 15_000, durationMs = 40_000, showRemainingTime = false),
-        )
-    }
-
-    @Test
-    fun vodAndReplayKeepRemainingTime() {
-        assertEquals(
-            "−00:25",
-            PlayerRuntimeLabelPolicy.label(isLive = false, positionMs = 15_000, durationMs = 40_000, showRemainingTime = true),
-        )
+    fun vodAndReplayKeepTheirRuntime() {
+        assertTrue(PlayerRuntimeLabelPolicy.showsRuntime(isLive = false))
+        assertEquals("00:15 / 00:40", formatPlaybackRuntime(positionMs = 15_000, durationMs = 40_000, showRemainingTime = false))
+        assertEquals("−00:25", formatPlaybackRuntime(positionMs = 15_000, durationMs = 40_000, showRemainingTime = true))
     }
 }
