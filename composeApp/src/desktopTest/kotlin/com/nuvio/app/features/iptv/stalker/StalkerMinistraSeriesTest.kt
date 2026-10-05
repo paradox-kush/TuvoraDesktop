@@ -101,9 +101,10 @@ class StalkerMinistraSeriesTest {
         return """{"js":[]}"""
     }
 
-    private var accSeq = 0
+    // A process-unique id per account: StalkerClient is an object, and a session it already holds
+    // for an id would keep talking to a PREVIOUS test's fake portal (and its request log).
     private fun account() = XtreamAccount(
-        id = "stalker|ministra-${accSeq++}-${ministra}", name = "Ministra", baseUrl = "http://portal.test/stalker_portal/c/",
+        id = "stalker|ministra-${kotlin.random.Random.nextLong()}-${ministra}", name = "Ministra", baseUrl = "http://portal.test/stalker_portal/c/",
         username = "", password = "", sourceType = "stalker", macAddress = "00:1A:79:00:00:01",
     )
 
