@@ -49,11 +49,13 @@ const val SUBTITLE_AUTO_SYNC_REACTION_COMPENSATION_MS = 300L
 internal val subtitleFontSizeRangeSp: IntRange
     get() = if (isDesktop || isIos) 6..40 else 12..40
 
+/** Defaults = the F47 look for new users; see [SubtitleStyleDefaults] for existing customisers. */
 data class SubtitleStyleState(
     val textColor: Color = Color.White,
-    val backgroundColor: Color = Color.Transparent,
+    /** Soft translucent dark box — the "dim" swatch in [SubtitleBackgroundColorSwatches]. */
+    val backgroundColor: Color = Color.Black.copy(alpha = 0.55f),
     val outlineColor: Color = Color.Black,
-    val outlineEnabled: Boolean = true,
+    val outlineEnabled: Boolean = false,
     val outlineWidth: Int = 2,
     val bold: Boolean = false,
     val fontSizeSp: Int = 18,

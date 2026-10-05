@@ -226,8 +226,12 @@ object PlayerPreferencePolicy {
  * non-zero back-colour alpha already selects BorderStyle 4) and are aliases in 0.39+.
  */
 object SubtitleStyleMpvMapping {
-    /** Box padding around the text, in mpv scaled pixels (720-line reference). Soft, not cramped. */
-    const val BOX_PADDING = 4.0
+    /**
+     * Inner box padding around the text, in mpv scaled pixels (720-line reference): ~0.25 of the
+     * default font size. libass pads a background box UNIFORMLY (`sub-shadow-offset` sets x and y
+     * alike; mpv exposes no per-axis value) and draws square corners — see the F47 notes.
+     */
+    const val BOX_PADDING = 12.0
 
     /** mpv's own default `sub-margin-x` (scaled pixels). */
     const val MPV_DEFAULT_MARGIN_X = 19.0
@@ -277,10 +281,46 @@ object SubtitleStyleMpvMapping {
 
 /** Horizontal subtitle padding (F47): percent of the picture width kept clear on each side. */
 object SubtitleSideMargin {
-    const val DEFAULT_PERCENT = 5
+    /** 0 = mpv's own margin. The reporter's padding is INSIDE the box ([SubtitleStyleMpvMapping.BOX_PADDING]). */
+    const val DEFAULT_PERCENT = 0
     const val MAX_PERCENT = 20
 
     /** Pixels of padding on each side for a View-based renderer (ExoPlayer's SubtitleView). */
     fun paddingPx(widthPx: Int, sideMarginPercent: Int): Int =
         (widthPx.coerceAtLeast(0) * sideMarginPercent.coerceIn(0, MAX_PERCENT) / 100f).roundToInt()
+}
+
+/**
+ * F47 default look (owner-approved 2026-10-04, from the reporter's reference): white text, no outline,
+ * in a soft translucent dark box with inner padding — [SubtitleStyleState.DEFAULT]. It applies to
+ * NEW users only: anyone with a stored style field reads it over [LEGACY], the look they had, so a
+ * customised style never changes under them.
+ */
+object SubtitleStyleDefaults {
+    /** The pre-F47 default (outlined text, no box). */
+    val LEGACY = SubtitleStyleState(
+        backgroundColor = androidx.compose.ui.graphics.Color.Transparent,
+        outlineEnabled = true,
+        sideMarginPercent = 0,
+    )
+
+    fun baseFor(anyFieldStored: Boolean): SubtitleStyleState =
+        if (anyFieldStored) LEGACY else SubtitleStyleState.DEFAULT
+}
+
+/**
+ * F47 inner horizontal padding for ExoPlayer/Media3 cues. CaptionStyleCompat's window box (one box
+ * per cue) has a FIXED inner padding of 0.125 x text size and none vertically, and no API to change
+ * it, so each line gets a FIGURE SPACE (U+2007) on both sides. Not a plain space: the Android line
+ * breaker does not treat U+2007 as trailing whitespace, so it widens the measured line (and box).
+ */
+object SubtitleBoxPadding {
+    const val PAD_CHAR = '\u2007'
+    const val EXO_PAD_CHARS = 1
+
+    fun padLines(text: String, count: Int): String {
+        if (text.isEmpty() || count <= 0) return text
+        val pad = PAD_CHAR.toString().repeat(count)
+        return text.split('\n').joinToString("\n") { line -> if (line.isEmpty()) line else "$pad$line$pad" }
+    }
 }

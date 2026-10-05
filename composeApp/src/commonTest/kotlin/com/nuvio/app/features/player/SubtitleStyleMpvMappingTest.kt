@@ -20,7 +20,7 @@ class SubtitleStyleMpvMappingTest {
         val p = props("#8C000000", 0.55f)
         assertEquals("background-box", p["sub-border-style"])
         assertEquals("#8C000000", p["sub-back-color"])
-        assertEquals("4.0", p["sub-shadow-offset"])
+        assertEquals(SubtitleStyleMpvMapping.BOX_PADDING, p["sub-shadow-offset"]!!.toDouble())
     }
 
     @Test
