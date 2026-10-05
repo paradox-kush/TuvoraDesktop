@@ -486,7 +486,7 @@ private fun XtreamAccountDropdown(
         title = stringResource(Res.string.compose_iptv_hub_playlists_title),
         label = selectedName,
         selectedKey = selectedAccountId,
-        options = accounts.map { NuvioDropdownOption(key = it.id, label = it.name) } +
+        options = accounts.map { NuvioDropdownOption(key = it.id, label = PlaylistAddress.displayName(it.name)) } +
             NuvioDropdownOption(key = ADD_PLAYLIST_OPTION_KEY, label = addPlaylistLabel),
         onSelected = { option ->
             if (option.key == ADD_PLAYLIST_OPTION_KEY) onAddPlaylist() else onSelectAccount(option.key)

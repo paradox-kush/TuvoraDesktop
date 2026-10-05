@@ -207,7 +207,7 @@ private fun PlaylistRow(
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    row.account.name,
+                    PlaylistAddress.displayName(row.account.name),
                     style = MaterialTheme.typography.bodyLarge,
                     color = tokens.colors.textPrimary,
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
@@ -246,7 +246,7 @@ private fun PlaylistRow(
         if (pending != null) {
             DestructivePopover(
                 action = pending.action,
-                playlistName = row.account.name,
+                playlistName = PlaylistAddress.displayName(row.account.name),
                 providerName = row.managed?.providerName,
                 managed = row.managed != null,
                 onConfirm = { onConfirmDestructive(pending.action) },

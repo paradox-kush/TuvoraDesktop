@@ -334,7 +334,7 @@ private fun ContentTypeList(
     onOpenType: (String) -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
-    SettingsSection(title = account.name, isTablet = isTablet) {
+    SettingsSection(title = PlaylistAddress.displayName(account.name), isTablet = isTablet) {
         SettingsGroup(isTablet = isTablet) {
             TYPE_LABELS.forEachIndexed { index, (type, label) ->
                 if (index > 0) SettingsGroupDivider(isTablet = isTablet)
