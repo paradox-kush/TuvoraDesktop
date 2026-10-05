@@ -152,12 +152,14 @@ object ProfileSettingsSync {
                     val remoteSignature = buildSignature(remoteBlob)
                     if (remoteSignature == localSignature) {
                         log.d { "pull(profileId=$profileId) — remote matches local" }
+                        saveBase(profileId, localBlob)
                         return@withLock false
                     }
 
                     if (ProfileRepository.activeProfileId != profileId) return@withLock false
                     applyRemoteBlob(remoteBlob)
                     skipNextPushSignature = currentObservedStateSignature()
+                    saveBase(profileId, exportSettingsBlob())
                 } finally {
                     isApplyingRemoteBlob = false
                 }
@@ -178,9 +180,24 @@ object ProfileSettingsSync {
         return syncMutex.withLock {
             runCatching {
                 val profileId = ProfileRepository.activeProfileId
-                val blob = exportSettingsBlob()
+                var blob = exportSettingsBlob()
                 if (ProfileRepository.activeProfileId != profileId) return@runCatching false
+                // B03 (D4): merge with the server's blob field by field before pushing, so an edit made
+                // on the website (or another phone) to a key this device did not touch survives.
+                val merged = mergedWithRemote(profileId, blob)
+                if (merged != null && merged != blob) {
+                    if (ProfileRepository.activeProfileId != profileId) return@runCatching false
+                    isApplyingRemoteBlob = true
+                    try {
+                        applyRemoteBlob(merged)
+                        skipNextPushSignature = currentObservedStateSignature()
+                    } finally {
+                        isApplyingRemoteBlob = false
+                    }
+                    blob = exportSettingsBlob()
+                }
                 pushToRemoteLocked(profileId, blob)
+                saveBase(profileId, blob)
                 true
             }.onFailure { error ->
                 log.e(error) { "pushCurrentProfileToRemote() — FAILED" }
@@ -232,6 +249,36 @@ object ProfileSettingsSync {
                     pushCurrentProfileToRemote()
                 }
         }
+    }
+
+    private fun baseKey(profileId: Int): String? =
+        AuthRepository.state.value.let { it as? AuthState.Authenticated }?.userId?.let { "settings_base_${it}_$profileId" }
+
+    /** The blob as this device last synced it — the merge base of [SettingsBlobMerge]. */
+    private fun loadBase(profileId: Int): JsonElement? =
+        baseKey(profileId)?.let { SyncClientIdentityStorage.loadValue(it) }?.let { runCatching { json.parseToJsonElement(it) }.getOrNull() }
+
+    private fun saveBase(profileId: Int, blob: MobileProfileSettingsBlob) {
+        val key = baseKey(profileId) ?: return
+        SyncClientIdentityStorage.saveValue(key, json.encodeToString(MobileProfileSettingsBlob.serializer(), blob))
+    }
+
+    /** Local [blob] merged field by field with the server's current one; null when it cannot be read. */
+    private suspend fun mergedWithRemote(profileId: Int, blob: MobileProfileSettingsBlob): MobileProfileSettingsBlob? {
+        val base = loadBase(profileId) ?: return null
+        val remoteJson = runCatching {
+            SupabaseProvider.client.postgrest.rpc(
+                "sync_pull_profile_settings_blob",
+                buildJsonObject {
+                    put("p_profile_id", profileId)
+                    put("p_platform", profileSettingsPlatform)
+                },
+            ).decodeList<SettingsBlobResponse>().firstOrNull()?.settingsJson
+        }.getOrNull() ?: return null
+        val remote = runCatching { decodeMobileProfileSettingsBlob(remoteJson) }.getOrNull() ?: return null
+        val local = json.encodeToJsonElement(MobileProfileSettingsBlob.serializer(), blob)
+        val merged = SettingsBlobMerge.merge(base, local, json.encodeToJsonElement(MobileProfileSettingsBlob.serializer(), remote))
+        return runCatching { json.decodeFromJsonElement(MobileProfileSettingsBlob.serializer(), merged) }.getOrNull()
     }
 
     private suspend fun pushToRemoteLocked(profileId: Int, blob: MobileProfileSettingsBlob) {

@@ -146,7 +146,87 @@ internal fun LazyListScope.xtreamContentSettingsContent(
         // to all of them (the mirror is wired for Xtream, M3U and Stalker alike). The manual
         // offset row stays Xtream-only — it corrects the panel short-EPG lane the others lack.
         GuideSettings(account = account, isTablet = isTablet, showOffsetRow = supportsCatchUp)
+        ChannelNameSettings(account = account, isTablet = isTablet)
     }
+}
+
+/**
+ * F10 — per-playlist channel-name clean-up: a display opt-in plus the user's own tag list. The
+ * guide matcher always cleans; the tags feed it too, so a change re-runs the playlist's guide match.
+ */
+@Composable
+private fun ChannelNameSettings(account: XtreamAccount, isTablet: Boolean) {
+    val tokens = MaterialTheme.nuvio
+    var editingTags by remember(account.id) { mutableStateOf(false) }
+    val tags = com.nuvio.app.features.epg.ChannelNameCleaner.parseTags(account.channelNameTags)
+    SettingsSection(title = "Channel names", isTablet = isTablet) {
+        SettingsGroup(isTablet = isTablet) {
+            SettingsSwitchRow(
+                title = "Clean up channel names",
+                description = "Hides country prefixes, quality tags and symbols on this device — " +
+                    "“UK: BBC One FHD ★” shows as “BBC One”. Your own renames always win.",
+                checked = account.cleanChannelNames,
+                isTablet = isTablet,
+                onCheckedChange = { on ->
+                    XtreamRepository.updateOptions(account.id) { acc -> acc.copy(cleanChannelNames = on) }
+                },
+            )
+            SettingsGroupDivider(isTablet = isTablet)
+            SettingsNavigationRow(
+                title = "Extra tags to remove",
+                description = if (tags.isEmpty()) {
+                    "None. Add words or symbols your provider puts in names, like VIP or |PRIME|. " +
+                        "Also used to match the guide."
+                } else {
+                    tags.joinToString("  ·  ")
+                },
+                isTablet = isTablet,
+                onClick = { editingTags = true },
+            )
+        }
+    }
+    if (editingTags) {
+        ChannelTagsDialog(
+            initial = account.channelNameTags.orEmpty(),
+            onDismiss = { editingTags = false },
+            onSave = { text ->
+                editingTags = false
+                val cleaned = com.nuvio.app.features.epg.ChannelNameCleaner.parseTags(text).joinToString(", ").ifEmpty { null }
+                if (cleaned != account.channelNameTags) {
+                    XtreamRepository.updateOptions(account.id) { acc -> acc.copy(channelNameTags = cleaned) }
+                    // The tags change what the guide matcher sees: re-match on the ingest's own scope.
+                    com.nuvio.app.features.iptv.epg.XmltvClient.refreshNow(account.copy(channelNameTags = cleaned))
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun ChannelTagsDialog(initial: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var text by remember { mutableStateOf(initial) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Extra tags to remove") },
+        text = {
+            Column {
+                Text(
+                    "Separate tags with commas. Plain words are removed only as whole words " +
+                        "(VIP won't touch VIPER); anything with symbols is removed exactly as typed.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.width(8.dp))
+                androidx.compose.material3.OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("Tags") },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                )
+            }
+        },
+        confirmButton = { androidx.compose.material3.TextButton(onClick = { onSave(text) }) { Text("Save") } },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 /**
@@ -235,7 +315,7 @@ private fun GuideSettings(account: XtreamAccount, isTablet: Boolean, showOffsetR
     // scan, never a panel call — coverage must not cost what it reports on.
     var coverage by remember(account.id) { mutableStateOf<String?>(null) }
     LaunchedEffect(account.id) {
-        coverage = guideEpgCoverageLine(account.id)
+        coverage = listOfNotNull(playlistGuideCensusLine(account), guideEpgCoverageLine(account.id)).joinToString("\n")
     }
 
     SettingsSection(title = "Guide", isTablet = isTablet) {
@@ -311,6 +391,16 @@ private suspend fun guideEpgCoverageLine(accountId: String): String {
     return coverage + "\nGuide sources this session — " + parts.joinToString(" · ") + "."
 }
 
+/**
+ * B10 — what the playlist's OWN guide sources matched at the last ingest: the number TiviMate
+ * users compare against. Null before the first matched ingest (nothing honest to say yet).
+ */
+private suspend fun playlistGuideCensusLine(account: XtreamAccount): String? {
+    val c = runCatching { com.nuvio.app.features.iptv.epg.XmltvClient.census(account) }.getOrNull() ?: return null
+    val picks = runCatching { com.nuvio.app.features.iptv.epg.EpgOverrides.forPlaylist(account.id).size }.getOrDefault(0)
+    return com.nuvio.app.features.iptv.epg.GuideCensusText.line(c, picks)
+}
+
 private const val CORRECTION_STEP_MINUTES = 30
 
 private fun formatCorrection(minutes: Int): String {
@@ -334,7 +424,7 @@ private fun ContentTypeList(
     onOpenType: (String) -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
-    SettingsSection(title = account.name, isTablet = isTablet) {
+    SettingsSection(title = PlaylistAddress.displayName(account.name), isTablet = isTablet) {
         SettingsGroup(isTablet = isTablet) {
             TYPE_LABELS.forEachIndexed { index, (type, label) ->
                 if (index > 0) SettingsGroupDivider(isTablet = isTablet)

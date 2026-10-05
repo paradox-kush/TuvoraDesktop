@@ -15,6 +15,8 @@ import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.iptv_channel_hidden_toast
 import nuvio.composeapp.generated.resources.iptv_channel_hidden_toast_generic
+import nuvio.composeapp.generated.resources.iptv_favourite_added_toast
+import nuvio.composeapp.generated.resources.iptv_favourite_removed_toast
 import nuvio.composeapp.generated.resources.iptv_toast_undo
 import org.jetbrains.compose.resources.getString
 
@@ -32,16 +34,26 @@ internal fun IptvLiveChannelMenu(
     hideTarget: HideTarget?,
     onToggleFavorite: () -> Unit,
     onDismiss: () -> Unit,
+    /** F03: move a favourite (on a favourites row) or a pinned channel (in its group). */
+    onMoveEarlier: (() -> Unit)? = null,
+    onMoveLater: (() -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
+    val wasFavorite = LibraryRepository.isLocalSaved(channel.contentId, "tv")
     val actions = IptvChannelQuickActionsPolicy.menu(
-        isFavorite = LibraryRepository.isLocalSaved(channel.contentId, "tv"),
+        isFavorite = wasFavorite,
         hideTarget = hideTarget,
     )
     NuvioLiveChannelActionSheet(
         channel = channel,
         isFavorite = Action.REMOVE_FAVORITE in actions,
-        onToggleFavorite = onToggleFavorite,
+        // F03 (owner 2026-10-04): a long-press favourite toggle is confirmed with Undo, like a hide.
+        onToggleFavorite = {
+            onToggleFavorite()
+            scope.launch { confirmFavoriteToggled(channel.name, nowFavorite = !wasFavorite, undo = onToggleFavorite) }
+        },
+        onMoveEarlier = onMoveEarlier,
+        onMoveLater = onMoveLater,
         onHide = hideTarget?.takeIf { Action.HIDE in actions }?.let { target ->
             {
                 IptvChannelQuickActions.hide(target)
@@ -49,6 +61,12 @@ internal fun IptvLiveChannelMenu(
             }
         },
         onDismiss = onDismiss,
+        // F14: assign this channel's guide by hand (TiviMate's "Assign EPG").
+        onChooseGuide = if (com.nuvio.app.features.iptv.epg.GuideChannelPickerController.canOpen(channel.contentId)) {
+            { com.nuvio.app.features.iptv.epg.GuideChannelPickerController.open(channel.contentId, channel.name) }
+        } else {
+            null
+        },
     )
 }
 
@@ -67,6 +85,19 @@ private suspend fun confirmHidden(target: HideTarget, channelName: String) {
         placement = NuvioToastPlacement.Bottom,
         actionLabel = getString(Res.string.iptv_toast_undo),
         onAction = { IptvChannelQuickActions.undoHide(target) },
+    )
+}
+
+private suspend fun confirmFavoriteToggled(channelName: String, nowFavorite: Boolean, undo: () -> Unit) {
+    NuvioToastController.show(
+        message = getString(
+            if (nowFavorite) Res.string.iptv_favourite_added_toast else Res.string.iptv_favourite_removed_toast,
+            channelName,
+        ),
+        durationMillis = UNDO_TOAST_MS,
+        placement = NuvioToastPlacement.Bottom,
+        actionLabel = getString(Res.string.iptv_toast_undo),
+        onAction = undo,
     )
 }
 

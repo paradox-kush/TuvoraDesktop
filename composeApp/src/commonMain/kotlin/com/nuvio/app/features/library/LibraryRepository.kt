@@ -217,7 +217,10 @@ object LibraryRepository {
             )
             if (!isActiveOperation(operationToken)) return
             publish()
-            return
+            // B03/D5: live favourites always live in the local synced library, even under Trakt/Simkl,
+            // so its delta is still pulled — this used to return here, and a phone with a tracking
+            // provider never received favourites made on the TV.
+            if (!LibraryPullPolicy.pullsNuvioLibrary(trackingProviderActive = true)) return
         }
 
         nuvioSyncMutex.withLock {
@@ -404,6 +407,41 @@ object LibraryRepository {
         persist(snapshot)
         publish()
         pushToServer(snapshot)
+    }
+
+    /**
+     * B64: re-keys saved items in place — [rewrite] returns an item's replacement, or null to leave it.
+     * One synced delta push (delete of every old id + upsert of every replacement, deduped onto an item
+     * already saved under the new id). Returns how many items moved; no write at all when none did.
+     */
+    fun rekeyItems(rewrite: (LibraryItem) -> LibraryItem?): Int {
+        ensureLoaded()
+        val changes = localState.snapshot().items.mapNotNull { item -> rewrite(item)?.let { item to it } }
+        if (changes.isEmpty()) return 0
+        var snapshot = localState.snapshot()
+        changes.forEach { (old, _) -> snapshot = localState.remove(old.id, old.type).snapshot }
+        LibraryRekey.upserts(localState.snapshot().items, changes.map { it.second }).forEach { snapshot = localState.upsert(it) }
+        persist(snapshot)
+        publish()
+        pushToServer(snapshot)
+        return changes.size
+    }
+
+    /**
+     * F03: rewrites saved items' synced "date added" — the favourites order ([com.nuvio.app.features
+     * .iptv.LiveFavouritesOrder]). One delta push of the changed items. Returns how many changed.
+     */
+    fun setSavedAt(changes: Map<String, Long>): Int {
+        if (changes.isEmpty()) return 0
+        ensureLoaded()
+        val items = localState.snapshot().items.filter { it.id in changes && changes[it.id] != it.savedAtEpochMs }
+        if (items.isEmpty()) return 0
+        var snapshot = localState.snapshot()
+        items.forEach { snapshot = localState.upsert(it.copy(savedAtEpochMs = changes.getValue(it.id))) }
+        persist(snapshot)
+        publish()
+        pushToServer(snapshot)
+        return items.size
     }
 
     fun isSaved(id: String, type: String? = null): Boolean {

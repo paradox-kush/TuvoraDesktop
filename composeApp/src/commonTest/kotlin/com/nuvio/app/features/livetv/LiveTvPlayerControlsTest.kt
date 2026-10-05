@@ -69,4 +69,20 @@ class LiveTvPlayerControlsTest {
         assertTrue(handled)
         assertTrue(backedOut)
     }
+
+    @Test
+    fun `the native aspect button cycles the live picture instead of doing nothing`() {
+        // B123/F28 on desktop: the native bar always drew Resize, but Live TV did not answer it,
+        // so the button was dead and the picture stayed Fit.
+        var cycled = 0
+        val handled = handleLiveTvPlayerControlsAction(
+            action = PlayerControlsAction.ResizeMode,
+            fullscreen = true,
+            setFullscreen = {},
+            onBack = {},
+            onResizeMode = { cycled++ },
+        )
+        assertTrue(handled, "Live TV answers the native aspect button")
+        assertEquals(1, cycled)
+    }
 }

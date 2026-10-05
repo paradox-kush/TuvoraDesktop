@@ -55,7 +55,7 @@ internal fun epgRegionSummary(selected: Set<String>, available: List<EpgRegion>)
  * rather than just hiding rows.
  *
  * Selecting nothing means "all regions" — the picker is opt-in and an untouched install keeps
- * its current behaviour.
+ * its current behaviour. That state draws every row checked ([EpgRegionSelection]).
  */
 @Composable
 internal fun EpgRegionPickerDialog(
@@ -76,19 +76,20 @@ internal fun EpgRegionPickerDialog(
                         "Using every region. Pick the ones you watch to shrink the guide data " +
                             "stored on this device."
                     } else {
-                        "${selected.size} selected. Clearing all goes back to using every region."
+                        "${selected.size} of ${available.size} selected."
                     },
                     fontSize = 13.sp,
                 )
                 Spacer(Modifier.height(12.dp))
                 LazyColumn(Modifier.heightIn(max = 420.dp)) {
                     items(available, key = { it.name }) { region ->
-                        val checked = region.name in selected
+                        // B119: under "All" (empty) every row is checked and a tap removes just that one.
+                        val checked = EpgRegionSelection.isChecked(selected, region.name)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    selected = if (checked) selected - region.name else selected + region.name
+                                    selected = EpgRegionSelection.toggle(selected, available.map { it.name }, region.name)
                                 }
                                 .padding(vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,

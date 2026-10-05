@@ -9,11 +9,23 @@ private val PlayerScreenRuntime.subtitlePreferenceItemId: String
 internal val PlayerScreenRuntime.activeAddonSubtitleType: String
     get() = contentType ?: parentMetaType
 
+/**
+ * F17: the id add-on subtitles are requested under — the item's own id, or for an IPTV item its
+ * resolved public IMDb id (null until resolved, or when it has none: then nothing is requested).
+ */
+internal val PlayerScreenRuntime.addonSubtitleRequestVideoId: String?
+    get() = AddonSubtitleIdPolicy.requestVideoId(activeVideoId, resolvedPublicSubtitleId)
+
+internal val PlayerScreenRuntime.addonSubtitleRequestType: String
+    get() = addonSubtitleRequestVideoId
+        ?.let { AddonSubtitleIdPolicy.requestType(activeAddonSubtitleType, it) }
+        ?: activeAddonSubtitleType
+
 internal val PlayerScreenRuntime.addonSubtitleFetchKey: String?
     get() = buildAddonSubtitleFetchKey(
         addons = addonsUiState.addons,
-        type = activeAddonSubtitleType,
-        videoId = activeVideoId,
+        type = addonSubtitleRequestType,
+        videoId = addonSubtitleRequestVideoId,
     )
 
 internal val PlayerScreenRuntime.visibleAddonSubtitles: List<AddonSubtitle>
@@ -38,9 +50,50 @@ internal val PlayerScreenRuntime.selectedAddonSubtitle: AddonSubtitle?
 internal fun PlayerScreenRuntime.updateTrackPreference(
     update: (PersistedPlayerTrackPreference) -> PersistedPlayerTrackPreference,
 ) {
-    if (parentMetaId.isBlank()) return
+    // F37: the per-series memory is written only while "Remember my player preferences" is on.
+    if (!PlayerPreferencePolicy.persistsSeriesChoice(playerSettingsUiState.rememberPlayerPreferences, parentMetaId)) return
     val current = PlayerTrackPreferenceStorage.load(parentMetaId) ?: PersistedPlayerTrackPreference()
     PlayerTrackPreferenceStorage.save(parentMetaId, update(current))
+}
+
+/** The series memory to restore from, or null when remembering is off (global defaults apply). */
+private fun PlayerScreenRuntime.loadSeriesMemory(): PersistedPlayerTrackPreference? =
+    PlayerPreferencePolicy.seriesMemory(
+        rememberEnabled = playerSettingsUiState.rememberPlayerPreferences,
+        stored = parentMetaId.takeIf { it.isNotBlank() }?.let(PlayerTrackPreferenceStorage::load),
+    )
+
+/** F37: aspect + manual zoom for this series, else the global last-used aspect and no zoom. */
+internal fun PlayerScreenRuntime.restorePicturePreference() {
+    val choice = PlayerPreferencePolicy.initialPicture(
+        rememberEnabled = playerSettingsUiState.rememberPlayerPreferences,
+        stored = loadSeriesMemory(),
+        globalResizeMode = playerSettingsUiState.resizeMode,
+    )
+    resizeMode = choice.resizeMode.supportedOnCurrentPlatform()
+    lastSyncedSettingsResizeMode = playerSettingsUiState.resizeMode.supportedOnCurrentPlatform()
+    videoZoom = choice.zoom
+}
+
+internal fun PlayerScreenRuntime.persistPicturePreference() {
+    updateTrackPreference { current -> PlayerPreferencePolicy.withPicture(current, resizeMode, videoZoom) }
+}
+
+internal fun PlayerScreenRuntime.setVideoZoom(zoom: VideoZoom) {
+    videoZoom = VideoZoomPolicy.normalize(zoom)
+    persistPicturePreference()
+}
+
+/** Desktop: Compose overlays sit under the native video layer, so the toast goes through the controls. */
+internal fun PlayerScreenRuntime.announceVideoZoom() {
+    val z = videoZoom
+    val position = if (z.panX != 0f || z.panY != 0f) {
+        " (${(z.panX * 100).toInt()}%, ${(z.panY * 100).toInt()}%)"
+    } else {
+        ""
+    }
+    playerNotificationMessage = "$videoZoomTitleLabel ${VideoZoomPolicy.scaleLabel(z)}$position"
+    playerNotificationToken += 1
 }
 
 internal fun PlayerScreenRuntime.persistAudioPreference(track: AudioTrack?) {
@@ -93,7 +146,7 @@ internal fun PlayerScreenRuntime.persistAddonSubtitlePreference(subtitle: AddonS
 
 internal fun PlayerScreenRuntime.restorePersistedTrackPreferenceIfNeeded(): Boolean {
     if (trackPreferenceRestoreApplied) return true
-    val preference = PlayerTrackPreferenceStorage.load(parentMetaId)
+    val preference = loadSeriesMemory()
     if (preference == null) {
         trackPreferenceRestoreApplied = true
         return true

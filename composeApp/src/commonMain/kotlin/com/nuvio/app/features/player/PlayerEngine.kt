@@ -184,6 +184,7 @@ data class PlayerControlsState(
     val outlineLabel: String = "Outline",
     val boldLabel: String = "Bold",
     val bottomOffsetLabel: String = "Bottom Offset",
+    val sidePaddingLabel: String = "Side padding",
     val colorLabel: String = "Color",
     val textOpacityLabel: String = "Text Opacity",
     val outlineColorLabel: String = "Outline Color",
@@ -248,6 +249,8 @@ data class PlayerControlsState(
     val showExternalPlayer: Boolean = false,
     val durationMs: Long = 0L,
     val positionMs: Long = 0L,
+    /** P1: a live channel (not a replay) — the native bar shows LIVE instead of a seek bar and times. */
+    val isLive: Boolean = false,
     val sourceIsLoading: Boolean = false,
     val sourceFilters: List<PlayerControlFilterItem> = emptyList(),
     val sourceItems: List<PlayerControlSourceItem> = emptyList(),
@@ -427,6 +430,8 @@ expect fun PlatformPlayerSurface(
     initialPositionMs: Long? = null,
     initialPositionRequestKey: String? = null,
     resizeMode: PlayerResizeMode = PlayerResizeMode.Fit,
+    /** F36 manual zoom on top of [resizeMode] — see [VideoZoomPolicy] for how each engine applies it. */
+    videoZoom: VideoZoom = VideoZoom.IDENTITY,
     useNativeController: Boolean = false,
     playerControlsState: PlayerControlsState = PlayerControlsState(),
     onPlayerControlsAction: (PlayerControlsAction) -> Boolean = { false },

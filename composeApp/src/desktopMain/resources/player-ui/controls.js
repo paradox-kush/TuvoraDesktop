@@ -114,6 +114,10 @@ const bottomOffsetLabel = document.getElementById("bottomOffsetLabel");
 const bottomOffsetMinus = document.getElementById("bottomOffsetMinus");
 const bottomOffsetValue = document.getElementById("bottomOffsetValue");
 const bottomOffsetPlus = document.getElementById("bottomOffsetPlus");
+const sidePaddingLabel = document.getElementById("sidePaddingLabel");
+const sidePaddingMinus = document.getElementById("sidePaddingMinus");
+const sidePaddingValue = document.getElementById("sidePaddingValue");
+const sidePaddingPlus = document.getElementById("sidePaddingPlus");
 const subtitleColorLabel = document.getElementById("subtitleColorLabel");
 const subtitleColorSwatches = document.getElementById("subtitleColorSwatches");
 const textOpacityLabel = document.getElementById("textOpacityLabel");
@@ -247,6 +251,7 @@ let state = {
   outlineLabel: "Outline",
   boldLabel: "Bold",
   bottomOffsetLabel: "Bottom Offset",
+  sidePaddingLabel: "Side padding",
   colorLabel: "Color",
   textOpacityLabel: "Text Opacity",
   outlineColorLabel: "Outline Color",
@@ -349,6 +354,7 @@ let state = {
     bold: false,
     fontSizeSp: 18,
     bottomOffset: 20,
+    sideMarginPercent: 5,
   },
   subtitleColorSwatches: [],
   subtitleOutlineColorSwatches: [],
@@ -915,7 +921,10 @@ const setProgress = (positionMs, durationMs) => {
   seek.style.setProperty("--progress", `${percent}%`);
   positionLabel.textContent = formatTime(positionMs);
   durationLabel.textContent = formatTime(durationMs);
-  if (timeLabel) {
+  if (timeLabel && state.isLive) {
+    // P1: a live channel has no runtime — its "duration" is the buffered window.
+    timeLabel.textContent = "LIVE";
+  } else if (timeLabel) {
     durationMs = durationMs - (durationMs % 1000);
     if (timeLabelShowRemaining) {
       let remainingTimeMs = durationMs - positionMs + (positionMs % 1000 == 0 ? 0 : 1000);
@@ -1517,6 +1526,8 @@ const renderSubtitleStylePanel = () => {
   boldToggle.classList.toggle("primary", Boolean(style.bold));
   bottomOffsetLabel.textContent = state.bottomOffsetLabel || "Bottom Offset";
   bottomOffsetValue.textContent = String(Number(style.bottomOffset) || 0);
+  sidePaddingLabel.textContent = state.sidePaddingLabel || "Side padding";
+  sidePaddingValue.textContent = `${Number(style.sideMarginPercent) || 0}%`;
   subtitleColorLabel.textContent = state.colorLabel || "Color";
   textOpacityLabel.textContent = state.textOpacityLabel || "Text Opacity";
   const textAlpha = Math.round((parseArgb(style.textColor).alpha / 255) * 100);
@@ -2391,6 +2402,7 @@ const renderChrome = () => {
   const isPlaying = Boolean(state.isPlaying);
   const showError = renderPlaybackError();
   root.classList.toggle("pip-mode", Boolean(state.isInPip));
+  root.classList.toggle("live-mode", Boolean(state.isLive));
   if (!state.isInPip && isPipLocked) setPipLocked(false);
   root.classList.toggle("chrome-hidden", Boolean(showError || !state.controlsVisible));
   root.classList.toggle("source-visible", Boolean(!showError && !isPlaying && !state.isLoading && (state.streamTitle || state.providerName)));
@@ -2915,6 +2927,14 @@ bottomOffsetMinus.addEventListener("click", event => {
 bottomOffsetPlus.addEventListener("click", event => {
   event.stopPropagation();
   send("subtitleBottomOffsetDelta", 5);
+});
+sidePaddingMinus.addEventListener("click", event => {
+  event.stopPropagation();
+  send("subtitleSideMarginDelta", -1);
+});
+sidePaddingPlus.addEventListener("click", event => {
+  event.stopPropagation();
+  send("subtitleSideMarginDelta", 1);
 });
 textOpacityMinus.addEventListener("click", event => {
   event.stopPropagation();
@@ -3581,6 +3601,30 @@ root.addEventListener("wheel", event => {
   }
 }, { passive: false });
 
+const videoZoomShortcut = (code, shift) => {
+  if (shift) {
+    switch (code) {
+      case "ArrowLeft": return ["videoZoomWidth", -1];
+      case "ArrowRight": return ["videoZoomWidth", 1];
+      case "ArrowDown": return ["videoZoomHeight", -1];
+      case "ArrowUp": return ["videoZoomHeight", 1];
+      default: return null;
+    }
+  }
+  switch (code) {
+    case "Equal":
+    case "NumpadAdd": return ["videoZoomBoth", 1];
+    case "Minus":
+    case "NumpadSubtract": return ["videoZoomBoth", -1];
+    case "ArrowLeft": return ["videoZoomPanX", -1];
+    case "ArrowRight": return ["videoZoomPanX", 1];
+    case "ArrowUp": return ["videoZoomPanY", -1];
+    case "ArrowDown": return ["videoZoomPanY", 1];
+    case "Backspace": return ["videoZoomReset", 0];
+    default: return null;
+  }
+};
+
 document.addEventListener("keyup", event => {
   if (event.key === "Alt" || event.key === "Control" || event.key === "Meta" || event.metaKey || event.ctrlKey || event.altKey) {
     clearSpaceHoldTimerAndStopSpeedBoost();
@@ -3626,6 +3670,19 @@ document.addEventListener("keydown", event => {
     focusShortcutRoot();
     togglePlayerFullscreen();
     return;
+  }
+  // F36 manual zoom, on mpv's own default keys: Alt+= / Alt+- zoom, Alt+arrows move the picture,
+  // Alt+Shift+arrows stretch width/height, Alt+Backspace resets. Kotlin applies, remembers and toasts.
+  if (event.altKey && !event.metaKey && !event.ctrlKey && !activeModal && !isTextEntryTarget(event.target)) {
+    const zoomCommand = videoZoomShortcut(event.code, event.shiftKey);
+    if (zoomCommand) {
+      clearSpaceHoldTimerAndStopSpeedBoost();
+      event.preventDefault();
+      focusShortcutRoot();
+      noteChromeActivity();
+      send(zoomCommand[0], zoomCommand[1]);
+      return;
+    }
   }
   if (event.metaKey || event.ctrlKey || event.altKey || event.key === "Alt" || event.key === "Control" || event.key === "Meta") {
     clearSpaceHoldTimerAndStopSpeedBoost();

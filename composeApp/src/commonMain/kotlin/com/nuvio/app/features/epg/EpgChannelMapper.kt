@@ -198,9 +198,22 @@ internal class EpgChannelIndex private constructor(
 
     val size: Int get() = coresById.size
 
-    /** Match one provider channel; [tvgId] is the panel's (often garbage) epg_channel_id. */
-    fun match(name: String, tvgId: String?): Hit? {
-        val core = EpgNorm.coreNorm(EpgNorm.stripPanelNoise(name))
+    /**
+     * Match one provider channel; [tvgId] is the panel's (often garbage) epg_channel_id.
+     *
+     * [rules] is the F10 clean-up ([ChannelNameCleaner]) applied to the provider name after the
+     * panel-noise strip — bracketed resolutions, styled badges, wrapped prefixes and the user's own
+     * tags; null skips it (the pre-F10 behaviour, kept for the measurement harness). [allowFuzzy]
+     * gates the review-tier similarity walk.
+     */
+    fun match(
+        name: String,
+        tvgId: String?,
+        rules: ChannelNameCleaner.Rules? = ChannelNameCleaner.Rules.DEFAULT,
+        allowFuzzy: Boolean = true,
+    ): Hit? {
+        val panel = EpgNorm.stripPanelNoise(name)
+        val core = EpgNorm.coreNorm(if (rules == null) panel else ChannelNameCleaner.clean(panel, rules))
         val tvg = tvgId?.trim()?.lowercase().orEmpty()
         if (tvg.isNotEmpty()) {
             val cid = byTvg[tvg]
@@ -216,6 +229,7 @@ internal class EpgChannelIndex private constructor(
         bySquash[EpgNorm.squash(core)]?.let { cid -> accept(core, cid, TIER_SQUASH)?.let { return it } }
         byDepl[EpgNorm.deplKey(core)]?.let { cid -> accept(core, cid, TIER_PLURAL)?.let { return it } }
 
+        if (!allowFuzzy) return null
         val first = core.substringBefore(' ')
         var best: String? = null
         var bestScore = 0.0

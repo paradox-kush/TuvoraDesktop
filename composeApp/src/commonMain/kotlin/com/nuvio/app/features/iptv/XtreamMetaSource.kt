@@ -40,7 +40,7 @@ internal object XtreamMetaSource : MetaSourceProvider {
         val client = com.nuvio.app.features.iptv.IptvClient.forAccount(account)
         val registered = XtreamItemRegistry.getOrLoad(id)
         val detail = client.vodInfo(account, streamId).getOrNull()
-        val name = detail?.name ?: registered?.name ?: "Movie"
+        val name = xtreamMetaName(detail?.name, registered?.name, "Movie")
         val poster = registered?.poster
         // ponytail: prefer the real container_extension from vod_info over a stale registered URL.
         // The browse/list flow registers a ".mp4" URL (the list endpoint omits container_extension);
@@ -179,7 +179,7 @@ internal object XtreamMetaSource : MetaSourceProvider {
                 ),
             )
         }
-        val name = detail?.name ?: registered?.name ?: "Series"
+        val name = xtreamMetaName(detail?.name, registered?.name, "Series")
         var meta = MetaDetails(
             id = id,
             type = "series",
@@ -202,3 +202,10 @@ internal object XtreamMetaSource : MetaSourceProvider {
             .getOrDefault(meta)
     }
 }
+
+/**
+ * The detail page's title: the catalog's name, else the registered one, else the generic [fallback]. A
+ * BLANK name falls through too (device pass T2: a blank one left the page untitled). Pure.
+ */
+internal fun xtreamMetaName(detail: String?, registered: String?, fallback: String): String =
+    detail?.takeIf { it.isNotBlank() } ?: registered?.takeIf { it.isNotBlank() } ?: fallback

@@ -1048,10 +1048,9 @@ object WatchProgressRepository {
                     val appliedEntries = if (targetSource.providerId == null) {
                         var appliedLocalEntries = 0
                         for (entry in result.entries) {
-                            val current = localEntry(entry.resolvedProgressKey()) ?: continue
-                            val enriched = enrichWatchProgressEntry(current = current, meta = meta)
-                            if (enriched == current) continue
-                            upsertLocalEntry(enriched)
+                            // One atomic read-patch: a re-key / removal between the snapshot and now
+                            // must not be undone by a stale write-back (B64, see patchExistingWithMetadata).
+                            if (!patchLocalEntryWithMetadata(entry.resolvedProgressKey(), meta)) continue
                             appliedLocalEntries += 1
                         }
                         appliedLocalEntries
@@ -1225,12 +1224,15 @@ object WatchProgressRepository {
             it.videoId.startsWith(oldPrefix) || it.parentMetaId.startsWith(oldPrefix)
         }
         if (affected.isEmpty()) return
-        affected.forEach { removeLocalEntry(it.videoId) }
+        // Removed by its STORAGE key (an episode's is `{series}_s{S}e{E}`, not its videoId — removing by
+        // videoId left it behind), and the moved copy re-derives its key from the new ids: a carried-over
+        // key kept the old id (B64: an M3U login inside it) as the server row's identity.
+        affected.forEach { removeLocalEntry(it.resolvedProgressKey()) }
         val moved = if (newPrefix == null) emptyList() else affected.map { entry ->
-            entry.copy(
+            // lastSourceUrl is dropped too: built against the old server; the xtream short-circuit rebuilds it.
+            entry.movedTo(
                 videoId = entry.videoId.rewriteIdPrefix(oldPrefix, newPrefix),
                 parentMetaId = entry.parentMetaId.rewriteIdPrefix(oldPrefix, newPrefix),
-                lastSourceUrl = null, // built against the old server; the xtream short-circuit rebuilds it
             )
         }
         moved.forEach { upsertLocalEntry(it) }
@@ -1238,6 +1240,25 @@ object WatchProgressRepository {
         persist()
         pushDeleteToServer(affected)
         moved.forEach { pushScrobbleToServer(it, currentProfileId) }
+    }
+
+    /**
+     * B64: re-keys local progress in place — [rewrite] returns an entry's replacement (its progressKey is
+     * re-derived from the new ids), or null to leave it. Synced like [migrateIdPrefix]: a delete of every
+     * old entry + a scrobble of every moved one. Returns how many entries moved.
+     */
+    fun rekeyEntries(rewrite: (WatchProgressEntry) -> WatchProgressEntry?): Int {
+        ensureLoaded()
+        val plan = WatchProgressRekey.plan(localEntriesSnapshot(), rewrite)
+        if (plan.isEmpty) return 0
+        plan.removed.forEach { old -> removeLocalEntry(old.resolvedProgressKey()) }
+        // Dirty until its push is acknowledged: a snapshot pull racing the push must not drop it.
+        plan.upserts.forEach { new -> upsertLocalEntry(new); markProgressDirty(new) }
+        publish()
+        persist()
+        pushDeleteToServer(plan.serverDeletes)
+        plan.upserts.forEach { new -> pushScrobbleToServer(new.withResolvedProgressKey(), currentProfileId) }
+        return plan.removed.size
     }
 
     fun progressForVideo(
@@ -1770,6 +1791,11 @@ object WatchProgressRepository {
             entriesByProgressKey[resolvedEntry.resolvedProgressKey()] = resolvedEntry
         }
     }
+
+    private fun patchLocalEntryWithMetadata(progressKey: String, meta: MetaDetails): Boolean =
+        synchronized(entriesLock) {
+            entriesByProgressKey.patchExistingWithMetadata(progressKey, meta)
+        }
 
     private fun removeLocalEntry(progressKey: String): WatchProgressEntry? =
         synchronized(entriesLock) {

@@ -14,7 +14,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.TimeoutCancellationException
@@ -29,11 +28,14 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import kotlin.time.TimeSource
 
 private const val REALTIME_INVALIDATION_COALESCE_MS = 500L
 private const val REALTIME_SUBSCRIBE_TIMEOUT_MS = 15_000L
 private const val REALTIME_RETRY_BASE_DELAY_MS = 1_000L
 private const val REALTIME_RETRY_MAX_DELAY_MS = 10_000L
+/** Local status check only (no network): how often a subscribed channel's health is looked at. */
+private const val REALTIME_HEALTH_CHECK_MS = 5_000L
 
 object RealtimeSyncInvalidationService {
     private val log = Logger.withTag("RealtimeSyncInvalidation")
@@ -110,7 +112,14 @@ object RealtimeSyncInvalidationService {
                         newChannel.subscribe(blockUntilSubscribed = true)
                     }
                     log.i { "Subscribed to sync invalidations channel=$channelName profile=$profileId" }
-                    awaitCancellation()
+                    attempt = 1
+                    // B03: events emitted while this device was not subscribed are gone (Realtime has
+                    // no replay) — catch up from the version vector on every (re)subscribe.
+                    launch { runCatching { SurfaceCatchUp.run(profileId, "subscribed") } }
+                    // B03: supervise — a channel the server closed (token expiry, standby) used to park
+                    // here forever; past the grace it is torn down below and rejoined.
+                    superviseUntilUnhealthy(newChannel)
+                    log.w { "Sync invalidations channel=$channelName left SUBSCRIBED; resubscribing" }
                 } catch (error: TimeoutCancellationException) {
                     log.e(error) {
                         "Timed out subscribing to sync invalidations channel=$channelName " +
@@ -147,6 +156,19 @@ object RealtimeSyncInvalidationService {
                     attempt += 1
                 }
             }
+        }
+    }
+
+    private suspend fun superviseUntilUnhealthy(channel: RealtimeChannel) {
+        var notSubscribedSince: TimeSource.Monotonic.ValueTimeMark? = null
+        val origin = TimeSource.Monotonic.markNow()
+        while (true) {
+            val subscribed = channel.status.value == RealtimeChannel.Status.SUBSCRIBED
+            notSubscribedSince = if (subscribed) null else notSubscribedSince ?: TimeSource.Monotonic.markNow()
+            val nowMs = origin.elapsedNow().inWholeMilliseconds
+            val sinceMs = notSubscribedSince?.let { nowMs - it.elapsedNow().inWholeMilliseconds }
+            if (RealtimeChannelHealthPolicy.decide(subscribed, sinceMs, nowMs) == RealtimeChannelHealthPolicy.Action.Resubscribe) return
+            delay(REALTIME_HEALTH_CHECK_MS)
         }
     }
 

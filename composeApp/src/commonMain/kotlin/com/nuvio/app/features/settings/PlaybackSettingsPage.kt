@@ -405,6 +405,35 @@ private fun PlaybackSettingsSection(
                     isTablet = isTablet,
                     onCheckedChange = PlayerSettingsRepository::setShowStreamInfo,
                 )
+                SettingsGroupDivider(isTablet = isTablet)
+                SettingsSwitchRow(
+                    title = stringResource(Res.string.settings_playback_remember_preferences),
+                    description = stringResource(Res.string.settings_playback_remember_preferences_description),
+                    checked = autoPlayPlayerSettings.rememberPlayerPreferences,
+                    isTablet = isTablet,
+                    onCheckedChange = PlayerSettingsRepository::setRememberPlayerPreferences,
+                )
+                SettingsGroupDivider(isTablet = isTablet)
+                // F13: live IPTV buffer length. Slider over the offered choices; 0 = Auto.
+                val liveBufferIndex = com.nuvio.app.features.player.LiveBufferPolicy.CHOICES_SECONDS
+                    .indexOf(autoPlayPlayerSettings.liveBufferSeconds).coerceAtLeast(0)
+                SettingsSliderRow(
+                    title = stringResource(Res.string.settings_playback_live_buffer),
+                    value = liveBufferIndex,
+                    valueText = if (autoPlayPlayerSettings.liveBufferSeconds == com.nuvio.app.features.player.LiveBufferPolicy.AUTO) {
+                        stringResource(Res.string.settings_playback_live_buffer_auto)
+                    } else {
+                        stringResource(Res.string.settings_playback_live_buffer_seconds, autoPlayPlayerSettings.liveBufferSeconds)
+                    },
+                    valueRange = 0..com.nuvio.app.features.player.LiveBufferPolicy.CHOICES_SECONDS.lastIndex,
+                    step = 1,
+                    isTablet = isTablet,
+                    onValueChange = { index ->
+                        PlayerSettingsRepository.setLiveBufferSeconds(
+                            com.nuvio.app.features.player.LiveBufferPolicy.CHOICES_SECONDS[index],
+                        )
+                    },
+                )
                 if (externalPlayerSupported) {
                     SettingsGroupDivider(isTablet = isTablet)
                     SettingsNavigationRow(
@@ -613,6 +642,19 @@ private fun PlaybackSettingsSection(
                     enabled = subtitleRenderingEnabled,
                     onValueChange = { value ->
                         PlayerSettingsRepository.setSubtitleStyle(subtitleStyle.copy(bottomOffset = value))
+                    },
+                )
+                SettingsGroupDivider(isTablet = isTablet)
+                SettingsSliderRow(
+                    title = stringResource(Res.string.settings_playback_subtitle_side_padding),
+                    value = subtitleStyle.sideMarginPercent,
+                    valueText = "${subtitleStyle.sideMarginPercent}%",
+                    valueRange = 0..com.nuvio.app.features.player.SubtitleSideMargin.MAX_PERCENT,
+                    step = 1,
+                    isTablet = isTablet,
+                    enabled = subtitleRenderingEnabled,
+                    onValueChange = { value ->
+                        PlayerSettingsRepository.setSubtitleStyle(subtitleStyle.copy(sideMarginPercent = value))
                     },
                 )
                 SettingsGroupDivider(isTablet = isTablet)

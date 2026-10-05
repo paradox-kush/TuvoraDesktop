@@ -50,6 +50,14 @@ internal object IptvOverlayStore {
                 "entity_id TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0, " +
                 "deleted INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(profile_id, group_id, entity_id)) WITHOUT ROWID",
         )
+        // F14 (lane G): the user's manual guide-channel pick per channel. Synced as overlay kind "epg"
+        // (okey = entity id, value {"guide_id","guide_name"}) — a NEW kind, so older clients skip it
+        // and no backend schema change is needed. Same dirty/tombstone/LWW discipline as the rest.
+        it.execSQL(
+            "CREATE TABLE IF NOT EXISTS epg_override(profile_id INTEGER NOT NULL, entity_id TEXT NOT NULL, " +
+                "playlist_id TEXT, guide_id TEXT, guide_name TEXT, updated_at INTEGER NOT NULL DEFAULT 0, " +
+                "deleted INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(profile_id, entity_id)) WITHOUT ROWID",
+        )
         it.execSQL(
             "CREATE TABLE IF NOT EXISTS overlay_cursor(profile_id INTEGER NOT NULL PRIMARY KEY, cursor INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID",
         )
@@ -138,6 +146,62 @@ internal object IptvOverlayStore {
         }
     }
 
+    /** Apply a pulled "epg" event (F14). LWW-guarded like every other kind. */
+    suspend fun applyRemoteEpg(profileId: Int, entityId: String, playlistId: String?, guideId: String?, guideName: String?, updatedAt: Long, deleted: Boolean): Unit = mutex.withLock {
+        connection().prepare(
+            "INSERT INTO epg_override(profile_id, entity_id, playlist_id, guide_id, guide_name, updated_at, deleted) VALUES(?,?,?,?,?,?,?) " +
+                "ON CONFLICT(profile_id, entity_id) DO UPDATE SET playlist_id=excluded.playlist_id, guide_id=excluded.guide_id, " +
+                "guide_name=excluded.guide_name, updated_at=excluded.updated_at, deleted=excluded.deleted, dirty=0 " +
+                "WHERE excluded.updated_at >= epg_override.updated_at",
+        ).use { st ->
+            st.bindLong(1, profileId.toLong()); st.bindText(2, entityId)
+            if (playlistId != null) st.bindText(3, playlistId) else st.bindNull(3)
+            if (guideId != null) st.bindText(4, guideId) else st.bindNull(4)
+            if (guideName != null) st.bindText(5, guideName) else st.bindNull(5)
+            st.bindLong(6, updatedAt); st.bindLong(7, if (deleted || guideId.isNullOrBlank()) 1 else 0)
+            st.step()
+        }
+    }
+
+    /** A local manual guide pick (F14); a null [guideId] clears it (tombstone, pushed as a delete). */
+    suspend fun setEpgOverride(profileId: Int, entityId: String, playlistId: String?, guideId: String?, guideName: String?, updatedAt: Long): Unit = mutex.withLock {
+        connection().prepare(
+            "INSERT INTO epg_override(profile_id, entity_id, playlist_id, guide_id, guide_name, updated_at, deleted, dirty) VALUES(?,?,?,?,?,?,?,1) " +
+                "ON CONFLICT(profile_id, entity_id) DO UPDATE SET playlist_id=excluded.playlist_id, guide_id=excluded.guide_id, " +
+                "guide_name=excluded.guide_name, updated_at=excluded.updated_at, deleted=excluded.deleted, dirty=1",
+        ).use { st ->
+            st.bindLong(1, profileId.toLong()); st.bindText(2, entityId)
+            if (playlistId != null) st.bindText(3, playlistId) else st.bindNull(3)
+            if (guideId != null) st.bindText(4, guideId) else st.bindNull(4)
+            if (guideName != null) st.bindText(5, guideName) else st.bindNull(5)
+            st.bindLong(6, updatedAt); st.bindLong(7, if (guideId.isNullOrBlank()) 1 else 0)
+            st.step()
+        }
+    }
+
+    /** One profile's manual guide picks for a playlist: entity id -> guide channel id (F14). */
+    suspend fun epgOverrides(profileId: Int, playlistId: String): Map<String, String> = mutex.withLock {
+        connection().prepare("SELECT entity_id, guide_id FROM epg_override WHERE profile_id = ? AND playlist_id = ? AND deleted = 0 AND guide_id IS NOT NULL").use { st ->
+            st.bindLong(1, profileId.toLong()); st.bindText(2, playlistId)
+            val out = HashMap<String, String>()
+            while (st.step()) out[st.getText(0)] = st.getText(1)
+            out
+        }
+    }
+
+    /**
+     * Every guide id ANY profile on this device picked for a playlist — the ingest keeps those
+     * channels' programmes (the guide store is shared across profiles; the pick is per profile).
+     */
+    suspend fun epgOverrideGuideIds(playlistId: String): Set<String> = mutex.withLock {
+        connection().prepare("SELECT DISTINCT guide_id FROM epg_override WHERE playlist_id = ? AND deleted = 0 AND guide_id IS NOT NULL").use { st ->
+            st.bindText(1, playlistId)
+            val out = HashSet<String>()
+            while (st.step()) out.add(st.getText(0))
+            out
+        }
+    }
+
     /**
      * Rows the local device still owes the server: only rows dirtied since the last successful push
      * (each edit sets dirty=1; [markChannelsPushed] clears it on ack). This is the delta — pushing
@@ -175,8 +239,24 @@ internal object IptvOverlayStore {
                 out.add(OverlayPushRow("category", st.getText(0), st.getText(1), v, st.getLong(7), st.getLong(8) != 0L))
             }
         }
+        // F14 manual guide picks: same delta discipline (dirty rows only).
+        c.prepare("SELECT entity_id, playlist_id, guide_id, guide_name, updated_at, deleted FROM epg_override WHERE profile_id = ? AND dirty = 1").use { st ->
+            st.bindLong(1, profileId.toLong())
+            while (st.step()) {
+                val v = buildString {
+                    append("{")
+                    if (!st.isNull(2)) append("\"guide_id\":").append(jsonStr(st.getText(2)))
+                    if (!st.isNull(3)) append(if (st.isNull(2)) "" else ",").append("\"guide_name\":").append(jsonStr(st.getText(3)))
+                    append("}")
+                }
+                out.add(OverlayPushRow(EPG_KIND, st.getText(0), if (st.isNull(1)) null else st.getText(1), v, st.getLong(4), st.getLong(5) != 0L))
+            }
+        }
         out
     }
+
+    /** Overlay kind of a manual guide pick (F14). */
+    const val EPG_KIND = "epg"
 
     /**
      * Clear the dirty flag for exactly the channel and category rows the server just acked — matched by entity_id
@@ -197,6 +277,14 @@ internal object IptvOverlayStore {
         c.prepare("UPDATE category_overlay SET dirty = 0 WHERE profile_id = ? AND category_key = ? AND updated_at = ? AND dirty = 1").use { st ->
             for (r in rows) {
                 if (r.kind != "category") continue
+                st.reset()
+                st.bindLong(1, profileId.toLong()); st.bindText(2, r.okey); st.bindLong(3, r.updatedAt)
+                st.step()
+            }
+        }
+        c.prepare("UPDATE epg_override SET dirty = 0 WHERE profile_id = ? AND entity_id = ? AND updated_at = ? AND dirty = 1").use { st ->
+            for (r in rows) {
+                if (r.kind != EPG_KIND) continue
                 st.reset()
                 st.bindLong(1, profileId.toLong()); st.bindText(2, r.okey); st.bindLong(3, r.updatedAt)
                 st.step()
@@ -356,6 +444,9 @@ internal object IptvOverlayStore {
             st.bindLong(1, profileId.toLong()); st.bindText(2, playlistId); st.step()
         }
         c.prepare("DELETE FROM category_overlay WHERE profile_id = ? AND playlist_id = ?").use { st ->
+            st.bindLong(1, profileId.toLong()); st.bindText(2, playlistId); st.step()
+        }
+        c.prepare("DELETE FROM epg_override WHERE profile_id = ? AND playlist_id = ?").use { st ->
             st.bindLong(1, profileId.toLong()); st.bindText(2, playlistId); st.step()
         }
     }

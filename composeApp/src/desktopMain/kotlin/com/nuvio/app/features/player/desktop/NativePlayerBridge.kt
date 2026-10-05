@@ -74,6 +74,25 @@ internal object NativePlayerBridge {
     external fun setVolume(handle: Long, level: Float)
     external fun volume(handle: Long): Float
     external fun setResizeMode(handle: Long, mode: Int)
+
+    /**
+     * Generic mpv property setter for the shared Kotlin policies ([com.nuvio.app.features.player.VideoZoomPolicy],
+     * [com.nuvio.app.features.player.SubtitleStyleMpvMapping]): commonMain picks names and values, the
+     * native bridges only apply them. Use [setStringPropertiesSafely] — an older native library
+     * without this symbol must degrade, not crash.
+     */
+    external fun setStringProperties(handle: Long, names: Array<String>, values: Array<String>)
+
+    fun setStringPropertiesSafely(handle: Long, properties: List<Pair<String, String>>) {
+        if (handle == 0L || properties.isEmpty()) return
+        runCatching {
+            setStringProperties(
+                handle,
+                properties.map { it.first }.toTypedArray(),
+                properties.map { it.second }.toTypedArray(),
+            )
+        }
+    }
     external fun durationMs(handle: Long): Long
     external fun positionMs(handle: Long): Long
     external fun bufferedPositionMs(handle: Long): Long

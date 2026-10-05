@@ -794,6 +794,36 @@ object WatchedRepository {
         }
     }
 
+    /**
+     * B64: re-keys Nuvio-sync watched marks in place — [rewrite] returns a mark's replacement, or null
+     * to leave it; fully-watched series keys follow [seriesKeyRewrite]. Synced like [migrateIdPrefix]:
+     * delete of every old mark + upsert of every moved one. Returns how many marks moved.
+     */
+    fun rekeyItems(rewrite: (WatchedItem) -> WatchedItem?, seriesKeyRewrite: (String) -> String? = { null }): Int {
+        ensureLoaded()
+        val source = WatchProgressSource.NUVIO_SYNC
+        val changes = itemsStore.read { nuvioItems, _, _, _ ->
+            nuvioItems.mapNotNull { (key, item) -> rewrite(item)?.let { Triple(key, item, it) } }
+        }
+        val seriesKeys = fullyWatchedSeriesKeysForSource(source)
+        val movedSeriesKeys = seriesKeys.associateWith { seriesKeyRewrite(it) }.filterValues { it != null }
+        if (changes.isEmpty() && movedSeriesKeys.isEmpty()) return 0
+        itemsStore.update { nuvioItems, _, _, _ ->
+            changes.forEach { (key, _, _) -> nuvioItems.remove(key) }
+            changes.forEach { (_, _, new) -> nuvioItems[watchedItemKey(new.type, new.id, new.season, new.episode)] = new }
+        }
+        if (movedSeriesKeys.isNotEmpty()) {
+            setFullyWatchedSeriesKeysForSource(source, seriesKeys.map { movedSeriesKeys[it] ?: it }.toSet())
+        }
+        publish()
+        persist()
+        if (changes.isNotEmpty()) {
+            pushDeleteToServer(items = WatchedRekey.serverDeletes(changes.map { it.second }, changes.map { it.third }), source = source)
+            pushMarksToServer(changes.map { it.third }, WatchedTrackerHistorySync.Skip, source = source)
+        }
+        return changes.size
+    }
+
     fun markWatched(item: WatchedItem) {
         markWatched(listOf(item))
     }

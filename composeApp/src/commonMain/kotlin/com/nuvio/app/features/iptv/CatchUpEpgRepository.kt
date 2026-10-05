@@ -139,12 +139,10 @@ internal object CatchUpEpgRepository {
             clockOffsets[account.id] = XtreamPanelClock.measuredOffsetMs(account)
             allowedFormats[account.id] = XtreamClient.allowedOutputFormats(account)
         }
-        val measured = clockOffsets[account.id]
-        val manual = account.catchUpTimeCorrectionMs()
         return PanelFacts(
             // The manual correction ADDS to whatever was measured: it exists for panels whose own
             // clock pair is a lie, and on those the measured value is the thing being corrected.
-            serverOffsetMs = if (measured == null && manual == 0L) null else (measured ?: 0L) + manual,
+            serverOffsetMs = XtreamCatchUp.replayOffsetMs(clockOffsets[account.id], account.catchUpTimeCorrectionMinutes),
             allowedOutputFormats = allowedFormats[account.id],
         )
     }

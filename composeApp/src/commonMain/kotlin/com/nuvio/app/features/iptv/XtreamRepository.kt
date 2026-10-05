@@ -504,6 +504,8 @@ object XtreamRepository : IptvCatalog {
             // id never changes on edit, so the B60 replace op is only replayed from older pending logs).
             recordPending { it.recordUpdate(account, base = old) }
             persistAndReport(onResult)
+            // F14: new EPG URLs (or a new server/login) take effect now, not at the 12-hour refresh.
+            if (guideSourcesChanged(old, account)) com.nuvio.app.features.iptv.epg.XmltvClient.refreshNow(account)
         }
     }
 
@@ -875,8 +877,27 @@ internal fun carryPlaylistOptions(
         // Step 0.3: the full form shows the backup list, so its candidate wins; every other edit
         // path (paste-URL / manual fields) doesn't carry it and must not clear it.
         backupUrls = if (keepCandidateFormOptions) candidate.backupUrls else old.backupUrls,
+        // Device-local prefs set from the playlist's own cards, never from the edit form (F10 clean-up +
+        // tags, prefer-m3u8 catch-up, catch-up and guide offsets) — an edit used to reset them all
+        // (device pass 2026-10-05; TV twin: asEditOf). The LEARNED catch-up winner is a fact about the
+        // server, so it only carries while the server is unchanged.
+        cleanChannelNames = old.cleanChannelNames,
+        channelNameTags = old.channelNameTags,
+        catchUpPreferM3u8 = old.catchUpPreferM3u8,
+        catchUpTimeCorrectionMinutes = old.catchUpTimeCorrectionMinutes,
+        guideEpgCorrectionMinutes = old.guideEpgCorrectionMinutes,
+        catchUpWinner = if (old.baseUrl == candidate.baseUrl) old.catchUpWinner else null,
     )
 }
+
+/**
+ * F14 — whether an edit changed where this playlist's guide comes from (its EPG URL list, or the server
+ * / login its own xmltv.php and url-tvg are reached with). Such an edit re-ingests the guide at once;
+ * otherwise the old sources' guide stayed until the 12-hour refresh. internal for tests.
+ */
+internal fun guideSourcesChanged(old: XtreamAccount, new: XtreamAccount): Boolean =
+    old.epgUrl?.trim().orEmpty() != new.epgUrl?.trim().orEmpty() ||
+        old.baseUrl != new.baseUrl || old.username != new.username || old.password != new.password
 
 /** Step 0.3: whether an edit/pull changed which servers a playlist is reached on (main or backups). */
 internal fun serverListChanged(old: XtreamAccount, new: XtreamAccount): Boolean =

@@ -234,6 +234,14 @@ data class XtreamAccount(
      */
     val guideEpgCorrectionMinutes: Int = 0,
     /**
+     * F10 — show channel names cleaned of country prefixes, quality tags and decorations
+     * ([com.nuvio.app.features.epg.ChannelNameCleaner]) on this device. Display only and opt-in;
+     * the guide matcher always cleans. Device-local like the catch-up prefs (not on the wire).
+     */
+    val cleanChannelNames: Boolean = false,
+    /** F10 — extra tags the user wants stripped (comma / newline separated). Matching + display. */
+    val channelNameTags: String? = null,
+    /**
      * Step 0 — the playlist's alternate server addresses, in failover order (max 5). Client-owned and
      * synced (`iptv_playlists.backup_urls`). Step 0.3: edited on the Add/Edit form (validated by
      * [BackupServerValidation]) and walked by [PlaylistServerFailover]; which one is ACTIVE is
@@ -252,6 +260,16 @@ fun XtreamAccount.guideEpgCorrectionMs(): Long? = guideEpgCorrectionMinutes
     ?.coerceIn(CATCH_UP_CORRECTION_MIN_MINUTES, CATCH_UP_CORRECTION_MAX_MINUTES)
     ?.let { it * 60_000L }
 
+/** F10 — the name clean-up rules this playlist's matcher uses: the defaults plus the user's tags. */
+fun XtreamAccount.channelNameRules(): com.nuvio.app.features.epg.ChannelNameCleaner.Rules =
+    com.nuvio.app.features.epg.ChannelNameCleaner.Rules(
+        userTags = com.nuvio.app.features.epg.ChannelNameCleaner.parseTags(channelNameTags),
+    )
+
+/** F10 — the name to SHOW for a channel of this playlist: cleaned when the user opted in. */
+fun XtreamAccount.displayChannelName(raw: String): String =
+    if (cleanChannelNames) com.nuvio.app.features.epg.ChannelNameCleaner.clean(raw, channelNameRules()) else raw
+
 /** −12 h. Matches iptvsimple's `catchup-correction` range, which is the de-facto spec. */
 const val CATCH_UP_CORRECTION_MIN_MINUTES: Int = -12 * 60
 
@@ -260,10 +278,14 @@ const val CATCH_UP_CORRECTION_MAX_MINUTES: Int = 14 * 60
 
 fun XtreamAccount.typeEnabled(type: String): Boolean = type in contentTypes
 
-/** null selection = every category incl. future ones; a list = only those ids. */
-fun XtreamAccount.allowsCategory(type: String, categoryId: String?): Boolean {
+/**
+ * null selection = every category incl. future ones; a list = only those ids. B64 transition: a
+ * selection written by a not-yet-updated TV names M3U categories by their raw group NAME (TV's old
+ * category id), so where the caller knows the category's [categoryName] it matches too.
+ */
+fun XtreamAccount.allowsCategory(type: String, categoryId: String?, categoryName: String? = null): Boolean {
     val selection = categorySelections.forType(type) ?: return true
-    return categoryId != null && categoryId in selection
+    return (categoryId != null && categoryId in selection) || (categoryName != null && categoryName in selection)
 }
 
 /**
@@ -387,3 +409,13 @@ data class XtreamEpisode(
     val still: String?,
     val containerExtension: String?
 )
+
+/**
+ * F10 — the name to SHOW for a saved live channel (a favourite or a recent): those rows carry the name
+ * stored with the item, so they get the same clean-up as the playlist's own rows. [contentId] names
+ * the playlist; an item of an unknown playlist keeps its stored name.
+ */
+fun savedChannelDisplayName(raw: String, contentId: String, accounts: List<XtreamAccount>): String {
+    val accountId = XtreamItemRegistry.parseId(contentId)?.accountId ?: return raw
+    return accounts.firstOrNull { it.id == accountId }?.displayChannelName(raw) ?: raw
+}

@@ -9,6 +9,7 @@ import com.nuvio.app.features.iptv.CatchUpWinnerStore
 import com.nuvio.app.features.iptv.IptvClient
 import com.nuvio.app.features.iptv.IptvPanelGuard
 import com.nuvio.app.features.iptv.XtreamAccount
+import com.nuvio.app.features.iptv.displayChannelName
 import com.nuvio.app.features.iptv.XtreamItemRegistry
 import com.nuvio.app.features.iptv.XtreamKind
 import com.nuvio.app.features.iptv.XtreamLiveRecents
@@ -113,7 +114,8 @@ object LiveTvData {
         val mapped = channels.map { ch ->
             LiveGuideChannel(
                 contentId = XtreamItemRegistry.liveId(account.id, ch.streamId),
-                name = ch.name,
+                // F10: the cleaned name when the user opted in (identity below stays on the raw one).
+                name = account.displayChannelName(ch.name),
                 logo = ch.logo,
                 streamId = ch.streamId,
                 categoryId = ch.categoryId,
@@ -211,17 +213,30 @@ object LiveTvData {
         // docked guide shows now/next as you scroll rather than only after settling (no-op for
         // Xtream/M3U — they warm via XmltvClient). See StalkerClient.warm.
         IptvClient.forAccount(account).warm(account)
+        // B10: warm the account's whole guide too — the docked guide had no STORE rung at all, so
+        // it paid a get_short_epg per channel while the hub read the same guide off disk.
+        com.nuvio.app.features.iptv.epg.XmltvClient.warm(account)
         val nowMs = TraktPlatformClock.nowEpochMs()
         return EpgSourceLadder.resolveAndRemember(
             memory = EpgSourceLadder.sessionMemory,
             accountId = account.id,
             streamId = streamId,
             nowMs = nowMs,
-            manual = null,   // the manual-mapping seam — see [EpgSourceLadder.ManualResolver]
+            // F14: the user's own pick of guide channel for this channel, if any.
+            manual = EpgSourceLadder.ManualResolver { _, sid, _ ->
+                runCatching { com.nuvio.app.features.iptv.epg.XmltvClient.manualNowNext(account, sid, limit) }.getOrNull()
+            },
+            store = {
+                runCatching {
+                    com.nuvio.app.features.iptv.epg.XmltvClient.storedNowNext(account, streamId, limit)
+                }.getOrDefault(emptyList())
+            },
+            // null = the ask FAILED (see EpgSourceLadder.Source.UNAVAILABLE) — the hub path has made
+            // this distinction since 2026-08-18; the docked guide still collapsed it into "no guide".
             provider = {
                 runCatching {
-                    IptvClient.forAccount(account).shortEpg(account, streamId, limit).getOrDefault(emptyList())
-                }.getOrDefault(emptyList())
+                    IptvClient.forAccount(account).shortEpg(account, streamId, limit).getOrNull()
+                }.getOrNull()
             },
             mirror = {
                 runCatching {
@@ -313,4 +328,23 @@ object LiveTvData {
         accountOf = { id -> XtreamRepository.uiState.value.accounts.firstOrNull { it.id == id } },
         update = { id, edit -> XtreamRepository.updateOptions(id) { edit(it) } },
     )
+}
+
+/** F03 — Move earlier / later for a pinned channel in the phone guide (null when it cannot move that way). */
+internal object LiveGuidePinnedMoves {
+    fun move(
+        shown: List<LiveGuideChannel>,
+        overlay: Map<String, com.nuvio.app.features.iptv.overlay.ChannelOverlay>,
+        channel: LiveGuideChannel,
+        delta: Int,
+    ): (() -> Unit)? {
+        val pinned = shown.map { it.entityId }.filter { it.isNotBlank() && overlay[it]?.pinned == true }.distinct()
+        val entity = channel.entityId.takeIf { it.isNotBlank() } ?: return null
+        val from = pinned.indexOf(entity)
+        if (from < 0) return null
+        val writes = com.nuvio.app.features.iptv.PinnedChannelOrder.move(pinned, entity, from + delta)
+        if (writes.isEmpty()) return null
+        val playlistId = com.nuvio.app.features.iptv.XtreamItemRegistry.parseId(channel.contentId)?.accountId
+        return { com.nuvio.app.features.iptv.overlay.IptvOverlayRepository.setChannelPositions(playlistId, writes) }
+    }
 }

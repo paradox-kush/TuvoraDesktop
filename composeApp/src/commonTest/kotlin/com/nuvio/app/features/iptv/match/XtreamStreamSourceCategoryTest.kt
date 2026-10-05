@@ -103,7 +103,7 @@ class XtreamStreamSourceCategoryTest {
             XtreamSeriesItem(seriesId = 100 + it, name = "Show", poster = null, categoryId = "30", plot = null, rating = null)
         } + XtreamSeriesItem(seriesId = 7, name = "Show", poster = null, categoryId = "7", plot = null, rating = null)
 
-        val editions = XtreamStreamSource.stalkerSeriesEditions(acc, results, setOf(TitleNormalizer.normKey("Show")))
+        val editions = XtreamStreamSource.stalkerSeriesEditions(acc, results, setOf(TitleNormalizer.normKey("Show")), season = 1)
 
         assertEquals(listOf(7), editions.map { it.seriesId }, "the allowed edition survives past five hidden ones")
     }

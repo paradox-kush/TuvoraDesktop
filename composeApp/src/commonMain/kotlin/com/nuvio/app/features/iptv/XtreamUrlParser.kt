@@ -99,7 +99,7 @@ internal fun m3uAccountFromForm(input: XtreamFormInput): XtreamAccount? {
     val url = try { Url(withScheme) } catch (e: Exception) { return null }
     if (url.host.isBlank()) return null
     return XtreamAccount(
-        id = PlaylistKey.m3uUrl(raw) ?: return null,   // Step 0 shared builder (== "m3u|$withScheme")
+        id = PlaylistKey.m3uUrl(raw) ?: return null,   // Step 0 shared builder, login removed (B64)
         // UX91: an unnamed list is named from its file ("uk_sports.m3u"), not its possibly-dead host.
         name = input.name?.trim()?.takeIf { it.isNotEmpty() } ?: PlaylistDefaultName.fromM3uUrl(withScheme) ?: url.host,
         baseUrl = withScheme,             // the full M3U URL (path + query kept — it's the fetch target)

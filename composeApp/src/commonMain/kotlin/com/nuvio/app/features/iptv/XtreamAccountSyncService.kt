@@ -305,7 +305,7 @@ object XtreamAccountSyncService {
 
     private fun LegacyRow.toAccount(): XtreamAccount = XtreamAccount(
         id = "$baseUrl|$username",
-        name = name ?: baseUrl,
+        name = name ?: PlaylistAddress.fallbackName(baseUrl),
         baseUrl = baseUrl,
         username = username,
         password = password,
@@ -381,7 +381,7 @@ private fun PlaylistRow.toDerivedAccount(): XtreamAccount? = when (sourceType) {
         val user = username
         if (base == null || user == null) null else XtreamAccount(
             id = "$base|$user",
-            name = name ?: base,
+            name = name ?: PlaylistAddress.fallbackName(base),
             baseUrl = base,
             username = user,
             password = password ?: "",
@@ -393,7 +393,8 @@ private fun PlaylistRow.toDerivedAccount(): XtreamAccount? = when (sourceType) {
         val playlistUrl = (url ?: baseUrl)?.takeIf { it.isNotBlank() }
         if (playlistUrl == null) null else XtreamAccount(
             id = "m3u|$playlistUrl",
-            name = name ?: playlistUrl,
+            // P4: never the link itself — its query is the login.
+            name = name ?: PlaylistAddress.fallbackName(playlistUrl, isM3uLink = true),
             baseUrl = playlistUrl,
             username = "",
             password = "",
@@ -422,7 +423,7 @@ private fun PlaylistRow.toDerivedAccount(): XtreamAccount? = when (sourceType) {
         val mac = macAddress?.takeIf { it.isNotBlank() }
         if (portal == null || mac == null) null else XtreamAccount(
             id = "stalker|$portal|$mac",
-            name = name ?: portal,
+            name = name ?: PlaylistAddress.fallbackName(portal),
             baseUrl = portal,
             username = "",
             password = "",
@@ -487,6 +488,8 @@ internal fun preserveDeviceLocalPrefs(
         catchUpTimeCorrectionMinutes = match.catchUpTimeCorrectionMinutes,
         catchUpWinner = match.catchUpWinner,
         guideEpgCorrectionMinutes = match.guideEpgCorrectionMinutes,
+        cleanChannelNames = match.cleanChannelNames,
+        channelNameTags = match.channelNameTags,
     )
 }
 

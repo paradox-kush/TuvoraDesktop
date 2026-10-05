@@ -94,6 +94,7 @@ import nuvio.composeapp.generated.resources.compose_iptv_hub_blocked_title
 import nuvio.composeapp.generated.resources.compose_iptv_hub_error_message
 import nuvio.composeapp.generated.resources.compose_iptv_hub_error_title
 import nuvio.composeapp.generated.resources.compose_iptv_hub_refused_title
+import nuvio.composeapp.generated.resources.compose_iptv_hub_all_favorites
 import nuvio.composeapp.generated.resources.compose_iptv_hub_favorites
 import nuvio.composeapp.generated.resources.compose_iptv_hub_no_provider_message
 import nuvio.composeapp.generated.resources.compose_iptv_hub_no_provider_title
@@ -163,7 +164,7 @@ fun XtreamHubScreen(
     // UX36: long-press on a channel opens the same Favourite / Hide menu as the Live TV guide.
     var channelMenu by remember { mutableStateOf<ChannelMenuTarget?>(null) }
     fun longClickFor(categoryId: String): ((MetaPreview) -> Unit)? = if (isLive) {
-        { meta -> channelMenu = ChannelMenuTarget(meta, inPersonalRail = categoryId.startsWith(SPECIAL_CATEGORY_PREFIX)) }
+        { meta -> channelMenu = ChannelMenuTarget(meta, inPersonalRail = categoryId.startsWith(SPECIAL_CATEGORY_PREFIX), categoryId = categoryId) }
     } else {
         null
     }
@@ -175,32 +176,40 @@ fun XtreamHubScreen(
     val enabledSections = XtreamHubSection.entries.filter { account?.typeEnabled(it.contentKey) != false }
     val visibleCategories = if (account == null) state.categories else {
         // A custom group (F02) is the viewer's own row, not a provider category, so selections never hide it.
-        state.categories.filter { XtreamHubRepository.isCustomGroupRow(it.id) || account.allowsCategory(state.section.contentKey, it.id) }
+        state.categories.filter { XtreamHubRepository.isCustomGroupRow(it.id) || account.allowsCategory(state.section.contentKey, it.id, it.name) }
     }
     // A category only collapses once it's confirmed empty; unloaded ones stay (as shimmer rows).
     // Filtering ahead of the LazyColumn keeps the listGap arrangement from stacking gaps for
     // collapsed rows.
     val renderableCategories = visibleCategories.filterNot { it.loaded && it.items.isEmpty() }
     val favoriteTitle = stringResource(Res.string.compose_iptv_hub_favorites)
+    val allFavoritesTitle = stringResource(Res.string.compose_iptv_hub_all_favorites)
+    val accountIds = state.accounts.map { it.id }
     val recentTitle = stringResource(Res.string.compose_iptv_hub_recent)
     // Both rails are scoped to the SELECTED account: the stores keep one flat profile-wide list
     // across every playlist, and these rails sit inside one provider's hub.
     val accountPrefix = state.selectedAccountId?.let { XtreamItemRegistry.accountPrefix(it) }
-    val liveSpecialCategories = remember(isLive, localLibraryItems, liveRecents, favoriteTitle, recentTitle, accountPrefix) {
+    val liveSpecialCategories = remember(isLive, localLibraryItems, liveRecents, favoriteTitle, recentTitle, accountPrefix, accountIds, state.accounts) {
         if (!isLive || accountPrefix == null) {
             emptyList()
         } else {
             buildList {
+                // F03 (owner 2026-10-04): one list of the favourites of EVERY playlist, on top, in the
+                // synced favourites order — shown when it holds more than this playlist's own row.
+                LiveFavouritesRows.allPlaylists(localLibraryItems, accountIds)
+                    .takeIf { all -> all.any { !it.id.startsWith(accountPrefix) } }
+                    ?.map { it.toMetaPreview().withSavedChannelName(state.accounts) }
+                    ?.let { items -> add(XtreamHubCategory(SPECIAL_ALL_FAVORITES_ID, allFavoritesTitle, items, loaded = true)) }
                 localLibraryItems
                     .filter { XtreamItemRegistry.isLiveId(it.id) && it.id.startsWith(accountPrefix) }
-                    .map { it.toMetaPreview() }
+                    .map { it.toMetaPreview().withSavedChannelName(state.accounts) }
                     .takeIf { it.isNotEmpty() }
                     ?.let { items ->
                         add(XtreamHubCategory(SPECIAL_FAVORITES_ID, favoriteTitle, items, loaded = true))
                     }
                 liveRecents
                     .filter { it.contentId.startsWith(accountPrefix) }
-                    .map { it.toMetaPreview() }
+                    .map { it.toMetaPreview().withSavedChannelName(state.accounts) }
                     .takeIf { it.isNotEmpty() }
                     ?.let { items ->
                         add(XtreamHubCategory(SPECIAL_RECENT_ID, recentTitle, items, loaded = true))
@@ -217,6 +226,18 @@ fun XtreamHubScreen(
     val listState = rememberLazyListState()
     LaunchedEffect(scrollToTopRequests) {
         scrollToTopRequests.collect { listState.animateScrollToItem(0) }
+    }
+    // F03 (device pass 2026-10-05): another playlist or section starts at the top. The lazy list
+    // otherwise re-anchors on a key both lists share (the Favorites row, category ids reused across
+    // sections) and parks the new top row — All favorites — above the viewport. Only on a CHANGE:
+    // coming back to the hub keeps its scroll position.
+    var shownList by remember { mutableStateOf(state.selectedAccountId to state.section) }
+    LaunchedEffect(state.selectedAccountId, state.section) {
+        val now = state.selectedAccountId to state.section
+        if (now != shownList) {
+            shownList = now
+            listState.scrollToItem(0)
+        }
     }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize().background(tokens.colors.background)) {
@@ -392,13 +413,40 @@ fun XtreamHubScreen(
                 ),
                 onToggleFavorite = { onFavoriteLiveChannel(meta.id) },
                 onDismiss = { channelMenu = null },
+                onMoveEarlier = moveFor(target, displayedCategories, -1),
+                onMoveLater = moveFor(target, displayedCategories, +1),
             )
         }
+        // F14: the "Choose guide channel" dialog outlives the menu that opened it.
+        com.nuvio.app.features.iptv.epg.GuideChannelPickerHost()
     }
 }
 
+/**
+ * F03: Move earlier / later for the long-pressed card — a favourite on a favourites row (rewrites the
+ * synced favourites order), or a pinned channel in a provider row (rewrites the group's pin positions).
+ * Null when the card cannot move that way (an end of its list, or not a favourite / pinned card).
+ */
+private fun moveFor(target: ChannelMenuTarget, rows: List<XtreamHubCategory>, delta: Int): (() -> Unit)? {
+    val row = rows.firstOrNull { it.id == target.categoryId } ?: return null
+    val id = target.meta.id
+    if (target.categoryId == SPECIAL_FAVORITES_ID || target.categoryId == SPECIAL_ALL_FAVORITES_ID) {
+        val changes = LiveFavouritesRows.nudge(LibraryRepository.localItems.value, row.items.map { it.id }, id, delta)
+        return if (changes.isEmpty()) null else ({ LibraryRepository.setSavedAt(changes) })
+    }
+    if (target.inPersonalRail || !target.meta.pinned) return null
+    val pinned = row.items.filter { it.pinned }.map { it.id }
+    val from = pinned.indexOf(id)
+    if (from < 0) return null
+    val entities = pinned.map { XtreamHubRepository.hideTargetFor(it)?.entityId ?: return null }
+    val writes = PinnedChannelOrder.move(entities, entities[from], from + delta)
+    if (writes.isEmpty()) return null
+    val playlistId = XtreamItemRegistry.parseId(id)?.accountId
+    return { com.nuvio.app.features.iptv.overlay.IptvOverlayRepository.setChannelPositions(playlistId, writes) }
+}
+
 /** The live card a long-press menu is open for, and whether it sits on a Favorites/Recent rail. */
-private data class ChannelMenuTarget(val meta: MetaPreview, val inPersonalRail: Boolean)
+private data class ChannelMenuTarget(val meta: MetaPreview, val inPersonalRail: Boolean, val categoryId: String = "")
 
 // --- header chrome ---------------------------------------------------------------
 
@@ -486,7 +534,7 @@ private fun XtreamAccountDropdown(
         title = stringResource(Res.string.compose_iptv_hub_playlists_title),
         label = selectedName,
         selectedKey = selectedAccountId,
-        options = accounts.map { NuvioDropdownOption(key = it.id, label = it.name) } +
+        options = accounts.map { NuvioDropdownOption(key = it.id, label = PlaylistAddress.displayName(it.name)) } +
             NuvioDropdownOption(key = ADD_PLAYLIST_OPTION_KEY, label = addPlaylistLabel),
         onSelected = { option ->
             if (option.key == ADD_PLAYLIST_OPTION_KEY) onAddPlaylist() else onSelectAccount(option.key)
@@ -914,3 +962,8 @@ private const val ADD_PLAYLIST_OPTION_KEY = "__add_playlist__"
 private const val SPECIAL_CATEGORY_PREFIX = "__live_"
 private const val SPECIAL_FAVORITES_ID = "${SPECIAL_CATEGORY_PREFIX}favorites__"
 private const val SPECIAL_RECENT_ID = "${SPECIAL_CATEGORY_PREFIX}recent__"
+private const val SPECIAL_ALL_FAVORITES_ID = "${SPECIAL_CATEGORY_PREFIX}all_favorites__"
+
+/** F10: a favourite / recent shows the same cleaned name as the playlist's own rows. */
+private fun MetaPreview.withSavedChannelName(accounts: List<XtreamAccount>): MetaPreview =
+    copy(name = savedChannelDisplayName(name, id, accounts))

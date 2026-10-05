@@ -261,8 +261,16 @@ object XtreamHubRepository {
      * loading); the guide already carries channel-level hide/pin/order.
      */
     private fun applyCategoryOverlay(accountId: String, contentType: String, cats: List<XtreamHubCategory>): List<XtreamHubCategory> {
-        val shown = applyCategoryOverlayToRows(accountId, contentType, cats)
-        if (contentType != CONTENT_TYPE_LIVE) return shown
+        val overlaid = applyCategoryOverlayToRows(accountId, contentType, cats)
+        if (contentType != CONTENT_TYPE_LIVE) return overlaid
+        // F10: cleaned channel names when the user opted in for this playlist — applied BEFORE the
+        // channel overlay so an explicit rename still wins.
+        val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == accountId }
+        val shown = if (account?.cleanChannelNames == true) {
+            overlaid.map { cat -> cat.copy(items = cat.items.map { it.copy(name = account.displayChannelName(it.name)) }) }
+        } else {
+            overlaid
+        }
         // UX73 + B108: the cache holds each row's RAW provider window, and the channel overlay (hide,
         // rename, pin marker + float) is applied here, every time rows are shown. So an edit made
         // after a row loaded (from the guide, here, or the website) and its undo (un-hide, un-pin,
@@ -790,17 +798,18 @@ object XtreamHubRepository {
                 accountId = account.id,
                 streamId = streamId,
                 nowMs = t0,
-                manual = null,   // the manual-mapping seam — see [EpgSourceLadder.ManualResolver]
+                // F14: the user's own pick of guide channel for this channel, if any.
+                manual = EpgSourceLadder.ManualResolver { _, sid, _ ->
+                    runCatching { com.nuvio.app.features.iptv.epg.XmltvClient.manualNowNext(account, sid) }.getOrNull()
+                },
                 // The account's own guide, ingested once into SQLite. Zero network per channel —
                 // this is the rung that makes a guide fling cost nothing. Null-safe: an account
                 // with no stored guide (no xmltv.php, ingest not run yet) simply answers empty and
-                // the ladder falls through to the per-channel ask exactly as before.
+                // the ladder falls through to the per-channel ask exactly as before. B10: joined by
+                // the ingest's channel map (provider id, then cleaned name), not by the raw id alone.
                 store = {
                     runCatching {
-                        val epgId = com.nuvio.app.features.iptv.match.XtreamMatchIndex
-                            .liveEpgIdFor(account.id, streamId)
-                        if (epgId.isNullOrBlank()) emptyList()
-                        else com.nuvio.app.features.iptv.epg.XmltvClient.nowNext(account, epgId)
+                        com.nuvio.app.features.iptv.epg.XmltvClient.storedNowNext(account, streamId)
                     }.getOrDefault(emptyList())
                 },
                 // null = the ask FAILED. Collapsing that into emptyList() told the ladder

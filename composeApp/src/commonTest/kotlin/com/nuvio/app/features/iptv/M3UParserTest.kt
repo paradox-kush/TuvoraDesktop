@@ -166,10 +166,10 @@ class M3UParserTest {
         p1.onLine("""#EXTM3U x-tvg-url="http://epg.example/x.xml"""")
         assertEquals("http://epg.example/x.xml", p1.epgUrl)
 
-        // A comma-separated list -> the first url wins.
+        // A comma-separated list -> every url is kept, in order (F14: each one is a guide source).
         val p2 = M3UParser.StreamingParser { }
-        p2.onLine("""#EXTM3U url-tvg="http://a/1.xml,http://b/2.xml"""")
-        assertEquals("http://a/1.xml", p2.epgUrl)
+        p2.onLine("""#EXTM3U url-tvg="http://a/1.xml, http://b/2.xml"""")
+        assertEquals("http://a/1.xml,http://b/2.xml", p2.epgUrl)
 
         // No tvg url on the header -> null.
         val p3 = M3UParser.StreamingParser { }
@@ -191,7 +191,7 @@ class M3UParserTest {
         assertNotNull(account)
         assertEquals(SOURCE_TYPE_M3U_URL, account.sourceType)
         assertEquals("http://host:8080/get.php?username=u&password=p&type=m3u_plus", account.baseUrl)
-        assertEquals("m3u|http://host:8080/get.php?username=u&password=p&type=m3u_plus", account.id)
+        assertEquals("m3u|http://host:8080/get.php?type=m3u_plus|uf00c3c10", account.id)   // B64: login-free key
         assertEquals("My M3U", account.name)              // trimmed
         assertEquals("VLC/3.0", account.userAgent)        // trimmed
         assertEquals("", account.username)

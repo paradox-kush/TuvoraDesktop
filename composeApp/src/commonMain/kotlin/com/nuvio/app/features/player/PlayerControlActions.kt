@@ -88,6 +88,7 @@ internal fun PlayerControlActions(
     displayedPositionMs: Long,
     showRemainingTime: Boolean,
     onRuntimeClick: () -> Unit,
+    isLive: Boolean = false,
     metrics: PlayerLayoutMetrics,
     resizeMode: PlayerResizeMode,
     onSubtitleClick: () -> Unit,
@@ -198,7 +199,7 @@ internal fun PlayerControlActions(
                     )
                 }
             }
-            Box(
+            if (PlayerRuntimeLabelPolicy.showsRuntime(isLive)) Box(
                 modifier = Modifier.height(48.dp).widthIn(min = 48.dp).clickable(
                     role = Role.Button,
                     onClickLabel = stringResource(
