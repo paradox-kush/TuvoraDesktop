@@ -85,6 +85,12 @@ import com.nuvio.app.features.player.StreamInfoOverlay
 import com.nuvio.app.features.player.rememberStreamInfoLines
 import com.nuvio.app.features.player.PlayerPlaybackSnapshot
 import com.nuvio.app.features.player.PlayerResizeMode
+import com.nuvio.app.features.player.labelRes
+import com.nuvio.app.features.player.VideoZoom
+import com.nuvio.app.features.player.PlayerTrackPreferenceStorage
+import com.nuvio.app.features.player.PlayerPreferencePolicy
+import com.nuvio.app.features.player.PictureChoice
+import com.nuvio.app.features.player.PersistedPlayerTrackPreference
 import com.nuvio.app.features.trakt.TraktPlatformClock
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -480,6 +486,29 @@ fun LiveTvScreen(
         retryTick = 0   // a fresh channel is a first tune, not a retry — its resolve must not mint
     }
 
+    // F28 + B123: the live picture (aspect + manual zoom), lane F's model keyed by CHANNEL — each
+    // channel opens with its own remembered picture; live never rewrites the global aspect.
+    var livePicture by remember(currentContentId) {
+        val settings = PlayerSettingsRepository.uiState.value
+        mutableStateOf(
+            LiveFullscreenControlsPolicy.initialPicture(
+                rememberEnabled = settings.rememberPlayerPreferences,
+                stored = PlayerTrackPreferenceStorage.load(currentContentId),
+                globalResizeMode = settings.resizeMode,
+            ),
+        )
+    }
+    fun changePicture(next: PictureChoice) {
+        livePicture = next
+        val remember = PlayerSettingsRepository.uiState.value.rememberPlayerPreferences
+        if (!PlayerPreferencePolicy.persistsSeriesChoice(remember, currentContentId)) return
+        val current = PlayerTrackPreferenceStorage.load(currentContentId) ?: PersistedPlayerTrackPreference()
+        PlayerTrackPreferenceStorage.save(
+            currentContentId,
+            PlayerPreferencePolicy.withPicture(current, next.resizeMode, next.zoom),
+        )
+    }
+
     // ---- Orientation / fullscreen state ----
     val physicalLandscape by rememberPhysicalLandscape()
     var manualOrientation by remember { mutableStateOf<Boolean?>(null) } // true=landscape,false=portrait,null=follow
@@ -581,6 +610,8 @@ fun LiveTvScreen(
                     source = source,
                     isCatchUpPlayback = isCatchUp,
                     title = catchUp?.programmeTitle ?: currentTitle,
+                    resizeMode = livePicture.resizeMode,
+                    videoZoom = livePicture.zoom,
                     // Desktop renders its player controls in a native layer ON TOP of Compose, so
                     // every overlay below is invisible there and the native close button is the
                     // only exit a desktop viewer can see. It does nothing unless this screen
@@ -595,6 +626,8 @@ fun LiveTvScreen(
                             // see, so it has to leave the REPLAY first — otherwise Back would drop
                             // them out of Live TV entirely rather than back to the live channel.
                             onBack = if (isCatchUp) ::exitCatchUp else onBack,
+                            // B123/F28: the native aspect button cycles the live picture.
+                            onResizeMode = { changePicture(LiveFullscreenControlsPolicy.nextAspect(livePicture)) },
                         )
                     },
                     onControllerReady = {
@@ -809,6 +842,7 @@ internal fun handleLiveTvPlayerControlsAction(
     fullscreen: Boolean,
     setFullscreen: (Boolean) -> Unit,
     onBack: () -> Unit,
+    onResizeMode: (() -> Unit)? = null,
 ): Boolean = when (action) {
     PlayerControlsAction.Back -> {
         if (fullscreen) setFullscreen(false) else onBack()
@@ -818,6 +852,7 @@ internal fun handleLiveTvPlayerControlsAction(
         setFullscreen(!fullscreen)
         true
     }
+    PlayerControlsAction.ResizeMode -> onResizeMode?.let { it(); true } ?: false
     else -> false
 }
 
@@ -1013,6 +1048,8 @@ private fun LivePlayerSurface(
     source: LiveChannelSource?,
     isCatchUpPlayback: Boolean,
     title: String,
+    resizeMode: PlayerResizeMode,
+    videoZoom: VideoZoom,
     onControlsAction: (PlayerControlsAction) -> Boolean,
     onControllerReady: (PlayerEngineController) -> Unit,
     onSnapshot: (PlayerPlaybackSnapshot) -> Unit,
@@ -1022,7 +1059,8 @@ private fun LivePlayerSurface(
     // Only the platforms whose controls are drawn natively read this; the channel name is what
     // their header would otherwise leave blank. Kept stable so the 500ms snapshot poll doesn't
     // push a new state on every tick.
-    val controlsState = remember(title) { PlayerControlsState(title = title) }
+    val resizeLabel = stringResource(resizeMode.labelRes)
+    val controlsState = remember(title, resizeLabel) { PlayerControlsState(title = title, resizeModeLabel = resizeLabel) }
     // Key by url so a channel switch cleanly re-initialises the engine.
     androidx.compose.runtime.key(current.url) {
         PlatformPlayerSurface(
@@ -1035,7 +1073,8 @@ private fun LivePlayerSurface(
             isCatchUpPlayback = isCatchUpPlayback,
             modifier = Modifier.fillMaxSize(),
             playWhenReady = true,
-            resizeMode = PlayerResizeMode.Fit,
+            resizeMode = resizeMode,
+            videoZoom = videoZoom,
             useNativeController = false,
             playerControlsState = controlsState,
             onPlayerControlsAction = onControlsAction,
