@@ -21,6 +21,12 @@ internal expect object PlayerSettingsStorage {
     fun saveShowStreamInfo(enabled: Boolean)
     fun loadResizeMode(): String?
     fun saveResizeMode(mode: String)
+    fun loadRememberPlayerPreferences(): Boolean?
+    fun saveRememberPlayerPreferences(enabled: Boolean)
+    fun loadLiveBufferSeconds(): Int?
+    fun saveLiveBufferSeconds(seconds: Int)
+    fun loadSubtitleSideMarginPercent(): Int?
+    fun saveSubtitleSideMarginPercent(percent: Int)
     fun loadHoldToSpeedEnabled(): Boolean?
     fun saveHoldToSpeedEnabled(enabled: Boolean)
     fun loadHoldToSpeedValue(): Float?

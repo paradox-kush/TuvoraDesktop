@@ -257,6 +257,7 @@ internal fun PlayerScreenRuntime.cycleResizeMode() {
     resizeMode = nextMode
     lastSyncedSettingsResizeMode = nextMode
     PlayerSettingsRepository.setResizeMode(nextMode)
+    persistPicturePreference()
     showGestureMessage(
         when (nextMode) {
             PlayerResizeMode.Fit -> resizeModeFitLabel

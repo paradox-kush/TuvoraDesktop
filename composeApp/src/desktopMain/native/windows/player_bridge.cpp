@@ -1136,6 +1136,14 @@ public:
         return std::max(0.0, std::min(kMaxVolumePercent, doubleProperty("volume", 100.0))) / 100.0;
     }
 
+    // Generic setter for the shared Kotlin policies; a name this mpv lacks fails alone.
+    void setStringProperties(const std::vector<std::string> &names, const std::vector<std::string> &values) {
+        size_t count = std::min(names.size(), values.size());
+        for (size_t index = 0; index < count; index++) {
+            setStringProperty(names[index].c_str(), values[index]);
+        }
+    }
+
     void setResizeMode(int mode) {
         switch (mode) {
             case 1:
@@ -1392,7 +1400,7 @@ public:
                 setStringProperty("sub-back-color", resolvedBackgroundColor);
                 setStringProperty(
                     "sub-border-style",
-                    resolvedBackgroundColor.rfind("#00", 0) == 0 ? "outline-and-shadow" : "opaque-box"
+                    resolvedBackgroundColor.rfind("#00", 0) == 0 ? "outline-and-shadow" : "background-box"
                 );
             }
             if (modeChanged || outlineColorChanged) {
@@ -2948,6 +2956,17 @@ extern "C" JNIEXPORT jfloat JNICALL
 Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_volume(JNIEnv *, jobject, jlong handle) {
     auto player = playerFromHandle(handle);
     return player ? (jfloat)player->volume() : 1.0f;
+}
+
+// Generic setter for the shared Kotlin policies (VideoZoomPolicy, SubtitleStyleMpvMapping).
+extern "C" JNIEXPORT void JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setStringProperties(JNIEnv *env, jobject, jlong handle, jobjectArray names, jobjectArray values) {
+    auto player = playerFromHandle(handle);
+    if (!player) return;
+    std::vector<std::string> nameList = jstringArrayToVector(env, names);
+    std::vector<std::string> valueList = jstringArrayToVector(env, values);
+    if (nameList.size() != valueList.size()) return;
+    player->setStringProperties(nameList, valueList);
 }
 
 extern "C" JNIEXPORT void JNICALL

@@ -30,6 +30,11 @@ internal actual object PlayerSettingsStorage {
     private const val showStreamInfoKey = "show_stream_info"
     private const val resizeModeKey = "resize_mode"
     private const val holdToSpeedEnabledKey = "hold_to_speed_enabled"
+    // Device-local (not in syncKeys): see PlayerSettingsUiState.rememberPlayerPreferences.
+    private const val rememberPlayerPreferencesKey = "remember_player_preferences"
+    private const val subtitleSideMarginPercentKey = "subtitle_side_margin_percent"
+    // F13: device-local like the other buffer/engine choices.
+    private const val liveBufferSecondsKey = "live_buffer_seconds"
     private const val holdToSpeedValueKey = "hold_to_speed_value"
     private const val touchGesturesEnabledKey = "touch_gestures_enabled"
     private const val externalPlayerEnabledKey = "external_player_enabled"
@@ -201,6 +206,12 @@ internal actual object PlayerSettingsStorage {
     actual fun saveShowStreamInfo(enabled: Boolean) = saveBoolean(showStreamInfoKey, enabled)
     actual fun loadResizeMode(): String? = loadString(resizeModeKey)
     actual fun saveResizeMode(mode: String) = saveString(resizeModeKey, mode)
+    actual fun loadRememberPlayerPreferences(): Boolean? = loadBoolean(rememberPlayerPreferencesKey)
+    actual fun saveRememberPlayerPreferences(enabled: Boolean) = saveBoolean(rememberPlayerPreferencesKey, enabled)
+    actual fun loadLiveBufferSeconds(): Int? = loadInt(liveBufferSecondsKey)
+    actual fun saveLiveBufferSeconds(seconds: Int) = saveInt(liveBufferSecondsKey, seconds)
+    actual fun loadSubtitleSideMarginPercent(): Int? = loadInt(subtitleSideMarginPercentKey)
+    actual fun saveSubtitleSideMarginPercent(percent: Int) = saveInt(subtitleSideMarginPercentKey, percent)
     actual fun loadHoldToSpeedEnabled(): Boolean? = loadBoolean(holdToSpeedEnabledKey)
     actual fun saveHoldToSpeedEnabled(enabled: Boolean) = saveBoolean(holdToSpeedEnabledKey, enabled)
     actual fun loadHoldToSpeedValue(): Float? = loadFloat(holdToSpeedValueKey)

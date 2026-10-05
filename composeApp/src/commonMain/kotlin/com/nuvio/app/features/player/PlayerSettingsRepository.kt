@@ -40,6 +40,14 @@ data class PlayerSettingsUiState(
     val showParentalGuide: Boolean = true,
     val showStreamInfo: Boolean = true,
     val resizeMode: PlayerResizeMode = PlayerResizeMode.Fit,
+    /**
+     * F37 "Remember my player preferences": per-series memory of tracks, subtitles on/off, aspect and
+     * manual zoom ([PlayerPreferencePolicy]). Device-local for now — NOT in the settings-sync payload
+     * (adding it is a sync payload change, held for an owner decision).
+     */
+    val rememberPlayerPreferences: Boolean = PlayerPreferencePolicy.DEFAULT_REMEMBER,
+    /** F13: live IPTV buffer in seconds, [LiveBufferPolicy.AUTO] = engine default. Device-local. */
+    val liveBufferSeconds: Int = LiveBufferPolicy.AUTO,
     val holdToSpeedEnabled: Boolean = true,
     val holdToSpeedValue: Float = 2f,
     val touchGesturesEnabled: Boolean = true,
@@ -122,6 +130,8 @@ object PlayerSettingsRepository {
     private var showParentalGuide = true
     private var showStreamInfo = true
     private var resizeMode = PlayerResizeMode.Fit
+    private var rememberPlayerPreferences = PlayerPreferencePolicy.DEFAULT_REMEMBER
+    private var liveBufferSeconds = LiveBufferPolicy.AUTO
     private var holdToSpeedEnabled = true
     private var holdToSpeedValue = 2f
     private var touchGesturesEnabled = true
@@ -200,6 +210,8 @@ object PlayerSettingsRepository {
         showParentalGuide = true
         showStreamInfo = true
         resizeMode = PlayerResizeMode.Fit
+        rememberPlayerPreferences = PlayerPreferencePolicy.DEFAULT_REMEMBER
+        liveBufferSeconds = LiveBufferPolicy.AUTO
         holdToSpeedEnabled = true
         holdToSpeedValue = 2f
         touchGesturesEnabled = true
@@ -273,6 +285,9 @@ object PlayerSettingsRepository {
         resizeMode = PlayerSettingsStorage.loadResizeMode()
             ?.let { runCatching { PlayerResizeMode.valueOf(it) }.getOrNull() }
             ?: PlayerResizeMode.Fit
+        rememberPlayerPreferences = PlayerSettingsStorage.loadRememberPlayerPreferences()
+            ?: PlayerPreferencePolicy.DEFAULT_REMEMBER
+        liveBufferSeconds = LiveBufferPolicy.normalize(PlayerSettingsStorage.loadLiveBufferSeconds())
         holdToSpeedEnabled = PlayerSettingsStorage.loadHoldToSpeedEnabled() ?: true
         holdToSpeedValue = PlayerSettingsStorage.loadHoldToSpeedValue() ?: 2f
         touchGesturesEnabled = PlayerSettingsStorage.loadTouchGesturesEnabled() ?: true
@@ -299,29 +314,44 @@ object PlayerSettingsRepository {
                 ?: SubtitleLanguageOption.NONE
         secondaryPreferredSubtitleLanguage =
             normalizeLanguageCode(PlayerSettingsStorage.loadSecondaryPreferredSubtitleLanguage())
+        // F47: new users get the new default look; anyone with a stored field keeps the old base.
+        val storedTextColor = PlayerSettingsStorage.loadSubtitleTextColor()
+        val storedBackgroundColor = PlayerSettingsStorage.loadSubtitleBackgroundColor()
+        val storedOutlineColor = PlayerSettingsStorage.loadSubtitleOutlineColor()
+        val storedOutlineEnabled = PlayerSettingsStorage.loadSubtitleOutlineEnabled()
+        val base = SubtitleStyleDefaults.baseFor(
+            anyFieldStored = storedTextColor != null || storedBackgroundColor != null ||
+                storedOutlineColor != null || storedOutlineEnabled != null ||
+                PlayerSettingsStorage.loadSubtitleOutlineWidth() != null ||
+                PlayerSettingsStorage.loadSubtitleBold() != null ||
+                PlayerSettingsStorage.loadSubtitleFontSizeSp() != null ||
+                PlayerSettingsStorage.loadSubtitleBottomOffset() != null,
+        )
         subtitleStyle = SubtitleStyleState(
-            textColor = subtitleColorFromStorage(PlayerSettingsStorage.loadSubtitleTextColor())
-                ?: SubtitleStyleState.DEFAULT.textColor,
-            backgroundColor = subtitleColorFromStorage(PlayerSettingsStorage.loadSubtitleBackgroundColor())
-                ?: SubtitleStyleState.DEFAULT.backgroundColor,
-            outlineColor = subtitleColorFromStorage(PlayerSettingsStorage.loadSubtitleOutlineColor())
-                ?: SubtitleStyleState.DEFAULT.outlineColor,
-            outlineEnabled = PlayerSettingsStorage.loadSubtitleOutlineEnabled()
-                ?: SubtitleStyleState.DEFAULT.outlineEnabled,
+            textColor = subtitleColorFromStorage(storedTextColor)
+                ?: base.textColor,
+            backgroundColor = subtitleColorFromStorage(storedBackgroundColor)
+                ?: base.backgroundColor,
+            outlineColor = subtitleColorFromStorage(storedOutlineColor)
+                ?: base.outlineColor,
+            outlineEnabled = storedOutlineEnabled
+                ?: base.outlineEnabled,
             outlineWidth = PlayerSettingsStorage.loadSubtitleOutlineWidth()
-                ?: SubtitleStyleState.DEFAULT.outlineWidth,
+                ?: base.outlineWidth,
             bold = PlayerSettingsStorage.loadSubtitleBold()
-                ?: SubtitleStyleState.DEFAULT.bold,
+                ?: base.bold,
             fontSizeSp = (PlayerSettingsStorage.loadSubtitleFontSizeSp()
-                ?: SubtitleStyleState.DEFAULT.fontSizeSp).coerceIn(subtitleFontSizeRangeSp),
+                ?: base.fontSizeSp).coerceIn(subtitleFontSizeRangeSp),
             bottomOffset = PlayerSettingsStorage.loadSubtitleBottomOffset()
-                ?: SubtitleStyleState.DEFAULT.bottomOffset,
+                ?: base.bottomOffset,
             stripSdh = PlayerSettingsStorage.loadSubtitleStripSdh()
-                ?: SubtitleStyleState.DEFAULT.stripSdh,
+                ?: base.stripSdh,
             useForcedSubtitles = PlayerSettingsStorage.loadSubtitleUseForcedSubtitles()
-                ?: SubtitleStyleState.DEFAULT.useForcedSubtitles,
+                ?: base.useForcedSubtitles,
             showOnlyPreferredLanguages = PlayerSettingsStorage.loadSubtitleShowOnlyPreferredLanguages()
-                ?: SubtitleStyleState.DEFAULT.showOnlyPreferredLanguages,
+                ?: base.showOnlyPreferredLanguages,
+            sideMarginPercent = (PlayerSettingsStorage.loadSubtitleSideMarginPercent()
+                ?: base.sideMarginPercent).coerceIn(0, SubtitleSideMargin.MAX_PERCENT),
         )
         streamReuseLastLinkEnabled = PlayerSettingsStorage.loadStreamReuseLastLinkEnabled() ?: false
         streamReuseLastLinkCacheHours = PlayerSettingsStorage.loadStreamReuseLastLinkCacheHours() ?: 24
@@ -471,6 +501,23 @@ object PlayerSettingsRepository {
         PlayerSettingsStorage.saveResizeMode(mode.name)
     }
 
+    fun setRememberPlayerPreferences(enabled: Boolean) {
+        ensureLoaded()
+        if (rememberPlayerPreferences == enabled) return
+        rememberPlayerPreferences = enabled
+        publish()
+        PlayerSettingsStorage.saveRememberPlayerPreferences(enabled)
+    }
+
+    fun setLiveBufferSeconds(seconds: Int) {
+        ensureLoaded()
+        val normalized = LiveBufferPolicy.normalize(seconds)
+        if (liveBufferSeconds == normalized) return
+        liveBufferSeconds = normalized
+        publish()
+        PlayerSettingsStorage.saveLiveBufferSeconds(normalized)
+    }
+
     fun setHoldToSpeedEnabled(enabled: Boolean) {
         ensureLoaded()
         if (holdToSpeedEnabled == enabled) return
@@ -581,7 +628,10 @@ object PlayerSettingsRepository {
 
     fun setSubtitleStyle(style: SubtitleStyleState) {
         ensureLoaded()
-        val normalized = style.copy(fontSizeSp = style.fontSizeSp.coerceIn(subtitleFontSizeRangeSp))
+        val normalized = style.copy(
+            fontSizeSp = style.fontSizeSp.coerceIn(subtitleFontSizeRangeSp),
+            sideMarginPercent = style.sideMarginPercent.coerceIn(0, SubtitleSideMargin.MAX_PERCENT),
+        )
         if (subtitleStyle == normalized) return
         subtitleStyle = normalized
         publish()
@@ -596,6 +646,7 @@ object PlayerSettingsRepository {
         PlayerSettingsStorage.saveSubtitleStripSdh(normalized.stripSdh)
         PlayerSettingsStorage.saveSubtitleUseForcedSubtitles(normalized.useForcedSubtitles)
         PlayerSettingsStorage.saveSubtitleShowOnlyPreferredLanguages(normalized.showOnlyPreferredLanguages)
+        PlayerSettingsStorage.saveSubtitleSideMarginPercent(normalized.sideMarginPercent)
     }
 
     fun setStreamReuseLastLinkEnabled(enabled: Boolean) {
@@ -1031,6 +1082,8 @@ object PlayerSettingsRepository {
             showParentalGuide = showParentalGuide,
             showStreamInfo = showStreamInfo,
             resizeMode = resizeMode,
+            rememberPlayerPreferences = rememberPlayerPreferences,
+            liveBufferSeconds = liveBufferSeconds,
             holdToSpeedEnabled = holdToSpeedEnabled,
             holdToSpeedValue = holdToSpeedValue,
             touchGesturesEnabled = touchGesturesEnabled,

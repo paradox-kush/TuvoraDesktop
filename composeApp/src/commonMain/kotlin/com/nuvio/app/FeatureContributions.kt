@@ -4,6 +4,7 @@ import com.nuvio.app.core.diag.installLogRedaction
 import com.nuvio.app.core.contracts.IptvCatalogAccess
 import com.nuvio.app.core.contracts.IptvContentClassifierAccess
 import com.nuvio.app.core.contracts.IptvSearchAccess
+import com.nuvio.app.core.contracts.IptvSubtitleIdAccess
 import com.nuvio.app.core.contracts.LivePlaybackAccess
 import com.nuvio.app.core.contracts.LiveRecentsAccess
 import com.nuvio.app.core.contracts.LocalStateCleanerRegistry
@@ -28,6 +29,7 @@ import com.nuvio.app.features.iptv.XtreamMetaSource
 import com.nuvio.app.features.iptv.XtreamRecentsCleaner
 import com.nuvio.app.features.iptv.XtreamRepository
 import com.nuvio.app.features.iptv.XtreamSearchProvider
+import com.nuvio.app.features.iptv.XtreamSubtitleIdResolver
 import com.nuvio.app.features.iptv.XtreamStreamSourceProvider
 import com.nuvio.app.features.iptv.XtreamSyncParticipant
 import com.nuvio.app.features.iptv.overlay.IptvOverlaySyncParticipant
@@ -67,4 +69,6 @@ fun registerLogicFeatureContributions() {
     MetaSourceAccess.register(XtreamMetaSource)
     PlaybackGateAccess.register(IptvPlaybackGateAdapter)
     LivePlaybackAccess.register(XtreamLivePlaybackProvider)
+    // F17: public subtitle ids for IPTV movies/episodes (OpenSubtitles in the IPTV section).
+    IptvSubtitleIdAccess.register(XtreamSubtitleIdResolver)
 }

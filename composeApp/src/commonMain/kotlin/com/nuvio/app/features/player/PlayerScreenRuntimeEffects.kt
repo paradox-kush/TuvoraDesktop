@@ -276,6 +276,20 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         controller.updateNowPlayingMetadata(buildNowPlayingInfo())
     }
 
+    // F17: an IPTV movie/episode is looked up by subtitle add-ons under its public IMDb id; its own
+    // provider-scoped id never leaves the app (AddonSubtitleIdPolicy).
+    LaunchedEffect(activeVideoId, parentMetaId, activeSeasonNumber, activeEpisodeNumber) {
+        resolvedPublicSubtitleId = null
+        if (!AddonSubtitleIdPolicy.isProviderScoped(activeVideoId)) return@LaunchedEffect
+        resolvedPublicSubtitleId = runCatchingUnlessCancelled {
+            com.nuvio.app.core.contracts.IptvSubtitleIdAccess.resolver.publicSubtitleVideoId(
+                parentMetaId = parentMetaId,
+                season = activeSeasonNumber,
+                episode = activeEpisodeNumber,
+            )
+        }.getOrNull()
+    }
+
     LaunchedEffect(
         activeSourceUrl,
         addonSubtitleFetchKey,

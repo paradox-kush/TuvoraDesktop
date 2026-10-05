@@ -173,6 +173,11 @@ internal class PlayerScreenRuntime(
     var activeInitialProgressFraction by mutableStateOf(initialProgressFraction)
     var shouldPlay by mutableStateOf(true)
     var resizeMode by mutableStateOf(playerSettingsUiState.resizeMode.supportedOnCurrentPlatform())
+    /** F36 manual zoom on top of [resizeMode]; restored per series by [restorePicturePreference]. */
+    var videoZoom by mutableStateOf(VideoZoom.IDENTITY)
+    /** F17: the public IMDb-based id of the IPTV item playing (via IptvSubtitleIdAccess), or null. */
+    var resolvedPublicSubtitleId by mutableStateOf<String?>(null)
+    var videoZoomTitleLabel: String = "Manual zoom"
     var layoutSize by mutableStateOf(IntSize.Zero)
     var playbackSnapshot by mutableStateOf(PlayerPlaybackSnapshot())
     var playbackSnapshotKey by mutableStateOf<PlaybackKey?>(null)

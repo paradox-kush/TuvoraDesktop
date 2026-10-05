@@ -335,6 +335,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         outlineLabel = stringResource(Res.string.compose_player_outline),
         boldLabel = stringResource(Res.string.compose_player_bold),
         bottomOffsetLabel = stringResource(Res.string.compose_player_bottom_offset),
+        sidePaddingLabel = stringResource(Res.string.player_subtitle_side_padding),
         colorLabel = stringResource(Res.string.compose_player_color),
         textOpacityLabel = stringResource(Res.string.compose_player_text_opacity),
         outlineColorLabel = stringResource(Res.string.compose_player_outline_color),
@@ -538,6 +539,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                 initialPositionMs = surfaceSource?.initialPositionMs,
                 initialPositionRequestKey = surfaceSource?.initialPositionRequestKey,
                 resizeMode = resizeMode,
+                videoZoom = videoZoom,
                 playerControlsState = playerControlsState,
                 onPlayerControlsAction = { action -> handlePlayerControlsAction(action) },
                 onPlayerControlsEvent = { type, value -> handlePlayerControlsEvent(type, value) },
@@ -1162,6 +1164,27 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
             PlayerSettingsRepository.setSubtitleStyle(subtitleStyle.copy(textColor = subtitleStyle.textColor.copy(alpha = alpha)))
         }
         "subtitleStyleReset" -> PlayerSettingsRepository.setSubtitleStyle(SubtitleStyleState.DEFAULT)
+        "subtitleSideMarginDelta" -> PlayerSettingsRepository.setSubtitleStyle(
+            subtitleStyle.copy(
+                sideMarginPercent = (subtitleStyle.sideMarginPercent + value.toInt())
+                    .coerceIn(0, SubtitleSideMargin.MAX_PERCENT),
+            ),
+        )
+        "videoZoomBoth", "videoZoomWidth", "videoZoomHeight", "videoZoomPanX", "videoZoomPanY" -> {
+            val axis = when (type) {
+                "videoZoomWidth" -> VideoZoomAxis.Width
+                "videoZoomHeight" -> VideoZoomAxis.Height
+                "videoZoomPanX" -> VideoZoomAxis.PanX
+                "videoZoomPanY" -> VideoZoomAxis.PanY
+                else -> VideoZoomAxis.Both
+            }
+            setVideoZoom(VideoZoomPolicy.adjust(videoZoom, axis, value.toInt()))
+            announceVideoZoom()
+        }
+        "videoZoomReset" -> {
+            setVideoZoom(VideoZoom.IDENTITY)
+            announceVideoZoom()
+        }
         "parentalGuideComplete" -> {
             showParentalGuide = false
         }
