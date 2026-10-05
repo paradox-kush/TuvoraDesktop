@@ -473,6 +473,9 @@
     <string name="settings_playback_remember_preferences">Remember my player preferences</string>
     <string name="settings_playback_remember_preferences_description">Keep the audio and subtitle track, subtitles on or off, aspect and zoom for each series, and carry them to the next episode.</string>
     <string name="settings_playback_subtitle_side_padding">Subtitle side padding</string>
+    <string name="settings_playback_live_buffer">Live TV buffer</string>
+    <string name="settings_playback_live_buffer_auto">Auto</string>
+    <string name="settings_playback_live_buffer_seconds">%1$d s</string>
     <string name="compose_player_seek_back_10">Seek backward 10 seconds</string>
     <string name="compose_player_seek_delta_backward">-%1$ds</string>
     <string name="compose_player_seek_delta_forward">+%1$ds</string>

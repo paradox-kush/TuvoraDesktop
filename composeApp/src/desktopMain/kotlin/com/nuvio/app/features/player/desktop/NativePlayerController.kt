@@ -106,6 +106,9 @@ internal class NativePlayerController(
         var rememberedVideoZoom: VideoZoom = VideoZoom.IDENTITY
     }
 
+    @Volatile
+    private var liveBufferPlan: com.nuvio.app.features.player.LiveBufferPlan? = null
+
     private data class ReleaseCallback(
         val onReleased: () -> Unit,
         val onFailed: (String) -> Unit,
@@ -385,6 +388,7 @@ internal class NativePlayerController(
                         updateControls(controlsState)
                         setResizeMode(rememberedResizeMode)
                         setVideoZoom(rememberedVideoZoom)
+                        setLiveBuffer(liveBufferPlan)
                         if (currentNowPlayingTitle.isNotEmpty() || currentArtworkUrl.isNotEmpty()) {
                             setNowPlayingMetadata(currentNowPlayingTitle, currentNowPlayingSubtitle, currentArtworkUrl)
                         }
@@ -574,6 +578,18 @@ internal class NativePlayerController(
         rememberedVideoZoom = zoom
         handle.takeIf { it != 0L }?.let { current ->
             NativePlayerBridge.setStringPropertiesSafely(current, VideoZoomPolicy.mpvProperties(zoom))
+        }
+    }
+
+    /** F13: cache cap + rebuffer cushion for a live channel; null leaves the bridge defaults. */
+    fun setLiveBuffer(plan: com.nuvio.app.features.player.LiveBufferPlan?) {
+        liveBufferPlan = plan
+        if (plan == null) return
+        handle.takeIf { it != 0L }?.let { current ->
+            NativePlayerBridge.setStringPropertiesSafely(
+                current,
+                com.nuvio.app.features.player.LiveBufferPolicy.mpvProperties(plan),
+            )
         }
     }
 

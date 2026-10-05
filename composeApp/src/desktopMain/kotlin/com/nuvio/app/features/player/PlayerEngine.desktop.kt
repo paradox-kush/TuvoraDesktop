@@ -79,6 +79,12 @@ actual fun PlatformPlayerSurface(
             playWhenReady = playWhenReady,
             resizeMode = resizeMode,
             videoZoom = videoZoom,
+            // F13: the user's live buffer length (null = the bridge's defaults; never VOD/catch-up).
+            liveBufferPlan = LiveBufferPolicy.planFor(
+                seconds = PlayerSettingsRepository.uiState.value.liveBufferSeconds,
+                isLive = com.nuvio.app.features.streams.normalizeStreamType(streamType) == "live",
+                isCatchUp = isCatchUpPlayback,
+            ),
             initialPositionMs = initialPositionMs ?: 0L,
             initialPositionRequestKey = initialPositionRequestKey,
             playerControlsState = playerControlsState,
@@ -112,6 +118,7 @@ private fun NativePlayerSurface(
     playWhenReady: Boolean,
     resizeMode: PlayerResizeMode,
     videoZoom: VideoZoom,
+    liveBufferPlan: LiveBufferPlan?,
     initialPositionMs: Long,
     initialPositionRequestKey: String?,
     playerControlsState: PlayerControlsState,
@@ -239,6 +246,10 @@ private fun NativePlayerSurface(
 
     LaunchedEffect(controller, videoZoom) {
         controller.setVideoZoom(videoZoom)
+    }
+
+    LaunchedEffect(controller, liveBufferPlan) {
+        controller.setLiveBuffer(liveBufferPlan)
     }
 
     LaunchedEffect(controller, playerControlsState) {
