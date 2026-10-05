@@ -51,4 +51,18 @@ class AddonSubtitleIdPolicyTest {
         )
         assertNull(buildAddonSubtitleFetchKey(listOf(openAddon), "movie", m3uEpisode))
     }
+
+    @Test
+    fun anAddonSubtitleRequestCarriesOnlyTheTypeAndPublicId() {
+        // T5 parity pin: NuvioTV once appended `filename=<stream file>` (the provider's stream id or a
+        // token) to the add-on request. Mobile/Desktop/Apple TV build the URL from type + id alone;
+        // a filename extra must never be added for an IPTV item.
+        val url = com.nuvio.app.features.addons.buildAddonResourceUrl(
+            manifestUrl = "https://subs.example/manifest.json",
+            resource = "subtitles",
+            type = "movie",
+            id = "tt0133093",
+        )
+        assertEquals("https://subs.example/subtitles/movie/tt0133093.json", url)
+    }
 }

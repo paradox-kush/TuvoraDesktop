@@ -44,6 +44,26 @@ internal fun enrichWatchProgressEntry(
     )
 }
 
+/**
+ * B64 parity (NuvioTV T1): metadata hydration only PATCHES an entry that is still stored under
+ * [progressKey] — it never creates one. Hydration starts from a snapshot of the entries and applies its
+ * results seconds later; a re-key (or a removal / a fresher playback save) can land in between, and a
+ * "read, then upsert" write-back would bring the old key back (a duplicate Continue Watching card that
+ * opens an empty page). The lookup and the write happen under one call so the caller can hold its lock
+ * across both. Returns true when the stored entry changed.
+ */
+internal fun MutableMap<String, WatchProgressEntry>.patchExistingWithMetadata(
+    progressKey: String,
+    meta: MetaDetails,
+): Boolean {
+    val current = this[progressKey] ?: return false
+    val enriched = enrichWatchProgressEntry(current = current, meta = meta)
+    if (enriched == current) return false
+    val resolved = enriched.withResolvedProgressKey()
+    this[resolved.resolvedProgressKey()] = resolved
+    return true
+}
+
 internal fun WatchProgressEntry.needsRemoteMetadataEnrichment(): Boolean =
     title.isBlank() ||
         title.equals(parentMetaId, ignoreCase = true) ||
