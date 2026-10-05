@@ -2607,4 +2607,9 @@
     <string name="iptv_channel_hidden_toast_generic">“%1$s” hidden. Unhide it in Settings → Integrations → IPTV playlists.</string>
     <string name="iptv_toast_undo">Undo</string>
     <string name="iptv_group_hidden_toast">“%1$s” hidden. Unhide it in Settings → Integrations → IPTV playlists → %2$s.</string>
+    <string name="iptv_channel_action_move_earlier">Move earlier</string>
+    <string name="iptv_channel_action_move_later">Move later</string>
+    <string name="iptv_favourite_added_toast">“%1$s” added to Favorites.</string>
+    <string name="iptv_favourite_removed_toast">“%1$s” removed from Favorites.</string>
+    <string name="compose_iptv_hub_all_favorites">All favorites</string>
 </resources>

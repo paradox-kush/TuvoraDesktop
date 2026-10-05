@@ -58,7 +58,8 @@ internal object IptvChannelQuickActionsPolicy {
         return items
             .map { item -> item to entityOf(item)?.let { overlay[it] } }
             .filter { (_, edit) -> edit?.hidden != true }
-            .sortedBy { (_, edit) -> if (edit?.pinned == true) 0 else 1 }
+            // F03: pinned channels float in their synced order (position; provider order breaks ties).
+            .sortedWith(compareBy({ (_, edit) -> if (edit?.pinned == true) 0 else 1 }, { (_, edit) -> if (edit?.pinned == true) edit.position ?: Int.MAX_VALUE else 0 }))
             .map { (item, edit) ->
                 val renamed = edit?.rename?.takeIf { it.isNotBlank() }?.let { withName(item, it) } ?: item
                 if (edit?.pinned == true) withPinned(renamed) else renamed

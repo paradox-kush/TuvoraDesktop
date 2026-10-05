@@ -427,6 +427,23 @@ object LibraryRepository {
         return changes.size
     }
 
+    /**
+     * F03: rewrites saved items' synced "date added" — the favourites order ([com.nuvio.app.features
+     * .iptv.LiveFavouritesOrder]). One delta push of the changed items. Returns how many changed.
+     */
+    fun setSavedAt(changes: Map<String, Long>): Int {
+        if (changes.isEmpty()) return 0
+        ensureLoaded()
+        val items = localState.snapshot().items.filter { it.id in changes && changes[it.id] != it.savedAtEpochMs }
+        if (items.isEmpty()) return 0
+        var snapshot = localState.snapshot()
+        items.forEach { snapshot = localState.upsert(it.copy(savedAtEpochMs = changes.getValue(it.id))) }
+        persist(snapshot)
+        publish()
+        pushToServer(snapshot)
+        return items.size
+    }
+
     fun isSaved(id: String, type: String? = null): Boolean {
         ensureLoaded()
 

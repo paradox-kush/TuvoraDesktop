@@ -314,3 +314,22 @@ object LiveTvData {
         update = { id, edit -> XtreamRepository.updateOptions(id) { edit(it) } },
     )
 }
+
+/** F03 — Move earlier / later for a pinned channel in the phone guide (null when it cannot move that way). */
+internal object LiveGuidePinnedMoves {
+    fun move(
+        shown: List<LiveGuideChannel>,
+        overlay: Map<String, com.nuvio.app.features.iptv.overlay.ChannelOverlay>,
+        channel: LiveGuideChannel,
+        delta: Int,
+    ): (() -> Unit)? {
+        val pinned = shown.map { it.entityId }.filter { it.isNotBlank() && overlay[it]?.pinned == true }.distinct()
+        val entity = channel.entityId.takeIf { it.isNotBlank() } ?: return null
+        val from = pinned.indexOf(entity)
+        if (from < 0) return null
+        val writes = com.nuvio.app.features.iptv.PinnedChannelOrder.move(pinned, entity, from + delta)
+        if (writes.isEmpty()) return null
+        val playlistId = com.nuvio.app.features.iptv.XtreamItemRegistry.parseId(channel.contentId)?.accountId
+        return { com.nuvio.app.features.iptv.overlay.IptvOverlayRepository.setChannelPositions(playlistId, writes) }
+    }
+}
