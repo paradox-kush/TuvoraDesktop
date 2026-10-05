@@ -199,13 +199,7 @@ internal fun PlayerControlActions(
                     )
                 }
             }
-            val runtimeLabel = PlayerRuntimeLabelPolicy.label(
-                isLive = isLive,
-                positionMs = displayedPositionMs,
-                durationMs = playbackSnapshot.durationMs,
-                showRemainingTime = showRemainingTime,
-            )
-            if (runtimeLabel != null) Box(
+            if (PlayerRuntimeLabelPolicy.showsRuntime(isLive)) Box(
                 modifier = Modifier.height(48.dp).widthIn(min = 48.dp).clickable(
                     role = Role.Button,
                     onClickLabel = stringResource(
@@ -219,7 +213,7 @@ internal fun PlayerControlActions(
                 contentAlignment = Alignment.CenterEnd,
             ) {
                 Text(
-                    text = runtimeLabel,
+                    text = formatPlaybackRuntime(displayedPositionMs, playbackSnapshot.durationMs, showRemainingTime),
                     style = MaterialTheme.nuvioTypeScale.bodyMd.copy(fontSize = (metrics.timeSize.value + 2).sp),
                     color = Color.White.copy(alpha = 0.9f),
                     maxLines = 1,
