@@ -345,6 +345,37 @@ class XtreamPlaylistModelTest {
     }
 
     @Test
+    fun editKeepsTheChannelNameCleanUpOptions() {
+        // F10 (device pass 2026-10-05): the edit form does not show the clean-up toggle or the extra
+        // tags (they live on Content & categories), so saving the form must never turn them off.
+        val old = base.copy(cleanChannelNames = true, channelNameTags = "VIP, |PRIME|")
+        val candidate = xtreamAccountFromForm(
+            XtreamFormInput(
+                serverUrl = "http://h:80", username = "u", password = "p2", name = "Renamed",
+                epgUrl = "http://new.epg", dnsProvider = "google", autoRefreshHours = 72,
+            ),
+        )!!
+        for (formOwnsOptions in listOf(true, false)) {
+            val merged = carryPlaylistOptions(old, candidate, keepCandidateFormOptions = formOwnsOptions)
+            assertTrue(merged.cleanChannelNames, "clean-up toggle survives the edit (form=$formOwnsOptions)")
+            assertEquals("VIP, |PRIME|", merged.channelNameTags, "extra tags survive the edit (form=$formOwnsOptions)")
+        }
+    }
+
+    @Test
+    fun editThatChangesTheGuideSourcesReingestsTheGuide() {
+        // F14 (device pass 2026-10-05): typing a second EPG URL changed nothing until the 12-hour
+        // refresh — the edit must re-ingest when where the guide comes from changed, and only then.
+        val old = base.copy(epgUrl = "http://a.example/epg.xml", name = "Old")
+        assertFalse(guideSourcesChanged(old, old.copy(name = "Renamed", dnsProvider = "google")))
+        assertFalse(guideSourcesChanged(old, old.copy(epgUrl = "  http://a.example/epg.xml \n")))
+        assertTrue(guideSourcesChanged(old, old.copy(epgUrl = "http://a.example/epg.xml\nhttp://b.example/epg.xml")))
+        assertTrue(guideSourcesChanged(old, old.copy(epgUrl = null)))
+        assertTrue(guideSourcesChanged(old, old.copy(baseUrl = "http://moved:80")))
+        assertTrue(guideSourcesChanged(old, old.copy(password = "rotated")))
+    }
+
+    @Test
     fun editFormKeepsCandidateOptionsButCarriesContentSelections() {
         // Editing via the full form: the form OWNS epg/dns/auto-refresh (it shows them), so the
         // candidate's values win over the old account's; content types + category selections live on

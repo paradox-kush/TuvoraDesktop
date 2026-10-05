@@ -186,21 +186,21 @@ fun XtreamHubScreen(
     // Both rails are scoped to the SELECTED account: the stores keep one flat profile-wide list
     // across every playlist, and these rails sit inside one provider's hub.
     val accountPrefix = state.selectedAccountId?.let { XtreamItemRegistry.accountPrefix(it) }
-    val liveSpecialCategories = remember(isLive, localLibraryItems, liveRecents, favoriteTitle, recentTitle, accountPrefix) {
+    val liveSpecialCategories = remember(isLive, localLibraryItems, liveRecents, favoriteTitle, recentTitle, accountPrefix, state.accounts) {
         if (!isLive || accountPrefix == null) {
             emptyList()
         } else {
             buildList {
                 localLibraryItems
                     .filter { XtreamItemRegistry.isLiveId(it.id) && it.id.startsWith(accountPrefix) }
-                    .map { it.toMetaPreview() }
+                    .map { it.toMetaPreview().withSavedChannelName(state.accounts) }
                     .takeIf { it.isNotEmpty() }
                     ?.let { items ->
                         add(XtreamHubCategory(SPECIAL_FAVORITES_ID, favoriteTitle, items, loaded = true))
                     }
                 liveRecents
                     .filter { it.contentId.startsWith(accountPrefix) }
-                    .map { it.toMetaPreview() }
+                    .map { it.toMetaPreview().withSavedChannelName(state.accounts) }
                     .takeIf { it.isNotEmpty() }
                     ?.let { items ->
                         add(XtreamHubCategory(SPECIAL_RECENT_ID, recentTitle, items, loaded = true))
@@ -916,3 +916,7 @@ private const val ADD_PLAYLIST_OPTION_KEY = "__add_playlist__"
 private const val SPECIAL_CATEGORY_PREFIX = "__live_"
 private const val SPECIAL_FAVORITES_ID = "${SPECIAL_CATEGORY_PREFIX}favorites__"
 private const val SPECIAL_RECENT_ID = "${SPECIAL_CATEGORY_PREFIX}recent__"
+
+/** F10: a favourite / recent shows the same cleaned name as the playlist's own rows. */
+private fun MetaPreview.withSavedChannelName(accounts: List<XtreamAccount>): MetaPreview =
+    copy(name = savedChannelDisplayName(name, id, accounts))
