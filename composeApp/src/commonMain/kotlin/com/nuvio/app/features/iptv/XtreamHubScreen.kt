@@ -175,7 +175,7 @@ fun XtreamHubScreen(
     val enabledSections = XtreamHubSection.entries.filter { account?.typeEnabled(it.contentKey) != false }
     val visibleCategories = if (account == null) state.categories else {
         // A custom group (F02) is the viewer's own row, not a provider category, so selections never hide it.
-        state.categories.filter { XtreamHubRepository.isCustomGroupRow(it.id) || account.allowsCategory(state.section.contentKey, it.id) }
+        state.categories.filter { XtreamHubRepository.isCustomGroupRow(it.id) || account.allowsCategory(state.section.contentKey, it.id, it.name) }
     }
     // A category only collapses once it's confirmed empty; unloaded ones stay (as shimmer rows).
     // Filtering ahead of the LazyColumn keeps the listGap arrangement from stacking gaps for

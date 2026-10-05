@@ -57,6 +57,7 @@ class XtreamUrlPastedAsM3uTest {
         val account = m3uAccountFromForm(m3uForm("http://panel.example.com:8080/get.php?username=u&password=p&type=m3u_plus"))
         assertNotNull(account)
         assertEquals(SOURCE_TYPE_M3U_URL, account.sourceType)
-        assertEquals("m3u|http://panel.example.com:8080/get.php?username=u&password=p&type=m3u_plus", account.id)
+        // B64: the login never reaches the permanent id (password change keeps it; no creds in content ids).
+        assertEquals("m3u|http://panel.example.com:8080/get.php?type=m3u_plus|uf00c3c10", account.id)
     }
 }

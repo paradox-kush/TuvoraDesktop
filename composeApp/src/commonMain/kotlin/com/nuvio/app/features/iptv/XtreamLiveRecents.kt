@@ -90,6 +90,17 @@ object XtreamLiveRecents {
         XtreamAccountStorage.saveRecentsJson(currentProfileId, json.encodeToString(updated))
     }
 
+    /** B64: re-keys recent channels in place ([rewrite] = new content id, or null to keep). */
+    fun rekeyIds(rewrite: (String) -> String?): Int {
+        ensureLoaded()
+        var moved = 0
+        val updated = _recents.value.map { recent -> rewrite(recent.contentId)?.let { moved++; recent.copy(contentId = it) } ?: recent }
+        if (moved == 0) return 0
+        _recents.value = updated.distinctBy { it.contentId }
+        XtreamAccountStorage.saveRecentsJson(currentProfileId, json.encodeToString(_recents.value))
+        return moved
+    }
+
     /** Reload this profile's recents on a profile switch (the Home Live TV row observes them live). */
     fun onProfileChanged(profileId: Int) {
         loaded = true

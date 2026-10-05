@@ -67,7 +67,12 @@ internal data class IngestMeta(
     val seriesCount: Int,
     /** The M3U `url-tvg` / `x-tvg-url` header captured at ingest (EPG source when no explicit epgUrl). */
     val epgUrl: String? = null,
+    /** B64: the item-id scheme the catalog was built with (1 = raw-URL ids, 2 = login-free + D2 series). */
+    val idScheme: Int = 1,
 )
+
+/** One catalog episode as the B64 re-key reads it (url → old/new ids, series it now belongs to). */
+internal data class IptvEpisodeRef(val url: String, val seriesSid: Int, val season: Int, val episode: Int, val seriesName: String)
 
 /** EPG freshness marker for a playlist — non-null once XMLTV has been ingested at least once. */
 internal data class EpgMeta(val builtAtMs: Long, val programmeCount: Int)
@@ -161,6 +166,9 @@ internal object IptvContentDb {
         // v4 added the per-programme catch-up flag to an epg_programmes table that already existed.
         // Introspect and add only if absent; a real failure propagates (see SqliteSchema).
         it.ensureColumn("epg_programmes", "has_archive", "has_archive INTEGER NOT NULL DEFAULT 0")
+        // B64: which item-id scheme built the catalog. A missing column/row reads as 1 (pre-B64), so an
+        // M3U catalog re-ingests once under the login-free ids; no version bump (that drops every catalog).
+        it.ensureColumn("ingest_meta", "id_scheme", "id_scheme INTEGER NOT NULL DEFAULT 1")
         if (version < 5) it.execSQL("PRAGMA user_version = 5")
         // Per-(playlist, channel) EPG fetch stamp — the guide's lazy-fetch gate (v4, but created
         // unconditionally like the other epg tables: IF NOT EXISTS is self-healing).
@@ -172,7 +180,7 @@ internal object IptvContentDb {
 
     /** Non-null when a playlist has a completed ingest — the "already ingested" gate. */
     suspend fun ingestMeta(playlistId: String): IngestMeta? = mutex.withLock {
-        connection().prepare("SELECT built_at, live_count, vod_count, series_count, epg_url FROM ingest_meta WHERE playlist_id = ?").use { st ->
+        connection().prepare("SELECT built_at, live_count, vod_count, series_count, epg_url, id_scheme FROM ingest_meta WHERE playlist_id = ?").use { st ->
             st.bindText(1, playlistId)
             if (st.step()) IngestMeta(
                 builtAtMs = st.getLong(0),
@@ -180,6 +188,7 @@ internal object IptvContentDb {
                 vodCount = st.getLong(2).toInt(),
                 seriesCount = st.getLong(3).toInt(),
                 epgUrl = if (st.isNull(4)) null else st.getText(4),
+                idScheme = st.getLong(5).toInt(),
             ) else null
         }
     }
@@ -300,16 +309,17 @@ internal object IptvContentDb {
      * guide with no catalog under it). Its presence is still the "ingest complete" signal.
      * [epgUrl] = the M3U `url-tvg`.
      */
-    suspend fun finishIngest(playlistId: String, liveCount: Int, vodCount: Int, seriesCount: Int, epgUrl: String? = null) = mutex.withLock {
+    suspend fun finishIngest(playlistId: String, liveCount: Int, vodCount: Int, seriesCount: Int, epgUrl: String? = null, idScheme: Int = 1) = mutex.withLock {
         val c = connection()
         c.execSQL("BEGIN IMMEDIATE")
         try {
             val gen = pendingGeneration[playlistId] ?: activeGeneration(c, playlistId)
-            c.prepare("INSERT OR REPLACE INTO ingest_meta(playlist_id, built_at, live_count, vod_count, series_count, epg_url, active_generation) VALUES(?,?,?,?,?,?,?)").use { st ->
+            c.prepare("INSERT OR REPLACE INTO ingest_meta(playlist_id, built_at, live_count, vod_count, series_count, epg_url, active_generation, id_scheme) VALUES(?,?,?,?,?,?,?,?)").use { st ->
                 st.bindText(1, playlistId); st.bindLong(2, now())
                 st.bindLong(3, liveCount.toLong()); st.bindLong(4, vodCount.toLong()); st.bindLong(5, seriesCount.toLong())
                 if (epgUrl != null) st.bindText(6, epgUrl) else st.bindNull(6)
                 st.bindLong(7, gen)
+                st.bindLong(8, idScheme.toLong())
                 st.step()
             }
             for (table in CATALOG_TABLES) {
@@ -791,6 +801,31 @@ internal object IptvContentDb {
                     categoryId = if (st.isNull(3)) null else st.getText(3),
                 )
             )
+            out
+        }
+    }
+
+    /** B64 re-key: [limit] channel / movie URLs of the served catalog from [offset] (insertion-agnostic order). */
+    suspend fun pageUrls(playlistId: String, table: String, offset: Int, limit: Int): List<String> = mutex.withLock {
+        require(table == "channels" || table == "vod")
+        connection().prepare("SELECT url FROM $table WHERE playlist_id = ? AND $GEN ORDER BY sid LIMIT ? OFFSET ?").use { st ->
+            st.bindText(1, playlistId); st.bindText(2, playlistId); st.bindLong(3, limit.toLong()); st.bindLong(4, offset.toLong())
+            val out = ArrayList<String>()
+            while (st.step()) out.add(st.getText(0))
+            out
+        }
+    }
+
+    /** B64 re-key: [limit] episodes of the served catalog from [offset], with their series' name. */
+    suspend fun pageEpisodeRefs(playlistId: String, offset: Int, limit: Int): List<IptvEpisodeRef> = mutex.withLock {
+        connection().prepare(
+            "SELECT e.url, e.series_sid, e.season, e.episode, COALESCE(s.name, '') FROM episodes e " +
+                "LEFT JOIN series s ON s.playlist_id = e.playlist_id AND s.generation = e.generation AND s.sid = e.series_sid " +
+                "WHERE e.playlist_id = ? AND e.$GEN ORDER BY e.episode_id LIMIT ? OFFSET ?"
+        ).use { st ->
+            st.bindText(1, playlistId); st.bindText(2, playlistId); st.bindLong(3, limit.toLong()); st.bindLong(4, offset.toLong())
+            val out = ArrayList<IptvEpisodeRef>()
+            while (st.step()) out.add(IptvEpisodeRef(st.getText(0), st.getLong(1).toInt(), st.getLong(2).toInt(), st.getLong(3).toInt(), st.getText(4)))
             out
         }
     }

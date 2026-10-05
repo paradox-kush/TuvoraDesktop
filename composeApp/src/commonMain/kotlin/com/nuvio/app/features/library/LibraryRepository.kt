@@ -406,6 +406,24 @@ object LibraryRepository {
         pushToServer(snapshot)
     }
 
+    /**
+     * B64: re-keys saved items in place — [rewrite] returns an item's replacement, or null to leave it.
+     * One synced delta push (delete of every old id + upsert of every replacement, deduped onto an item
+     * already saved under the new id). Returns how many items moved; no write at all when none did.
+     */
+    fun rekeyItems(rewrite: (LibraryItem) -> LibraryItem?): Int {
+        ensureLoaded()
+        val changes = localState.snapshot().items.mapNotNull { item -> rewrite(item)?.let { item to it } }
+        if (changes.isEmpty()) return 0
+        var snapshot = localState.snapshot()
+        changes.forEach { (old, _) -> snapshot = localState.remove(old.id, old.type).snapshot }
+        changes.forEach { (_, new) -> if (!localState.contains(new.id, new.type)) snapshot = localState.upsert(new) }
+        persist(snapshot)
+        publish()
+        pushToServer(snapshot)
+        return changes.size
+    }
+
     fun isSaved(id: String, type: String? = null): Boolean {
         ensureLoaded()
 

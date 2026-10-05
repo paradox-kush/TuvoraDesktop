@@ -1,5 +1,7 @@
 package com.nuvio.app.features.iptv
 
+import com.nuvio.app.features.iptv.identity.M3uSeriesGrouping
+
 /**
  * Pure, streaming-friendly parser for M3U / M3U-plus playlists. Kept free of IO so it unit-tests
  * against inline fixtures and so the ingest path can feed it one line at a time (a provider M3U is
@@ -28,6 +30,8 @@ object M3UParser {
         val seriesKey: String? = null,
         val season: Int? = null,
         val episode: Int? = null,
+        /** tvg-name — the series-key fallback when a promoted VOD row's name has no show part. */
+        val tvgName: String? = null,
     )
 
     /**
@@ -120,6 +124,7 @@ object M3UParser {
                 seriesKey = seriesKeyOf(displayName, attrs["tvg-name"], group),
                 season = se?.first,
                 episode = se?.second,
+                tvgName = attrs["tvg-name"]?.ifBlank { null },
             )
         } else {
             Entry(
@@ -130,6 +135,7 @@ object M3UParser {
                 tvgId = attrs["tvg-id"]?.ifBlank { null },
                 group = group,
                 ext = ext,
+                tvgName = attrs["tvg-name"]?.ifBlank { null },
             )
         }
     }
@@ -193,40 +199,12 @@ object M3UParser {
         return ext.takeIf { it.length in 1..5 && it.all { c -> c.isLetterOrDigit() } }
     }
 
-    // "Show Name S01 E02" / "Show Name S01E02" / "Show Name 1x02" -> (1, 2)
-    private val seasonEpisodeRegex = Regex("""[sS](\d{1,3})\s*[eExX]\s*(\d{1,4})""")
-    private val altSeasonEpisodeRegex = Regex("""(?<![\dsS])(\d{1,2})[xX](\d{1,3})(?!\d)""")
+    /** Shared with every platform ([M3uSeriesGrouping], B64/D2). */
+    fun seasonEpisodeOf(name: String): Pair<Int, Int>? = M3uSeriesGrouping.seasonEpisodeOf(name)
 
-    fun seasonEpisodeOf(name: String): Pair<Int, Int>? {
-        seasonEpisodeRegex.find(name)?.let { m ->
-            return m.groupValues[1].toInt() to m.groupValues[2].toInt()
-        }
-        altSeasonEpisodeRegex.find(name)?.let { m ->
-            return m.groupValues[1].toInt() to m.groupValues[2].toInt()
-        }
-        return null
-    }
-
-    /**
-     * The stable key episodes of one show share, so the DB can GROUP BY it into a single series row.
-     * Prefer the display name with any SxxExx / trailing quality tag stripped; fall back to tvg-name
-     * or the group. Two episodes of "Breaking Bad S01E01" and "Breaking Bad S01E02" collapse to
-     * "breaking bad".
-     */
-    fun seriesKeyOf(displayName: String, tvgName: String?, group: String?): String {
-        val base = displayName
-            .replace(seasonEpisodeRegex, " ")
-            .replace(altSeasonEpisodeRegex, " ")
-        val stripped = base
-            .replace(Regex("""[\[(].*?[\])]"""), " ")            // (2021), [FHD]
-            .replace(Regex("""\b(FHD|HD|SD|4K|UHD|HEVC|H265|H264)\b""", RegexOption.IGNORE_CASE), " ")
-            .replace(Regex("""\s+"""), " ")
-            .trim()
-            .trimEnd('-', '·', '|', ':')
-            .trim()
-        val key = stripped.ifBlank { tvgName?.trim().orEmpty() }.ifBlank { group?.trim().orEmpty() }
-        return key.lowercase().ifBlank { displayName.lowercase() }
-    }
+    /** The stable key episodes of one show share ([M3uSeriesGrouping.seriesKeyOf], B64/D2). */
+    fun seriesKeyOf(displayName: String, tvgName: String?, group: String?): String =
+        M3uSeriesGrouping.seriesKeyOf(displayName, tvgName, group)
 }
 
 enum class M3UKind { LIVE, MOVIE, SERIES }

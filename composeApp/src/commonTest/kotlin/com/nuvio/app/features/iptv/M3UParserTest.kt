@@ -191,7 +191,7 @@ class M3UParserTest {
         assertNotNull(account)
         assertEquals(SOURCE_TYPE_M3U_URL, account.sourceType)
         assertEquals("http://host:8080/get.php?username=u&password=p&type=m3u_plus", account.baseUrl)
-        assertEquals("m3u|http://host:8080/get.php?username=u&password=p&type=m3u_plus", account.id)
+        assertEquals("m3u|http://host:8080/get.php?type=m3u_plus|uf00c3c10", account.id)   // B64: login-free key
         assertEquals("My M3U", account.name)              // trimmed
         assertEquals("VLC/3.0", account.userAgent)        // trimmed
         assertEquals("", account.username)
