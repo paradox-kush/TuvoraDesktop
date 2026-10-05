@@ -30,6 +30,15 @@ internal fun WatchProgressEntry.resolvedProgressKey(): String =
             episodeNumber = episodeNumber,
         )
 
+/**
+ * An entry moved onto new ids (a playlist key adoption or the B64 M3U re-key): its storage key is
+ * RE-DERIVED from them. Carrying the old key over kept the old content id — for an M3U playlist, the
+ * provider login inside it — as the server row's identity (progress_key), and left the moved entry
+ * stored under the old key.
+ */
+internal fun WatchProgressEntry.movedTo(videoId: String, parentMetaId: String): WatchProgressEntry =
+    copy(videoId = videoId, parentMetaId = parentMetaId, lastSourceUrl = null, progressKey = null).withResolvedProgressKey()
+
 internal fun WatchProgressEntry.withResolvedProgressKey(): WatchProgressEntry {
     val resolved = resolvedProgressKey()
     return if (progressKey == resolved) this else copy(progressKey = resolved)

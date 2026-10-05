@@ -18,5 +18,7 @@ internal object IptvProfileChange : ProfileChangeParticipant {
         XtreamSearchIndex.resetForProfile()
         com.nuvio.app.features.iptv.overlay.IptvOverlayRepository.onProfileChanged(profileIndex)
         XtreamMatchSyncService.reset()
+        // B64: move this profile's saved M3U refs onto the login-free ids (no-op when nothing to move).
+        M3uIdRekeyRunner.scheduleForCurrentProfile()
     }
 }

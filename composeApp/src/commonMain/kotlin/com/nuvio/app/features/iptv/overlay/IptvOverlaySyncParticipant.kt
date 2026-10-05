@@ -10,6 +10,10 @@ import com.nuvio.app.core.contracts.SyncParticipant
  */
 internal object IptvOverlaySyncParticipant : SyncParticipant {
     override val name: String = "IPTV overlay"
+
+    /** Emitted by `sync_push_iptv_overlay` (website editor + other devices) — B115. */
+    override val realtimeSurfaces: Set<String> = setOf("iptv_overlay")
+
     override suspend fun pullFromServer(profileId: Int) {
         IptvOverlayRepository.pullForProfile(profileId)
     }

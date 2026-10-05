@@ -108,15 +108,25 @@ internal object IptvOverlayRepository {
         editChannel(entityId, playlistId) { it.copy(rename = name?.trim()?.takeIf { n -> n.isNotEmpty() }) }
 
     /** Assign explicit positions to a whole ordered list of channels (a drag-reorder captures the order). */
-    fun reorderChannels(playlistId: String?, orderedEntityIds: List<String>) {
+    fun reorderChannels(playlistId: String?, orderedEntityIds: List<String>) =
+        setChannelPositions(playlistId, orderedEntityIds.mapIndexed { i, entity -> entity to i })
+
+    /**
+     * F03: explicit positions for some channels (e.g. a group's pinned channels in a new order —
+     * [com.nuvio.app.features.iptv.PinnedChannelOrder]), written as one edit and pushed so the website
+     * and other devices get it. (The reorder above used to write locally and never push.)
+     */
+    fun setChannelPositions(playlistId: String?, positions: List<Pair<String, Int>>) {
+        if (positions.isEmpty()) return
         val p = profile()
         launchSafely {
             val t = now()
-            orderedEntityIds.forEachIndexed { i, entity ->
+            positions.forEach { (entity, position) ->
                 val cur = _uiState.value.channels[entity] ?: ChannelOverlay()
-                IptvOverlayStore.setChannel(p, entity, playlistId, cur.copy(position = i), t)
+                IptvOverlayStore.setChannel(p, entity, playlistId, cur.copy(position = position), t)
             }
             _uiState.value = IptvOverlayStore.snapshot(p)
+            pushToServer()
         }
     }
 

@@ -1225,12 +1225,15 @@ object WatchProgressRepository {
             it.videoId.startsWith(oldPrefix) || it.parentMetaId.startsWith(oldPrefix)
         }
         if (affected.isEmpty()) return
-        affected.forEach { removeLocalEntry(it.videoId) }
+        // Removed by its STORAGE key (an episode's is `{series}_s{S}e{E}`, not its videoId — removing by
+        // videoId left it behind), and the moved copy re-derives its key from the new ids: a carried-over
+        // key kept the old id (B64: an M3U login inside it) as the server row's identity.
+        affected.forEach { removeLocalEntry(it.resolvedProgressKey()) }
         val moved = if (newPrefix == null) emptyList() else affected.map { entry ->
-            entry.copy(
+            // lastSourceUrl is dropped too: built against the old server; the xtream short-circuit rebuilds it.
+            entry.movedTo(
                 videoId = entry.videoId.rewriteIdPrefix(oldPrefix, newPrefix),
                 parentMetaId = entry.parentMetaId.rewriteIdPrefix(oldPrefix, newPrefix),
-                lastSourceUrl = null, // built against the old server; the xtream short-circuit rebuilds it
             )
         }
         moved.forEach { upsertLocalEntry(it) }
@@ -1238,6 +1241,26 @@ object WatchProgressRepository {
         persist()
         pushDeleteToServer(affected)
         moved.forEach { pushScrobbleToServer(it, currentProfileId) }
+    }
+
+    /**
+     * B64: re-keys local progress in place — [rewrite] returns an entry's replacement (its progressKey is
+     * re-derived from the new ids), or null to leave it. Synced like [migrateIdPrefix]: a delete of every
+     * old entry + a scrobble of every moved one. Returns how many entries moved.
+     */
+    fun rekeyEntries(rewrite: (WatchProgressEntry) -> WatchProgressEntry?): Int {
+        ensureLoaded()
+        val changes = localEntriesSnapshot().mapNotNull { entry ->
+            rewrite(entry)?.let { entry to it.copy(lastSourceUrl = null, progressKey = null).withResolvedProgressKey() }
+        }
+        if (changes.isEmpty()) return 0
+        changes.forEach { (old, _) -> removeLocalEntry(old.resolvedProgressKey()) }
+        changes.forEach { (_, new) -> upsertLocalEntry(new) }
+        publish()
+        persist()
+        pushDeleteToServer(changes.map { it.first })
+        changes.forEach { (_, new) -> pushScrobbleToServer(new.withResolvedProgressKey(), currentProfileId) }
+        return changes.size
     }
 
     fun progressForVideo(

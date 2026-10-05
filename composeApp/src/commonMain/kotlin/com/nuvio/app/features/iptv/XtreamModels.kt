@@ -278,10 +278,14 @@ const val CATCH_UP_CORRECTION_MAX_MINUTES: Int = 14 * 60
 
 fun XtreamAccount.typeEnabled(type: String): Boolean = type in contentTypes
 
-/** null selection = every category incl. future ones; a list = only those ids. */
-fun XtreamAccount.allowsCategory(type: String, categoryId: String?): Boolean {
+/**
+ * null selection = every category incl. future ones; a list = only those ids. B64 transition: a
+ * selection written by a not-yet-updated TV names M3U categories by their raw group NAME (TV's old
+ * category id), so where the caller knows the category's [categoryName] it matches too.
+ */
+fun XtreamAccount.allowsCategory(type: String, categoryId: String?, categoryName: String? = null): Boolean {
     val selection = categorySelections.forType(type) ?: return true
-    return categoryId != null && categoryId in selection
+    return (categoryId != null && categoryId in selection) || (categoryName != null && categoryName in selection)
 }
 
 /**

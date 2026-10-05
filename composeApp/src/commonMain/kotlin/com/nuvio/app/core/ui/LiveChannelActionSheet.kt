@@ -8,6 +8,8 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -19,6 +21,8 @@ import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.iptv_channel_action_add_favorite
 import nuvio.composeapp.generated.resources.iptv_channel_action_hide
 import nuvio.composeapp.generated.resources.iptv_channel_action_choose_guide
+import nuvio.composeapp.generated.resources.iptv_channel_action_move_earlier
+import nuvio.composeapp.generated.resources.iptv_channel_action_move_later
 import nuvio.composeapp.generated.resources.iptv_channel_action_remove_favorite
 import org.jetbrains.compose.resources.stringResource
 
@@ -37,6 +41,9 @@ fun NuvioLiveChannelActionSheet(
     onDismiss: () -> Unit,
     /** F14: pick which guide channel feeds this channel's EPG; null leaves the row out. */
     onChooseGuide: (() -> Unit)? = null,
+    /** F03: shown for a favourite on a favourites row, or a pinned channel in its group. */
+    onMoveEarlier: (() -> Unit)? = null,
+    onMoveLater: (() -> Unit)? = null,
 ) {
     if (channel == null) return
     val tokens = MaterialTheme.nuvio
@@ -68,6 +75,20 @@ fun NuvioLiveChannelActionSheet(
                 ),
                 onClick = { dismissAfter(onToggleFavorite) },
             )
+            if (onMoveEarlier != null) {
+                NuvioBottomSheetActionRow(
+                    icon = Icons.Rounded.KeyboardArrowUp,
+                    title = stringResource(Res.string.iptv_channel_action_move_earlier),
+                    onClick = { dismissAfter(onMoveEarlier) },
+                )
+            }
+            if (onMoveLater != null) {
+                NuvioBottomSheetActionRow(
+                    icon = Icons.Rounded.KeyboardArrowDown,
+                    title = stringResource(Res.string.iptv_channel_action_move_later),
+                    onClick = { dismissAfter(onMoveLater) },
+                )
+            }
             if (onHide != null) {
                 NuvioBottomSheetActionRow(
                     icon = Icons.Default.VisibilityOff,

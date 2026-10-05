@@ -813,6 +813,9 @@ fun LiveTvScreen(
                 ),
                 onToggleFavorite = { onFavoriteChannel(ch.contentId) },
                 onDismiss = { channelMenu = null },
+                // F03: a pinned channel moves within the pinned ones (synced overlay positions).
+                onMoveEarlier = LiveGuidePinnedMoves.move(channels, overlaySnapshot.channels, ch, -1),
+                onMoveLater = LiveGuidePinnedMoves.move(channels, overlaySnapshot.channels, ch, +1),
             )
         }
         // F14: the "Choose guide channel" dialog outlives the menu that opened it.

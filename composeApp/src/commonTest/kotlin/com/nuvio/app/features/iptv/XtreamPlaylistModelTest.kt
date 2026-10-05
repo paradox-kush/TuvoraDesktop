@@ -506,6 +506,15 @@ class XtreamPlaylistModelTest {
         assertNull(materialized.withType(CONTENT_TYPE_MOVIES, null).forType(CONTENT_TYPE_MOVIES))
     }
 
+    @Test
+    fun aPreB64TvSelectionMatchesM3uCategoriesByName() {
+        // B64 transition: an old TV wrote M3U category selections as raw group names.
+        val acc = base.copy(categorySelections = CategorySelections(live = listOf("UK NEWS")))
+        assertTrue(acc.allowsCategory(CONTENT_TYPE_LIVE, "182736455", "UK NEWS"))
+        assertFalse(acc.allowsCategory(CONTENT_TYPE_LIVE, "99", "US NEWS"))
+        assertFalse(acc.allowsCategory(CONTENT_TYPE_LIVE, "182736455"))   // name unknown: id only
+    }
+
     /**
      * The edit path skips its live verify when the connection is unchanged. This pins what
      * "unchanged" means: shared options may move freely, anything that decides WHERE we connect
