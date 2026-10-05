@@ -345,10 +345,14 @@ class XtreamPlaylistModelTest {
     }
 
     @Test
-    fun editKeepsTheChannelNameCleanUpOptions() {
+    fun editKeepsTheDeviceLocalPlaylistPrefs() {
         // F10 (device pass 2026-10-05): the edit form does not show the clean-up toggle or the extra
         // tags (they live on Content & categories), so saving the form must never turn them off.
-        val old = base.copy(cleanChannelNames = true, channelNameTags = "VIP, |PRIME|")
+        val old = base.copy(
+            cleanChannelNames = true, channelNameTags = "VIP, |PRIME|",
+            // The other device-local prefs set from the playlist's own cards (TV twin: asEditOf).
+            catchUpPreferM3u8 = true, catchUpTimeCorrectionMinutes = 60, guideEpgCorrectionMinutes = -30,
+        )
         val candidate = xtreamAccountFromForm(
             XtreamFormInput(
                 serverUrl = "http://h:80", username = "u", password = "p2", name = "Renamed",
@@ -359,6 +363,9 @@ class XtreamPlaylistModelTest {
             val merged = carryPlaylistOptions(old, candidate, keepCandidateFormOptions = formOwnsOptions)
             assertTrue(merged.cleanChannelNames, "clean-up toggle survives the edit (form=$formOwnsOptions)")
             assertEquals("VIP, |PRIME|", merged.channelNameTags, "extra tags survive the edit (form=$formOwnsOptions)")
+            assertTrue(merged.catchUpPreferM3u8, "prefer-m3u8 catch-up survives the edit (form=$formOwnsOptions)")
+            assertEquals(60, merged.catchUpTimeCorrectionMinutes, "catch-up correction survives (form=$formOwnsOptions)")
+            assertEquals(-30, merged.guideEpgCorrectionMinutes, "guide offset survives (form=$formOwnsOptions)")
         }
     }
 
