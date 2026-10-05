@@ -22,4 +22,10 @@ actual object SyncClientIdentityStorage {
             ?.putString(clientIdKey, clientId)
             ?.apply()
     }
+
+    actual fun loadValue(key: String): String? = preferences?.getString(key, null)
+
+    actual fun saveValue(key: String, value: String) {
+        preferences?.edit()?.putString(key, value)?.apply()
+    }
 }
