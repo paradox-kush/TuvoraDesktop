@@ -31,6 +31,9 @@ data class SubtitleAddonRequest(
 )
 
 internal fun addonSubtitleRequests(type: String, videoId: String): List<SubtitleAddonRequest> {
+    // Privacy: an IPTV id embeds the playlist key (server/user, M3U URL, MAC). Never send it to an
+    // add-on — callers resolve a public id first (AddonSubtitleIdPolicy). Covers Apple TV too.
+    if (AddonSubtitleIdPolicy.isProviderScoped(videoId)) return emptyList()
     val requestType = canonicalSubtitleType(type)
     return AddonRepository.uiState.value.addons.enabledAddons().mapNotNull { addon ->
         val manifest = addon.manifest ?: return@mapNotNull null

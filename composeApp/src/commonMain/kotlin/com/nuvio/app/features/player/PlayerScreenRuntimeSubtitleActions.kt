@@ -10,8 +10,8 @@ internal fun PlayerScreenRuntime.fetchAddonSubtitlesForActiveItem() {
         SubtitleRepository.clear()
         return
     }
-    val type = activeAddonSubtitleType.takeIf { it.isNotBlank() } ?: return
-    val videoId = activeVideoId?.takeIf { it.isNotBlank() } ?: return
+    val type = addonSubtitleRequestType.takeIf { it.isNotBlank() } ?: return
+    val videoId = addonSubtitleRequestVideoId?.takeIf { it.isNotBlank() } ?: return
     SubtitleRepository.fetchAddonSubtitles(type, videoId)
 }
 

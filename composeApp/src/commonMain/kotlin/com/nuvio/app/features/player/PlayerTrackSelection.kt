@@ -11,6 +11,8 @@ internal fun buildAddonSubtitleFetchKey(
 ): String? {
     val normalizedType = type?.takeIf { it.isNotBlank() } ?: return null
     val normalizedVideoId = videoId?.takeIf { it.isNotBlank() } ?: return null
+    // Privacy: never key (and so never request) add-on subtitles under a provider-scoped IPTV id.
+    if (AddonSubtitleIdPolicy.isProviderScoped(normalizedVideoId)) return null
     val compatibleSubtitleAddons = addons.enabledAddons().mapNotNull { addon ->
         val manifest = addon.manifest ?: return@mapNotNull null
         val supportsSubtitles = manifest.resources.any { resource ->

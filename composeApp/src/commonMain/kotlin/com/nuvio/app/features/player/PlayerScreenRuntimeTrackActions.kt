@@ -9,11 +9,23 @@ private val PlayerScreenRuntime.subtitlePreferenceItemId: String
 internal val PlayerScreenRuntime.activeAddonSubtitleType: String
     get() = contentType ?: parentMetaType
 
+/**
+ * F17: the id add-on subtitles are requested under — the item's own id, or for an IPTV item its
+ * resolved public IMDb id (null until resolved, or when it has none: then nothing is requested).
+ */
+internal val PlayerScreenRuntime.addonSubtitleRequestVideoId: String?
+    get() = AddonSubtitleIdPolicy.requestVideoId(activeVideoId, resolvedPublicSubtitleId)
+
+internal val PlayerScreenRuntime.addonSubtitleRequestType: String
+    get() = addonSubtitleRequestVideoId
+        ?.let { AddonSubtitleIdPolicy.requestType(activeAddonSubtitleType, it) }
+        ?: activeAddonSubtitleType
+
 internal val PlayerScreenRuntime.addonSubtitleFetchKey: String?
     get() = buildAddonSubtitleFetchKey(
         addons = addonsUiState.addons,
-        type = activeAddonSubtitleType,
-        videoId = activeVideoId,
+        type = addonSubtitleRequestType,
+        videoId = addonSubtitleRequestVideoId,
     )
 
 internal val PlayerScreenRuntime.visibleAddonSubtitles: List<AddonSubtitle>
