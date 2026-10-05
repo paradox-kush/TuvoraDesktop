@@ -1587,6 +1587,7 @@ private fun PlayerScreenRuntime.buildPlayerControlSubtitleSelection(): PlayerCon
     )
     val noneLabel = stringResource(Res.string.compose_player_none)
     val unknownLabel = stringResource(Res.string.subtitle_language_unknown)
+    val closedCaptionsLabel = stringResource(Res.string.subtitle_closed_captions)
     val builtInLabel = stringResource(Res.string.compose_player_built_in)
     val addonLabel = stringResource(Res.string.addon_title)
     val forcedLabel = stringResource(Res.string.settings_playback_option_forced)
@@ -1596,6 +1597,7 @@ private fun PlayerScreenRuntime.buildPlayerControlSubtitleSelection(): PlayerCon
             label = when (item.key) {
                 SubtitleOffLanguageKey -> noneLabel
                 SubtitleUnknownLanguageKey -> unknownLabel
+                SubtitleClosedCaptionsLanguageKey -> closedCaptionsLabel
                 else -> languageLabelForCode(item.key)
             },
             count = item.count,
@@ -1615,11 +1617,15 @@ private fun PlayerScreenRuntime.buildPlayerControlSubtitleSelection(): PlayerCon
                     kind = "builtIn",
                     index = option.track.index,
                     sourceLabel = builtInLabel,
-                    title = localizedTrackDisplayName(
-                        option.track.label,
-                        option.track.language,
-                        option.track.index,
-                    ),
+                    title = if (ClosedCaptionTracks.isClosedCaption(option.track)) {
+                        closedCaptionsLabel // P3
+                    } else {
+                        localizedTrackDisplayName(
+                            option.track.label,
+                            option.track.language,
+                            option.track.index,
+                        )
+                    },
                     metadata = forcedLabel.takeIf { option.track.isForced }.orEmpty(),
                     isSelected = option.id == selectedOptionId,
                 )

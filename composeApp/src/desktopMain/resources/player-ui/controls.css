@@ -3532,3 +3532,15 @@ svg {
   stroke: none;
   pointer-events: none;
 }
+
+/* P1: live channels have no timeline — no seek bar or time pills, and the time label reads LIVE. */
+.player.live-mode #seek,
+.player.live-mode .time-row {
+  visibility: hidden;
+}
+
+.player.live-mode #timeLabel {
+  pointer-events: none;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
