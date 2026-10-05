@@ -30,7 +30,7 @@ internal object XtreamStreamSourceProvider : StreamSourceProvider {
         if (type != "movie" && type != "series") return emptyList()
         XtreamRepository.ensureLoaded()
         return matchTargets(XtreamRepository.uiState.value.accounts, type)
-            .map { StreamSourceGroup(XtreamStreamSource.groupId(it), it.name) }
+            .map { StreamSourceGroup(XtreamStreamSource.groupId(it), PlaylistAddress.displayName(it.name)) }
     }
 
     /**

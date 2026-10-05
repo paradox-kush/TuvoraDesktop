@@ -273,7 +273,7 @@ internal fun IptvMasterDetail(
 
     hiddenFor?.let { account ->
         IptvHiddenItemsDialog(
-            playlistName = account.name,
+            playlistName = PlaylistAddress.displayName(account.name),
             state = hiddenState,
             onUnhide = { hiddenController.unhide(account, it) },
             onDismiss = { hiddenFor = null },

@@ -119,7 +119,7 @@ data class ManagedDetailsModel(
                 )
             }
             return ManagedDetailsModel(
-                name = account.name,
+                name = PlaylistAddress.displayName(account.name),
                 addressLine = addressLine,
                 managedBy = info?.let(ManagedPlaylistPolicy::ownerLabel),
                 providerName = info?.providerName,
