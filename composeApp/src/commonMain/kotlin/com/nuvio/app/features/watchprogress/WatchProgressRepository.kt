@@ -1250,17 +1250,16 @@ object WatchProgressRepository {
      */
     fun rekeyEntries(rewrite: (WatchProgressEntry) -> WatchProgressEntry?): Int {
         ensureLoaded()
-        val changes = localEntriesSnapshot().mapNotNull { entry ->
-            rewrite(entry)?.let { entry to it.copy(lastSourceUrl = null, progressKey = null).withResolvedProgressKey() }
-        }
-        if (changes.isEmpty()) return 0
-        changes.forEach { (old, _) -> removeLocalEntry(old.resolvedProgressKey()) }
-        changes.forEach { (_, new) -> upsertLocalEntry(new) }
+        val plan = WatchProgressRekey.plan(localEntriesSnapshot(), rewrite)
+        if (plan.isEmpty) return 0
+        plan.removed.forEach { old -> removeLocalEntry(old.resolvedProgressKey()) }
+        // Dirty until its push is acknowledged: a snapshot pull racing the push must not drop it.
+        plan.upserts.forEach { new -> upsertLocalEntry(new); markProgressDirty(new) }
         publish()
         persist()
-        pushDeleteToServer(changes.map { it.first })
-        changes.forEach { (_, new) -> pushScrobbleToServer(new.withResolvedProgressKey(), currentProfileId) }
-        return changes.size
+        pushDeleteToServer(plan.serverDeletes)
+        plan.upserts.forEach { new -> pushScrobbleToServer(new.withResolvedProgressKey(), currentProfileId) }
+        return plan.removed.size
     }
 
     fun progressForVideo(

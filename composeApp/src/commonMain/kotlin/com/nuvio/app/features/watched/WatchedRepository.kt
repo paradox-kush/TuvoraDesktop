@@ -818,7 +818,7 @@ object WatchedRepository {
         publish()
         persist()
         if (changes.isNotEmpty()) {
-            pushDeleteToServer(items = changes.map { it.second }, source = source)
+            pushDeleteToServer(items = WatchedRekey.serverDeletes(changes.map { it.second }, changes.map { it.third }), source = source)
             pushMarksToServer(changes.map { it.third }, WatchedTrackerHistorySync.Skip, source = source)
         }
         return changes.size
