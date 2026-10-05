@@ -1380,7 +1380,7 @@ private data class NativeControlsStructureKey(
     val isInPip: Boolean,
 )
 
-private fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
+internal fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
     buildString {
         append('{')
         appendJsonField("title", title)
@@ -1408,6 +1408,8 @@ private fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
         appendJsonField("playbackSpeedLabel", playbackSpeedLabel)
         append(',')
         appendJsonField("isFullscreen", isFullscreen)
+        append(',')
+        appendJsonField("isLive", isLive)
         append(',')
         appendJsonField("volumeLevel", volumeLevel)
         append(',')

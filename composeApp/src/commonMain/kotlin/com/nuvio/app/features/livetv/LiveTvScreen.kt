@@ -1065,7 +1065,10 @@ private fun LivePlayerSurface(
     // their header would otherwise leave blank. Kept stable so the 500ms snapshot poll doesn't
     // push a new state on every tick.
     val resizeLabel = stringResource(resizeMode.labelRes)
-    val controlsState = remember(title, resizeLabel) { PlayerControlsState(title = title, resizeModeLabel = resizeLabel) }
+    // P1: a live channel has no runtime (the bar shows LIVE); a replay keeps its seek bar and times.
+    val controlsState = remember(title, resizeLabel, isCatchUpPlayback) {
+        PlayerControlsState(title = title, resizeModeLabel = resizeLabel, isLive = !isCatchUpPlayback)
+    }
     // Key by url so a channel switch cleanly re-initialises the engine.
     androidx.compose.runtime.key(current.url) {
         PlatformPlayerSurface(

@@ -57,6 +57,7 @@ import nuvio.composeapp.generated.resources.compose_player_style
 import nuvio.composeapp.generated.resources.compose_player_subtitles
 import nuvio.composeapp.generated.resources.settings_playback_option_forced
 import nuvio.composeapp.generated.resources.subtitle_language_unknown
+import nuvio.composeapp.generated.resources.subtitle_closed_captions
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
@@ -352,6 +353,7 @@ private fun SubtitleLanguageRow(
     val label = when (item.key) {
         SubtitleOffLanguageKey -> stringResource(Res.string.compose_player_none)
         SubtitleUnknownLanguageKey -> stringResource(Res.string.subtitle_language_unknown)
+        SubtitleClosedCaptionsLanguageKey -> stringResource(Res.string.subtitle_closed_captions)
         else -> languageLabelForCode(item.key)
     }
 
@@ -405,11 +407,16 @@ private fun SubtitleOptionRow(
     when (option) {
         is SubtitleSelectionOption.BuiltIn -> {
             sourceLabel = stringResource(Res.string.compose_player_built_in)
-            title = localizedTrackDisplayName(
-                option.track.label,
-                option.track.language,
-                option.track.index,
-            )
+            title = if (ClosedCaptionTracks.isClosedCaption(option.track)) {
+                // P3: "eia_608" / "Unknown (application/cea-608)" say nothing to a viewer.
+                stringResource(Res.string.subtitle_closed_captions)
+            } else {
+                localizedTrackDisplayName(
+                    option.track.label,
+                    option.track.language,
+                    option.track.index,
+                )
+            }
             metadata = if (option.track.isForced) {
                 stringResource(Res.string.settings_playback_option_forced)
             } else {

@@ -84,7 +84,13 @@ internal fun buildSubtitleLanguageItems(
     val sortedEntries = visibleEntries.sortedWith(
         compareBy<Map.Entry<String, Int>>(
             { entry -> preferredOrder.indexOf(entry.key).takeIf { it >= 0 } ?: Int.MAX_VALUE },
-            { entry -> if (entry.key == SubtitleUnknownLanguageKey) "\uFFFF" else entry.key },
+            { entry ->
+                when (entry.key) {
+                    SubtitleUnknownLanguageKey -> "\uFFFF"
+                    SubtitleClosedCaptionsLanguageKey -> "\uFFFE"
+                    else -> entry.key
+                }
+            },
         ),
     )
 
@@ -164,6 +170,10 @@ internal fun subtitleLanguageKey(language: String?): String {
 }
 
 private fun SubtitleTrack.subtitleLanguageKey(): String {
+    if (ClosedCaptionTracks.isClosedCaption(this)) {
+        val key = subtitleLanguageKey(ClosedCaptionTracks.realLanguage(this))
+        if (key == SubtitleUnknownLanguageKey) return SubtitleClosedCaptionsLanguageKey
+    }
     val normalized = subtitleLanguageKey(language)
     val haystack = listOf(label, language, id).filterNotNull().joinToString(" ").lowercase()
     return when (normalized) {

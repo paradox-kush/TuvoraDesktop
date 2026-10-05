@@ -249,6 +249,8 @@ data class PlayerControlsState(
     val showExternalPlayer: Boolean = false,
     val durationMs: Long = 0L,
     val positionMs: Long = 0L,
+    /** P1: a live channel (not a replay) — the native bar shows LIVE instead of a seek bar and times. */
+    val isLive: Boolean = false,
     val sourceIsLoading: Boolean = false,
     val sourceFilters: List<PlayerControlFilterItem> = emptyList(),
     val sourceItems: List<PlayerControlSourceItem> = emptyList(),

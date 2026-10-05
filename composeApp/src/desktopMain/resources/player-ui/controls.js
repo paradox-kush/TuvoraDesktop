@@ -921,7 +921,10 @@ const setProgress = (positionMs, durationMs) => {
   seek.style.setProperty("--progress", `${percent}%`);
   positionLabel.textContent = formatTime(positionMs);
   durationLabel.textContent = formatTime(durationMs);
-  if (timeLabel) {
+  if (timeLabel && state.isLive) {
+    // P1: a live channel has no runtime — its "duration" is the buffered window.
+    timeLabel.textContent = "LIVE";
+  } else if (timeLabel) {
     durationMs = durationMs - (durationMs % 1000);
     if (timeLabelShowRemaining) {
       let remainingTimeMs = durationMs - positionMs + (positionMs % 1000 == 0 ? 0 : 1000);
@@ -2399,6 +2402,7 @@ const renderChrome = () => {
   const isPlaying = Boolean(state.isPlaying);
   const showError = renderPlaybackError();
   root.classList.toggle("pip-mode", Boolean(state.isInPip));
+  root.classList.toggle("live-mode", Boolean(state.isLive));
   if (!state.isInPip && isPipLocked) setPipLocked(false);
   root.classList.toggle("chrome-hidden", Boolean(showError || !state.controlsVisible));
   root.classList.toggle("source-visible", Boolean(!showError && !isPlaying && !state.isLoading && (state.streamTitle || state.providerName)));
