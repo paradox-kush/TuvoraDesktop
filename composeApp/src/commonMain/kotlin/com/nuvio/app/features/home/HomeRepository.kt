@@ -1,5 +1,6 @@
 package com.nuvio.app.features.home
 
+import com.nuvio.app.core.contracts.HomeSectionContributorRegistry
 import com.nuvio.app.features.addons.ManagedAddon
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.enabledAddons
@@ -43,6 +44,9 @@ object HomeRepository {
     private var currentRequestKey: String? = null
     private var currentDefinitions: List<HomeCatalogDefinition> = emptyList()
     private var cachedSections: Map<String, HomeCatalogSection> = emptyMap()
+    // Rows HomeSectionContributors (media servers) supply; empty while none is registered.
+    private var contributedSections: List<HomeCatalogSection> = emptyList()
+    private var contributedJob: Job? = null
     private var cachedCollectionHeroItems: List<MetaPreview> = emptyList()
     private var collectionHeroJob: Job? = null
     private var collectionHeroRequestKey: String? = null
@@ -57,6 +61,7 @@ object HomeRepository {
         cachedSections = cachedSections.filterKeys(requestCacheKeys::contains)
         val requestKey = requests.joinToString(separator = "|", transform = HomeCatalogDefinition::cacheKey)
         currentRequestKey = requestKey
+        refreshContributedSections(force)
 
         if (!force && activeRequestKey == requestKey && _uiState.value.isLoading) return
         activeRequestKey = requestKey
@@ -164,6 +169,9 @@ object HomeRepository {
         currentRequestKey = null
         currentDefinitions = emptyList()
         cachedSections = emptyMap()
+        contributedJob?.cancel()
+        contributedJob = null
+        contributedSections = emptyList()
         cachedCollectionHeroItems = emptyList()
         collectionHeroJob?.cancel()
         collectionHeroJob = null
@@ -171,6 +179,29 @@ object HomeRepository {
         lastPublishedCatalogHeroEmpty = true
         lastErrorMessage = null
         _uiState.value = HomeUiState()
+    }
+
+    /**
+     * Pulls the rows registered [com.nuvio.app.core.contracts.HomeSectionContributor]s supply. Runs under
+     * Home's own refresh (its lifecycle) and does nothing at all while no contributor is registered,
+     * so Home is unchanged until a source contributes. Contributors TTL-gate their own fetches.
+     */
+    private fun refreshContributedSections(force: Boolean) {
+        contributedJob?.cancel()
+        contributedJob = null
+        if (HomeSectionContributorRegistry.isEmpty) {
+            if (contributedSections.isNotEmpty()) {
+                contributedSections = emptyList()
+                publishCurrentState(isLoading = _uiState.value.isLoading, requestKey = currentRequestKey)
+            }
+            return
+        }
+        contributedJob = scope.launch {
+            val rows = HomeSectionContributorRegistry.collectSections(forceRefresh = force)
+            if (rows == contributedSections) return@launch
+            contributedSections = rows
+            publishCurrentState(isLoading = _uiState.value.isLoading, requestKey = currentRequestKey)
+        }
     }
 
     private fun publishCurrentState(
@@ -187,7 +218,7 @@ object HomeRepository {
         fun HomeCatalogSection.withPosterOverlay(): HomeCatalogSection =
             copy(items = items.reapplyCustomPosterUrls(posterPattern))
 
-        val sections = currentDefinitions
+        val addonSections = currentDefinitions
             .sortedBy { definition -> preferences[definition.key]?.order ?: Int.MAX_VALUE }
             .mapNotNull { definition ->
                 val preference = preferences[definition.key]
@@ -203,12 +234,15 @@ object HomeRepository {
                     title = customTitle.ifBlank { definition.titleFor(snapshot.showCatalogType) },
                 )
             }
+        val contributed = contributedSections.map { it.withPosterOverlay().withReleaseFilter() }
+        val sections = HomeSectionMerge.merge(addonSections, contributed, preferences)
 
         val catalogHeroItems = if (snapshot.heroEnabled) {
             val heroRandom = Random((requestKey?.hashCode() ?: 0).absoluteValue + 1)
             currentDefinitions
                 .filter { definition -> preferences[definition.key]?.heroSourceEnabled != false }
                 .mapNotNull { definition -> cachedSections[definition.cacheKey] }
+                .plus(HomeSectionMerge.heroEligible(contributedSections, preferences))
                 .map { section -> section.withPosterOverlay().withReleaseFilter() }
                 .flatMap { section -> section.items }
                 .distinctBy { item -> "${item.type}:${item.id}" }

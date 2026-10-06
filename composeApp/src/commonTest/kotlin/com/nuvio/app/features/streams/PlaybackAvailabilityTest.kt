@@ -1,15 +1,30 @@
 package com.nuvio.app.features.streams
 
+import com.nuvio.app.core.contracts.OwnSourcePolicy
+import com.nuvio.app.core.contracts.resetAllSourceRegistriesForTest
 import com.nuvio.app.features.addons.AddonManifest
 import com.nuvio.app.features.addons.AddonResource
 import com.nuvio.app.features.addons.ManagedAddon
 import com.nuvio.app.features.plugins.PluginScraper
 import com.nuvio.app.features.plugins.PluginsUiState
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class PlaybackAvailabilityTest {
+    // Which content ids are "own source" ids is the registered OwnSourcePolicy (no literal in the code
+    // under test any more): wire the IPTV namespace the way the composition root does.
+    @BeforeTest
+    fun wireOwnSources() {
+        resetAllSourceRegistriesForTest()
+        OwnSourcePolicy.registerContentIdPredicate("test-iptv") { it.startsWith("xtream:") }
+    }
+
+    @AfterTest
+    fun unwireOwnSources() = resetAllSourceRegistriesForTest()
+
     @Test
     fun `empty setup and catalog only addons do not enable playback`() {
         assertFalse(available())

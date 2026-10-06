@@ -1,6 +1,5 @@
 package com.nuvio.app.features.search
 
-import com.nuvio.app.core.contracts.IptvCatalogAccess
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.i18n.localizedMediaTypeLabel
 import com.nuvio.app.features.addons.AddonCatalog
@@ -107,9 +106,9 @@ object SearchRepository {
             return
         }
 
-        val iptvCatalog = IptvCatalogAccess.catalogOrNull
-        iptvCatalog?.ensureLoaded()
-        val xtreamEnabled = iptvCatalog?.hasEnabledAccounts() == true
+        // Own-source search is plural (IPTV today, media servers next): each registered provider
+        // carries its own enabled gate, and "enabled" here means any of them is.
+        val xtreamEnabled = IptvSearchAccess.providerOrNull?.isEnabled() == true
         lastSearchQuery = normalizedQuery
         lastSearchAddons = addons
         // Upstream: addon manifests still loading => loading state, not "no addons". No early return

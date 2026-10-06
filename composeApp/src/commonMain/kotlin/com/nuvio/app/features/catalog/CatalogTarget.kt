@@ -30,6 +30,19 @@ sealed interface CatalogTarget {
         override val contentType: String,
         override val supportsPagination: Boolean = false,
     ) : CatalogTarget
+
+    /**
+     * "See all" for a row an own source contributed to Home (a media server's list). [sourceKey]
+     * identifies the contributing source (stable across re-login - source identity, never a user id),
+     * [listId] which of its lists. Served by the owning
+     * [HomeSectionContributor][com.nuvio.app.core.contracts.HomeSectionContributor].
+     */
+    data class Source(
+        val sourceKey: String,
+        val listId: String,
+        override val contentType: String,
+        override val supportsPagination: Boolean = false,
+    ) : CatalogTarget
 }
 
 @Serializable
@@ -37,4 +50,5 @@ enum class CatalogTargetKind {
     ADDON,
     LIBRARY,
     COLLECTION_SOURCE,
+    SOURCE,
 }

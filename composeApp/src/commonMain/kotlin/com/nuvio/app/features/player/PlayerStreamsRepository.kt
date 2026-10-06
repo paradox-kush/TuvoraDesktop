@@ -24,6 +24,7 @@ import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamLoadCompletion
 import com.nuvio.app.features.streams.StreamParser
 import com.nuvio.app.features.streams.StreamsUiState
+import com.nuvio.app.features.streams.asDirectSourceGroup
 import com.nuvio.app.features.streams.runCatchingUnlessCancelled
 import com.nuvio.app.features.streams.sortedForGroupedDisplay
 import com.nuvio.app.features.streams.streamAddonInstanceId
@@ -268,19 +269,14 @@ object PlayerStreamsRepository {
                 }
                 val stream = streamProvider.directStreamItem(videoId)
                 stateFlow.value = if (stream != null) {
-                    val group = AddonStreamGroup(
-                        addonName = stream.addonName,
-                        addonId = "xtream",
-                        streams = listOf(stream),
-                        isLoading = false,
-                    )
+                    val group = stream.asDirectSourceGroup()
                     val presentedGroup = StreamBadgePresentation.apply(
                         groups = listOf(group),
                         rules = streamBadgeRules,
                     ).firstOrNull() ?: group
                     StreamsUiState(
                         groups = listOf(presentedGroup),
-                        activeAddonIds = setOf("xtream"),
+                        activeAddonIds = setOf(stream.addonId),
                         isAnyLoading = false,
                     )
                 } else {

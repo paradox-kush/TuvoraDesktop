@@ -569,7 +569,7 @@ object MetaDetailsRepository {
         com.nuvio.app.features.addons.AddonSourcePolicy.embeddedStreamsForBuild(
             streams = findEmbeddedStreamsUnfiltered(videoId),
             streamSourcesEnabled = com.nuvio.app.core.build.AppFeaturePolicy.addonStreamSourcesEnabled,
-            isIptv = com.nuvio.app.features.streams.StreamLinkCacheRepository::isIptvAddon,
+            isIptv = com.nuvio.app.core.contracts.OwnSourcePolicy::isOwnProviderId,
         )
 
     private fun findEmbeddedStreamsUnfiltered(videoId: String): List<com.nuvio.app.features.streams.StreamItem> {

@@ -481,6 +481,13 @@ private fun PlayerScreenRuntime.BindPlayerUiVisibilityEffects() {
             emitTrackingScrobbleStart()
         }
 
+        // Playback sessions for sources that keep their own watched state (media servers): announce
+        // the start once per playing item, and a resume after a pause as progress.
+        if (playbackSnapshot.isPlaying) {
+            val startedSession = reportSessionStart()
+            if (!previousIsPlaying && !startedSession) reportSessionProgress(paused = false)
+        }
+
         if (!playbackSnapshot.isLoading) {
             previousIsPlaying = playbackSnapshot.isPlaying
         }
