@@ -75,17 +75,21 @@ internal object PlaybackDecisionPolicy {
     fun ticksToMs(ticks: Long): Long = ticks / 10_000L
     fun msToTicks(ms: Long): Long = ms * 10_000L
 
-    data class ResumeOffer(val serverPositionMs: Long)
+    /** [startAutomatically]: Tuvora has no progress of its own, so the server's position is simply where playback starts. */
+    data class ResumeOffer(val serverPositionMs: Long, val startAutomatically: Boolean = false)
 
     private const val MIN_OFFER_POSITION_MS = 10_000L
     private const val MIN_DIFFERENCE_MS = 30_000L
     private const val NEARLY_FINISHED = 0.95
 
     /**
-     * The "Resume from server at hh:mm" choice (D3, regression pass 5.12): the item fetch at mint time returns
-     * the server's position (`UserData.PlaybackPositionTicks`); when the item was watched elsewhere (the server
-     * has a later play than Tuvora's own record) and the positions really differ, offer it. One fetch, no extra
-     * request. Null = just resume from Tuvora's record.
+     * Where a media-server item resumes (D3, regression pass 5.12): the item fetch at mint time returns the
+     * server's position (`UserData.PlaybackPositionTicks`); one fetch, no extra request.
+     *  - Tuvora has NO progress of its own: start from the server's position, no question (the reference clients -
+     *    Plezy, jellyfin-androidtv, jellyfin-web - all pass the server's position up front as the start time).
+     *  - Tuvora has its own record and the item was watched elsewhere (the server has a later play) with a really
+     *    different position: offer the jump ("Continue at hh:mm?").
+     * Null = just resume from Tuvora's record.
      */
     fun resumeOffer(
         serverPositionMs: Long?,
@@ -98,8 +102,9 @@ internal object PlaybackDecisionPolicy {
         if (server < MIN_OFFER_POSITION_MS) return null
         if (durationMs != null && durationMs > 0 && server >= durationMs * NEARLY_FINISHED) return null
         val tuvora = tuvoraPositionMs ?: 0L
+        if (tuvora < MIN_OFFER_POSITION_MS) return ResumeOffer(server, startAutomatically = true)
         if (server - tuvora <= MIN_DIFFERENCE_MS && tuvora - server <= MIN_DIFFERENCE_MS) return null
         val serverIsNewer = if (serverLastPlayedAtMs != null && tuvoraUpdatedAtMs != null) serverLastPlayedAtMs > tuvoraUpdatedAtMs else server > tuvora
-        return if (serverIsNewer) ResumeOffer(server) else null
+        return if (serverIsNewer) ResumeOffer(server, startAutomatically = false) else null
     }
 }

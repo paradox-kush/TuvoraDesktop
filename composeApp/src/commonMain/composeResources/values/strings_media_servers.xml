@@ -53,6 +53,12 @@
     <string name="ms_add_password_note">Your password is sent to the server once and not saved. Only the sign-in it returns is kept, on this device.</string>
     <string name="ms_add_sign_in">Sign in</string>
     <string name="ms_add_signing_in">Signing in...</string>
+    <string name="ms_add_name_label">Server name</string>
+    <string name="ms_add_name_hint">Shown in Tuvora; you can change it later</string>
+    <string name="ms_add_rows_title">Show Recently added on Home?</string>
+    <string name="ms_add_rows_body">%1$s’s newest movies and shows get a row of their own on Home. You can change this any time in the server’s settings.</string>
+    <string name="ms_add_rows_yes">Show on Home</string>
+    <string name="ms_add_rows_no">Not now</string>
     <string name="ms_add_signed_in_toast">Signed in to %1$s</string>
     <string name="ms_add_error_invalid_address">That does not look like a server address.</string>
     <string name="ms_add_error_not_a_server">Something answered at that address, but it is not a Jellyfin or Emby server.</string>
@@ -115,5 +121,5 @@
 
     <!-- Player -->
     <string name="ms_resume_from_server_message">You watched further on your server. Continue at %1$s?</string>
-    <string name="ms_resume_from_server_action">Jump</string>
+    <string name="ms_resume_from_server_action">Continue</string>
 </resources>

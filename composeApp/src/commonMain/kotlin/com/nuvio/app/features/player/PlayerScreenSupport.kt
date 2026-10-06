@@ -5,6 +5,9 @@ import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.streams.StreamItem
 
 internal const val PlaybackProgressPersistIntervalMs = 60_000L
+
+/** How often the player lets a source's playback reporter decide whether to report (its own policy sets the real cadence). */
+internal const val PlaybackSessionTickMs = 5_000L
 internal const val PlayerDoubleTapSeekStepMs = 10_000L
 internal const val PlayerDoubleTapSeekResetDelayMs = 800L
 internal const val PlayerLockedOverlayDurationMs = 2_000L

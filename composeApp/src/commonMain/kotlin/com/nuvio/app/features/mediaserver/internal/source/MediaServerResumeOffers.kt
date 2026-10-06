@@ -11,8 +11,9 @@ import com.nuvio.app.features.mediaserver.internal.store.MediaServerEntryStore
 import kotlinx.coroutines.CancellationException
 
 /**
- * "Resume from server" (D3, design 5.7 / 5.12): Tuvora resumes from ITS record, as for every source; when the
- * server's own position is newer (the viewer watched elsewhere) the player is told so it can offer the jump. One
+ * "Resume from server" (D3, design 5.7 / 5.12): with no Tuvora progress the server's position is where playback
+ * starts; with a Tuvora record, Tuvora resumes from ITS record and, when the server's own position is newer
+ * (the viewer watched elsewhere), the player is told so it can offer the jump. One
  * item fetch at play start (the item carries `UserData`), decided by [PlaybackDecisionPolicy.resumeOffer].
  */
 internal class MediaServerResumeOffers(
@@ -46,6 +47,6 @@ internal class MediaServerResumeOffers(
             tuvoraUpdatedAtMs = tuvoraUpdatedAtMs,
             durationMs = durationMs ?: item.runTimeTicks?.let(PlaybackDecisionPolicy::ticksToMs),
         ) ?: return null
-        return PlaybackResumeOffer(offer.serverPositionMs)
+        return PlaybackResumeOffer(offer.serverPositionMs, autoStart = offer.startAutomatically)
     }
 }

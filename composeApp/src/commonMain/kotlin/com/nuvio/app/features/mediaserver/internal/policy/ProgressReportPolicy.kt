@@ -8,13 +8,15 @@ import kotlin.math.abs
  *  - start: one report;
  *  - playing: a progress report every [PLAYING_INTERVAL_MS], plus one right after a seek lands or a resume;
  *  - pause: one `IsPaused=true` report, then a check-in every [PAUSED_CHECK_IN_MS] (Jellyfin reaps a session
- *    silent for 5 minutes - the check-in keeps it alive without a timer);
+ *    silent for 5 minutes - the check-in keeps it alive);
+ * The cadence is the reference clients' (J2 reference check): ~15 s while playing, ~60 s while paused - the player
+ * feeds this from a local 5 s tick (a paused player emits no events of its own).
  *  - stop: always, exactly once.
  * Pure state machine: feed events with a clock reading, get back the report to send (or none).
  */
 internal object ProgressReportPolicy {
-    const val PLAYING_INTERVAL_MS = 10_000L
-    const val PAUSED_CHECK_IN_MS = 4 * 60_000L
+    const val PLAYING_INTERVAL_MS = 15_000L
+    const val PAUSED_CHECK_IN_MS = 60_000L
     /** A position this far off where uninterrupted playback would be is a seek. */
     const val SEEK_JUMP_MS = 5_000L
 

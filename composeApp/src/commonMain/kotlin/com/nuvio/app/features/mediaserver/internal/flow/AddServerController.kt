@@ -1,6 +1,7 @@
 package com.nuvio.app.features.mediaserver.internal.flow
 
 import com.nuvio.app.features.mediaserver.api.MediaServerEntry
+import com.nuvio.app.features.mediaserver.api.MediaServerHomeRow
 import com.nuvio.app.features.mediaserver.api.MediaServerType
 import com.nuvio.app.features.mediaserver.internal.MediaServerAccounts
 import com.nuvio.app.features.mediaserver.internal.SignInResult
@@ -23,7 +24,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-internal enum class AddStage { ADDRESS, CHOOSE_SIGN_IN, QUICK_CONNECT, PASSWORD, DONE }
+internal enum class AddStage {
+    ADDRESS, CHOOSE_SIGN_IN, QUICK_CONNECT, PASSWORD,
+
+    /** Signed in: one question - show the server's "Recently added" shelf on Home? (default off, one tap on). */
+    OFFER_HOME_ROW,
+    DONE,
+}
 
 internal enum class AddError {
     /** The address field is empty or cannot be an address at all. */
@@ -70,6 +77,8 @@ internal data class AddServerState(
     val error: AddError? = null,
     val certPrompt: CertPrompt? = null,
     val found: FoundServer? = null,
+    /** What the entry will be called; starts as the server's own `ServerName` (never the hostname). Ignored when signing in an existing entry. */
+    val serverName: String = "",
     /** The user picked X but the server says it is Y: surfaced once, the flow continues with Y. */
     val typeCorrectedFrom: MediaServerType? = null,
     val quickConnectAvailable: Boolean = false,
@@ -153,6 +162,7 @@ internal class AddServerController(
                 busy = false,
                 stage = AddStage.CHOOSE_SIGN_IN,
                 found = FoundServer(result.baseUrl, result.info, result.type),
+                serverName = result.info.name,
                 typeCorrectedFrom = if (result.typeMismatch) it.selectedType else null,
                 selectedType = result.type,
                 quickConnectAvailable = quickConnect,
@@ -160,6 +170,8 @@ internal class AddServerController(
             )
         }
     }
+
+    fun setServerName(text: String) = mutable.update { it.copy(serverName = text) }
 
     /** The user accepted the certificate shown in [AddServerState.certPrompt]: pin it, then retry the address. */
     fun trustCertificate() {
@@ -255,16 +267,33 @@ internal class AddServerController(
     private fun finish(session: AuthSession) {
         val found = mutable.value.found ?: return
         val result = existing?.let { accounts.signIn(it, found.baseUrl, found.info.machineId, session) }
-            ?: accounts.addServer(found.type, found.baseUrl, found.info, session, displayName = null)
+            ?: accounts.addServer(found.type, found.baseUrl, found.info, session, displayName = mutable.value.serverName)
         when (result) {
             is SignInResult.Success -> {
-                mutable.update { it.copy(stage = AddStage.DONE, busy = false, signedIn = result.entry, quickConnect = null, error = null) }
+                val offerRows = MediaServerHomeRow.RECENTLY_ADDED !in result.entry.homeRows
+                mutable.update {
+                    it.copy(stage = if (offerRows) AddStage.OFFER_HOME_ROW else AddStage.DONE, busy = false, signedIn = result.entry, quickConnect = null, error = null)
+                }
                 onSignedIn(result.entry)
             }
             SignInResult.DifferentServer -> fail(AddError.DIFFERENT_SERVER)
             SignInResult.NotSaved -> fail(AddError.NOT_SAVED)
             SignInResult.UnusableServerIds -> fail(AddError.UNUSABLE_SERVER)
         }
+    }
+
+    /** One tap on the offer: the server's "Recently added" shelf joins Home (the other server rows stay off). */
+    fun enableRecentlyAdded() {
+        val entry = mutable.value.signedIn ?: return
+        if (mutable.value.stage != AddStage.OFFER_HOME_ROW) return
+        val updated = accounts.setHomeRows(entry, entry.homeRows + MediaServerHomeRow.RECENTLY_ADDED)
+        val refreshed = if (updated) entry.copy(homeRows = entry.homeRows + MediaServerHomeRow.RECENTLY_ADDED) else entry
+        mutable.update { it.copy(stage = AddStage.DONE, signedIn = refreshed) }
+        if (updated) onSignedIn(refreshed)
+    }
+
+    fun skipHomeRowOffer() {
+        if (mutable.value.stage == AddStage.OFFER_HOME_ROW) mutable.update { it.copy(stage = AddStage.DONE) }
     }
 
     private fun fail(error: AddError) =

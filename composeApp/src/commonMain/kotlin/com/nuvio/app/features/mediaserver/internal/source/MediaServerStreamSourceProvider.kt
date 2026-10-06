@@ -7,28 +7,25 @@ import com.nuvio.app.core.contracts.StreamSourceProvider
 import com.nuvio.app.features.mediaserver.internal.client.MediaServerException
 import com.nuvio.app.features.mediaserver.internal.client.MediaServerServices
 import com.nuvio.app.features.mediaserver.internal.client.PlaybackInfoRequest
-import com.nuvio.app.features.mediaserver.internal.client.mediabrowser.MediaBrowserDialect
 import com.nuvio.app.features.mediaserver.internal.client.mediabrowser.MediaBrowserUrls
 import com.nuvio.app.features.mediaserver.internal.client.mediabrowser.MediaSourceDto
 import com.nuvio.app.features.mediaserver.internal.policy.MediaServerIds
 import com.nuvio.app.features.mediaserver.internal.policy.PlaybackDecisionPolicy
 import com.nuvio.app.features.mediaserver.internal.store.MediaServerEntryStore
-import com.nuvio.app.features.streams.StreamBehaviorHints
 import com.nuvio.app.features.streams.StreamItem
-import com.nuvio.app.features.streams.StreamProxyHeaders
-import com.nuvio.app.features.streams.StreamSubtitle
 import kotlinx.coroutines.CancellationException
 
 /**
  * The media-server lane of the stream-source port (design 5.5): a server's own movie/episode resolves to ONE
  * deferred stream - `ms-deferred:{serverKey}|{itemId}|{mediaSourceId}` - and the real play URL is minted at
  * pick time from the server's PlaybackInfo, through [PlaybackDecisionPolicy]. The list never holds a token or
- * a playable URL. The matched lane (a TMDB title found on a server) is P3: [matchSourceGroups] is empty until
- * then, so nothing about it is reachable yet.
+ * a playable URL. The matched lane (a TMDB title found on a server, `ms-match:{serverKey}` groups) is
+ * [MediaServerMatchLane]'s; its streams are the same deferred shape and mint through the same path.
  */
 internal class MediaServerStreamSourceProvider(
     private val store: MediaServerEntryStore,
     private val services: MediaServerServices,
+    private val matchLane: MediaServerMatchLane? = null,
 ) : StreamSourceProvider {
     private val log = Logger.withTag("MediaServerStreamSource")
 
@@ -40,44 +37,21 @@ internal class MediaServerStreamSourceProvider(
     override fun directStreamItem(videoId: String): StreamItem? {
         val item = MediaServerItemRegistry.get(videoId) ?: return null
         val entry = store.entryByServerKey(item.serverKey) ?: return null
-        val source = item.sources.firstOrNull()
-        val label = source?.label ?: "Direct play"
-        // Emby authenticates a player request by header; Jellyfin's direct stream needs none (design 5.5).
-        val headers = tokenHeaders(entry)
-        return StreamItem(
-            name = label,
+        return MediaServerStreamItems.build(
+            entry = entry,
+            itemId = item.itemId,
             title = item.name,
-            url = MediaServerIds.deferredUrl(item.serverKey, item.itemId, source?.id),
-            addonName = entry.name,
-            addonId = MediaServerIds.DIRECT_GROUP_ID,
-            behaviorHints = StreamBehaviorHints(
-                proxyHeaders = headers?.let { StreamProxyHeaders(request = it) },
-            ),
-            // Sidecar text subtitles ride with the stream; the engines list the container's own tracks by themselves.
-            externalSubtitles = source?.let { src ->
-                src.subtitles.map { sub ->
-                    StreamSubtitle(
-                        url = MediaBrowserUrls.subtitle(entry.address.orEmpty(), item.itemId, src.id, sub.index),
-                        language = sub.language,
-                        name = sub.label,
-                        headers = headers,
-                    )
-                }
-            }.orEmpty(),
+            source = item.sources.firstOrNull(),
+            groupId = MediaServerIds.DIRECT_GROUP_ID,
+            headers = MediaServerStreamItems.tokenHeaders(services, entry),
         )
     }
 
-    private fun tokenHeaders(entry: com.nuvio.app.features.mediaserver.api.MediaServerEntry): Map<String, String>? {
-        val dialect = MediaBrowserDialect.of(entry.type)
-        val header = dialect.extraTokenHeader ?: return null
-        val token = services.credentials.token(entry.serverKey) ?: return null
-        return mapOf(header to token)
-    }
+    // The matched lane (design 5.6, P3): a TMDB/IMDb title page offers each signed-in server that has the title.
+    override fun matchSourceGroups(type: String): List<StreamSourceGroup> = matchLane?.groups(type).orEmpty()
 
-    // The matched lane is P3 (design 7): no match sources yet.
-    override fun matchSourceGroups(type: String): List<StreamSourceGroup> = emptyList()
-
-    override suspend fun resolveMatchStreams(sourceId: String, type: String, videoId: String, season: Int?, episode: Int?): List<StreamItem> = emptyList()
+    override suspend fun resolveMatchStreams(sourceId: String, type: String, videoId: String, season: Int?, episode: Int?): List<StreamItem> =
+        matchLane?.streams(sourceId, type, videoId, season, episode).orEmpty()
 
     override fun isMatchSourceId(providerAddonId: String): Boolean = providerAddonId.startsWith(MediaServerIds.MATCH_GROUP_PREFIX)
 

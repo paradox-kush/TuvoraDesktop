@@ -14,8 +14,9 @@ private const val RESUME_OFFER_VISIBLE_MS = 12_000L
 
 /**
  * "Resume from server at hh:mm" (D3): once per playing item, right after playback starts, ask the registered
- * source whether ITS position is newer than Tuvora's own record (the viewer watched elsewhere). Tuvora's record
- * stays the default - nothing seeks on its own; a toast offers the jump and expires. Cheap no-op for every item no
+ * source where it is. No Tuvora record: the server's position IS the start (seeked at once, like the references'
+ * up-front start time). A Tuvora record that differs from a NEWER server position: Tuvora's record stays the
+ * default and a toast offers the jump ("Continue at hh:mm?") and expires. Cheap no-op for every item no
  * source owns (all add-on and IPTV plays), one item fetch for a media-server item, never a poll.
  */
 internal fun PlayerScreenRuntime.offerServerResumeIfNewer() {
@@ -32,6 +33,11 @@ internal fun PlayerScreenRuntime.offerServerResumeIfNewer() {
         val offer = PlaybackResumeOfferRegistry.offerFor(videoId, providerId, tuvoraPositionMs, tuvoraUpdatedAtMs, durationMs) ?: return@launch
         if (activeVideoId != videoId) return@launch // the viewer moved on to another episode meanwhile
         if (playbackSnapshot.positionMs >= offer.positionMs - RESUME_OFFER_NEAR_MS) return@launch
+        if (offer.autoStart) {
+            // No progress of our own: the server's position is where this starts - no question asked.
+            playerController?.seekTo(offer.positionMs)
+            return@launch
+        }
         NuvioToastController.show(
             message = getString(Res.string.ms_resume_from_server_message, formatPlaybackTime(offer.positionMs)),
             durationMillis = RESUME_OFFER_VISIBLE_MS,

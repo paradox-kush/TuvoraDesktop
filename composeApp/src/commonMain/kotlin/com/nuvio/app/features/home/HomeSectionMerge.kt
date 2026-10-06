@@ -3,7 +3,7 @@ package com.nuvio.app.features.home
 /**
  * Joins the rows [com.nuvio.app.core.contracts.HomeSectionContributor]s supply (a media server's own
  * lists) with the add-on catalog rows, through the SAME per-key preferences: orderable, hideable,
- * renamable, hero opt-in. Pure so it tests without Home's repositories.
+ * renamable (never the hero in v1). Pure so it tests without Home's repositories.
  *
  * With nothing contributed the add-on rows come back untouched (same list), which is what keeps Home
  * identical while no source contributes.
@@ -34,12 +34,13 @@ internal object HomeSectionMerge {
     }
 
     /**
-     * Contributed rows that may feed the hero: only those the viewer explicitly opted in. A server's
-     * rows are off the hero by default (a signed-in library must not take over the home banner).
+     * Contributed rows that may feed the hero: NONE in v1 (owner decision 2026-10-06 - a signed-in server's library
+     * must not take over the home banner). The Home layout UI already cannot opt a contributed row in; this makes
+     * the rule hold even for a stale or synced `heroSourceEnabled` on a contributed key.
      */
+    @Suppress("UNUSED_PARAMETER")
     fun heroEligible(
         contributed: List<HomeCatalogSection>,
         preferences: Map<String, HomeCatalogPreference>,
-    ): List<HomeCatalogSection> =
-        contributed.filter { preferences[it.key]?.let { p -> p.enabled && p.heroSourceEnabled } == true }
+    ): List<HomeCatalogSection> = emptyList()
 }

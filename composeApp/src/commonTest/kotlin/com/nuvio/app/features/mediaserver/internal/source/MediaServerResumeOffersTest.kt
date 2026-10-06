@@ -46,8 +46,17 @@ class MediaServerResumeOffersTest {
         fake.items["m1"] = serverItem(positionMs = 40 * 60_000L, lastPlayedMs = 2_000_000_000_000L)
         val source = MediaServerResumeOffers(rig.store, rig.services)
         val offer = source.offer(id, tuvoraPositionMs = 5 * 60_000L, tuvoraUpdatedAtMs = 1_900_000_000_000L, durationMs = null)
-        assertEquals(PlaybackResumeOffer(40 * 60_000L), offer)
+        assertEquals(PlaybackResumeOffer(40 * 60_000L, autoStart = false), offer)
         assertEquals(listOf("m1"), fake.itemRequests, "exactly one fetch")
+    }
+
+    @Test
+    fun withNoLocalProgressTheServerPositionIsAnAutomaticStart() = runTest {
+        val rig = rig()
+        fake.items["m1"] = serverItem(positionMs = 40 * 60_000L, lastPlayedMs = null)
+        val source = MediaServerResumeOffers(rig.store, rig.services)
+        assertEquals(PlaybackResumeOffer(40 * 60_000L, autoStart = true), source.offer(id, tuvoraPositionMs = null, tuvoraUpdatedAtMs = null, durationMs = null))
+        assertEquals(listOf("m1"), fake.itemRequests, "still one fetch")
     }
 
     @Test
@@ -94,7 +103,7 @@ class MediaServerResumeOffersTest {
             override suspend fun offer(videoId: String, tuvoraPositionMs: Long?, tuvoraUpdatedAtMs: Long?, durationMs: Long?): PlaybackResumeOffer? = error("boom")
         })
         PlaybackResumeOfferRegistry.register(MediaServerResumeOffers(rig.store, rig.services))
-        assertEquals(PlaybackResumeOffer(40 * 60_000L), PlaybackResumeOfferRegistry.offerFor(id, "ms", 0, 1_000_000_000_000L, null))
+        assertEquals(PlaybackResumeOffer(40 * 60_000L, autoStart = true), PlaybackResumeOfferRegistry.offerFor(id, "ms", 0, 1_000_000_000_000L, null))
         assertNull(PlaybackResumeOfferRegistry.offerFor("tt0133093", null, 0, null, null) , "a broken source that owns everything offers nothing and the call still returns")
     }
 }

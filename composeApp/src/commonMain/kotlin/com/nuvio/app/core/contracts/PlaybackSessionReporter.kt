@@ -25,7 +25,7 @@ data class PlaybackSessionState(
  * the Trakt/Simkl scrobble pipeline without depending on a resolvable TMDB identity.
  *
  * The player calls every registered reporter that [handles] the playing item, from the lifecycle of
- * the player; cadence (e.g. a progress report every 10 s, a pause check-in at least every 4 min) and the
+ * the player; cadence (e.g. a progress report every ~15 s while playing, a check-in every ~60 s while paused; the player ticks every 5 s) and the
  * double-scrobble rules belong to the reporter's own pure policy - the player just announces:
  *  - [onStart]    playback began for a session;
  *  - [onProgress] periodic position, a pause (`paused = true`), a resume, or a seek landing;

@@ -466,7 +466,6 @@ internal fun PlayerScreenRuntime.persistPlaybackProgressTick() {
     val now = WatchProgressClock.nowEpochMs()
     if (now - lastProgressPersistEpochMs < PlaybackProgressPersistIntervalMs) return
     lastProgressPersistEpochMs = now
-    reportSessionProgress(paused = false)
     if (!admitProgressSave()) return
     WatchProgressRepository.upsertPlaybackProgress(
         session = playbackSession,

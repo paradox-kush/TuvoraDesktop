@@ -28,30 +28,51 @@ class ProgressReportPolicyTest {
     }
 
     @Test
-    fun playingReportsEveryTenSecondsAndNotBefore() {
+    fun playingReportsEveryFifteenSecondsAndNotBefore() {
         val reports = run(
             Triple(0L, 0L, false),
-            Triple(2_000L, 2_000L, false), Triple(9_999L, 9_999L, false),
-            Triple(10_000L, 10_000L, false), Triple(15_000L, 15_000L, false),
-            Triple(20_000L, 20_000L, false),
+            Triple(2_000L, 2_000L, false), Triple(14_999L, 14_999L, false),
+            Triple(15_000L, 15_000L, false), Triple(20_000L, 20_000L, false),
+            Triple(30_000L, 30_000L, false),
         )
         assertEquals(listOf(Kind.START, Kind.PROGRESS, Kind.PROGRESS), reports.map { it.kind })
-        assertEquals(listOf(0L, 10_000L, 20_000L), reports.map { it.positionMs })
+        assertEquals(listOf(0L, 15_000L, 30_000L), reports.map { it.positionMs })
     }
 
     @Test
-    fun aPauseReportsImmediatelyOnceThenOnlyCheckInsEveryFourMinutes() {
+    fun aPauseReportsImmediatelyOnceThenOnlyCheckInsEverySixtySeconds() {
         val reports = run(
             Triple(0L, 0L, false),
             Triple(3_000L, 3_000L, true),             // pause edge: sent now
-            Triple(60_000L, 3_000L, true),            // still paused: quiet
-            Triple(239_999L, 3_000L, true),
-            Triple(243_000L, 3_000L, true),           // >= 4 min since the pause report: check-in
-            Triple(300_000L, 3_000L, true),           // quiet again
+            Triple(30_000L, 3_000L, true),            // still paused: quiet
+            Triple(62_999L, 3_000L, true),
+            Triple(63_000L, 3_000L, true),            // >= 60 s since the pause report: check-in
+            Triple(100_000L, 3_000L, true),           // quiet again
         )
         assertEquals(listOf(Kind.START, Kind.PROGRESS, Kind.PROGRESS), reports.map { it.kind })
         assertTrue(reports[1].paused && reports[2].paused)
         assertEquals(3_000L, reports[1].positionMs)
+    }
+
+    @Test
+    fun theCadenceHoldsWhenTheCallerTicksEveryFiveSeconds() {
+        // The player drives the policy from a 5 s local tick (a paused player emits no events of its own):
+        // 5 minutes of play = START + one report per 15 s; 5 minutes paused = the pause edge + one per 60 s.
+        fun simulate(paused: Boolean): List<Report> {
+            var state = ProgressReportPolicy.start(State(), 0, 0).state
+            val out = mutableListOf(Report(Kind.START, 0, false))
+            var position = 0L
+            var t = 5_000L
+            while (t <= 300_000L) {
+                if (!paused) position = t
+                ProgressReportPolicy.progress(state, t, position, paused).also { state = it.state; it.report?.let(out::add) }
+                t += 5_000L
+            }
+            return out
+        }
+        assertEquals(1 + 300 / 15, simulate(paused = false).size, "playing: start + one per 15 s")
+        // paused from t=5 s: the edge at 5 s, then 65 s, 125 s, 185 s, 245 s -> 1 start + 1 edge + 4 check-ins
+        assertEquals(1 + 1 + 4, simulate(paused = true).size, "paused: start + edge + one per 60 s")
     }
 
     @Test

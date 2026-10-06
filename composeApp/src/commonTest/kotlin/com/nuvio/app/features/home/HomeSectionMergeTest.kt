@@ -68,20 +68,12 @@ class HomeSectionMergeTest {
     }
 
     @Test
-    fun `contributed rows reach the hero only when the viewer opted them in`() {
-        val contributed = listOf(section("ms:srv:latest", "s1"), section("ms:srv:nextup", "s2"), section("ms:srv:cw", "s3"))
-        val prefs = mapOf(
-            "ms:srv:latest" to pref(1, hero = true),
-            "ms:srv:nextup" to pref(2, hero = false),
-            // ms:srv:cw has no stored preference at all
-        )
-        assertEquals(listOf("ms:srv:latest"), HomeSectionMerge.heroEligible(contributed, prefs).map { it.key })
-    }
-
-    @Test
-    fun `a hidden row cannot feed the hero`() {
-        val contributed = listOf(section("ms:srv:latest", "s1"))
-        val prefs = mapOf("ms:srv:latest" to pref(1, enabled = false, hero = true))
+    fun `server rows never feed the hero in v1 even when a stored preference says so`() {
+        // owner decision 2026-10-06: a signed-in server's library must not take over the home banner; a stale or
+        // synced heroSourceEnabled=true on a contributed key (nothing in the UI can set it) is ignored
+        val contributed = listOf(section("ms:srv:latest", "s1"), section("ms:srv:nextup", "s2"))
+        val prefs = mapOf("ms:srv:latest" to pref(1, hero = true), "ms:srv:nextup" to pref(2, hero = true))
         assertEquals(emptyList(), HomeSectionMerge.heroEligible(contributed, prefs))
+        assertEquals(emptyList(), HomeSectionMerge.heroEligible(contributed, emptyMap()))
     }
 }

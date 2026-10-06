@@ -89,9 +89,18 @@ class PlaybackDecisionPolicyTest {
         PlaybackDecisionPolicy.resumeOffer(sp, spAt, tp, tpAt, dur)
 
     @Test
-    fun watchedElsewhereOffersTheServerPosition() {
-        assertEquals(PlaybackDecisionPolicy.ResumeOffer(1_800_000), offer(1_800_000, spAt = 5_000, tp = 600_000, tpAt = 1_000))
-        assertEquals(PlaybackDecisionPolicy.ResumeOffer(1_800_000), offer(1_800_000, tp = null, tpAt = null), "no Tuvora record at all")
+    fun watchedElsewhereOffersTheServerPositionWhenTuvoraHasItsOwnRecord() {
+        assertEquals(PlaybackDecisionPolicy.ResumeOffer(1_800_000, startAutomatically = false), offer(1_800_000, spAt = 5_000, tp = 600_000, tpAt = 1_000))
+    }
+
+    @Test
+    fun withNoLocalProgressTheServerPositionStartsAutomatically() {
+        // the references pass the server's position up front (StartTimeTicks): nothing to ask when Tuvora knows nothing
+        val auto = PlaybackDecisionPolicy.ResumeOffer(1_800_000, startAutomatically = true)
+        assertEquals(auto, offer(1_800_000, tp = null, tpAt = null), "no Tuvora record at all")
+        assertEquals(auto, offer(1_800_000, tp = 0, tpAt = 1_000), "a record at 0:00")
+        assertEquals(auto, offer(1_800_000, tp = 4_000, tpAt = 1_000), "a few seconds in is not progress worth keeping")
+        assertEquals(auto, offer(1_800_000, spAt = null, tp = null, tpAt = null), "no timestamps")
     }
 
     @Test
@@ -105,7 +114,7 @@ class PlaybackDecisionPolicyTest {
 
     @Test
     fun withoutTimestampsTheFurtherPositionWins() {
-        assertEquals(PlaybackDecisionPolicy.ResumeOffer(1_800_000), offer(1_800_000, spAt = null, tp = 100_000, tpAt = null))
+        assertEquals(PlaybackDecisionPolicy.ResumeOffer(1_800_000, startAutomatically = false), offer(1_800_000, spAt = null, tp = 100_000, tpAt = null))
         assertNull(offer(100_000, spAt = null, tp = 1_800_000, tpAt = null))
     }
 }

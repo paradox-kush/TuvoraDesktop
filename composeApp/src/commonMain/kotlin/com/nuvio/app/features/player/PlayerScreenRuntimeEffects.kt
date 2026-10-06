@@ -41,6 +41,7 @@ import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import com.nuvio.app.isDesktop
 import com.nuvio.app.features.watchprogress.buildPlaybackVideoId
 import com.nuvio.app.features.watching.application.WatchingState
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -377,6 +378,7 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
 
     BindPlayerUiVisibilityEffects()
     BindPlayerMetadataAndSkipEffects()
+    BindSessionReportTick()
 
     DisposableEffect(playbackSession.videoId, activeSourceUrl, activeSourceAudioUrl) {
         val effectVideoId = playbackSession.videoId
@@ -1057,3 +1059,27 @@ private val iptvRefreshLog = Logger.withTag("IptvLinkRefresh")
 
 private const val CREDENTIAL_REFRESH_POLL_COUNT = 30
 private const val CREDENTIAL_REFRESH_POLL_INTERVAL_MS = 500L
+
+/**
+ * The clock of a source's own playback reports (a media server's "Now playing"): a paused player emits no events and
+ * the 60 s watch-progress save is far slower than the references' ~15 s, so without a tick of its own the server
+ * would hear nothing while paused and the session would lapse. The tick is local and cheap - the reporter's pure
+ * policy ([com.nuvio.app.features.mediaserver] ProgressReportPolicy: playing every ~15 s, paused every ~60 s) decides
+ * whether anything is sent - and it lives only while the player screen is on screen and STARTED (never in the
+ * background, never stacked: one loop per player composition).
+ */
+@Composable
+private fun PlayerScreenRuntime.BindSessionReportTick() {
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner) {
+        if (com.nuvio.app.core.contracts.PlaybackSessionReporterRegistry.isEmpty) return@LaunchedEffect
+        lifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            while (true) {
+                delay(PlaybackSessionTickMs)
+                if (reportedSessionKey != null && !playbackSnapshot.isEnded) {
+                    reportSessionProgress(paused = !playbackSnapshot.isPlaying && !playbackSnapshot.isLoading)
+                }
+            }
+        }
+    }
+}

@@ -82,6 +82,12 @@ import nuvio.composeapp.generated.resources.ms_add_error_unreachable
 import nuvio.composeapp.generated.resources.ms_add_error_unusable
 import nuvio.composeapp.generated.resources.ms_add_error_wrong_credentials
 import nuvio.composeapp.generated.resources.ms_add_intro
+import nuvio.composeapp.generated.resources.ms_add_name_hint
+import nuvio.composeapp.generated.resources.ms_add_name_label
+import nuvio.composeapp.generated.resources.ms_add_rows_body
+import nuvio.composeapp.generated.resources.ms_add_rows_no
+import nuvio.composeapp.generated.resources.ms_add_rows_title
+import nuvio.composeapp.generated.resources.ms_add_rows_yes
 import nuvio.composeapp.generated.resources.ms_add_password_label
 import nuvio.composeapp.generated.resources.ms_add_password_note
 import nuvio.composeapp.generated.resources.ms_add_password_row
@@ -130,6 +136,7 @@ internal fun LazyListScope.mediaServerAddContent(isTablet: Boolean, onDone: () -
                 AddStage.CHOOSE_SIGN_IN -> ChooseStep(state, controller, isTablet)
                 AddStage.QUICK_CONNECT -> QuickConnectStep(state, controller, runtime.nowMs)
                 AddStage.PASSWORD -> PasswordStep(state, controller)
+                AddStage.OFFER_HOME_ROW -> HomeRowOfferStep(state, controller)
                 AddStage.DONE -> {
                     val toast = stringResource(Res.string.ms_add_signed_in_toast, state.signedIn?.name.orEmpty())
                     LaunchedEffect(state.signedIn?.key) {
@@ -205,6 +212,14 @@ private fun ChooseStep(state: AddServerState, controller: AddServerController, i
             color = tokens.colors.textMuted,
         )
     }
+    if (!state.signingInExisting) {
+        Text(text = stringResource(Res.string.ms_add_name_label), style = MaterialTheme.typography.labelLarge, color = tokens.colors.textSecondary)
+        NuvioInputField(
+            value = state.serverName,
+            onValueChange = controller::setServerName,
+            placeholder = stringResource(Res.string.ms_add_name_hint),
+        )
+    }
     SettingsGroup(isTablet = isTablet) {
         if (state.quickConnectAvailable) {
             SettingsNavigationRow(
@@ -224,6 +239,19 @@ private fun ChooseStep(state: AddServerState, controller: AddServerController, i
     }
     state.error?.let { ErrorText(it) }
     NuvioActionLabel(text = stringResource(Res.string.ms_add_change_address), onClick = controller::backToAddress)
+}
+
+@Composable
+private fun HomeRowOfferStep(state: AddServerState, controller: AddServerController) {
+    val tokens = MaterialTheme.nuvio
+    Text(text = stringResource(Res.string.ms_add_rows_title), style = MaterialTheme.typography.titleMedium, color = tokens.colors.textPrimary)
+    Text(
+        text = stringResource(Res.string.ms_add_rows_body, state.signedIn?.name.orEmpty()),
+        style = MaterialTheme.typography.bodyMedium,
+        color = tokens.colors.textMuted,
+    )
+    NuvioPrimaryButton(text = stringResource(Res.string.ms_add_rows_yes), onClick = controller::enableRecentlyAdded)
+    NuvioActionLabel(text = stringResource(Res.string.ms_add_rows_no), onClick = controller::skipHomeRowOffer)
 }
 
 @Composable

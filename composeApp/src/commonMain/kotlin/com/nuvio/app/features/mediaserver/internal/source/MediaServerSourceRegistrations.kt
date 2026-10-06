@@ -35,7 +35,10 @@ internal object MediaServerSourceRegistrations {
         )
         runtime.homeContributor = home
         ContentClassifierRegistry.register(NAME, MediaServerClassifier(store))
-        StreamSourceRegistry.register(NAME, MediaServerStreamSourceProvider(store, services))
+        StreamSourceRegistry.register(
+            NAME,
+            MediaServerStreamSourceProvider(store, services, MediaServerMatchLane(store, services, runtime.nowMs, TmdbMatchTitleFacts)),
+        )
         MetaSourceRegistry.register(NAME, MediaServerMetaSource(store, services))
         SearchProviderRegistry.register(NAME, MediaServerSearchProvider(store, services))
         OwnSourcePolicy.registerContentIdPredicate(NAME, MediaServerIds::isOwnContentId)

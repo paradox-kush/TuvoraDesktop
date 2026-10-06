@@ -19,7 +19,7 @@ import kotlinx.coroutines.CancellationException
 /**
  * Keeps the server's watched/resume state in step with what plays in Tuvora (design 5.7, D3): start, progress
  * (pause, resume, seek), stop - so other apps on the same account stay current. The PLAYER only announces; the
- * cadence (10 s while playing, a pause report then a check-in every <= 4 min, always a stop) is
+ * cadence (15 s while playing, a pause report then a check-in every 60 s, always a stop) is
  * [ProgressReportPolicy]'s, the true play method is the one the mint step recorded
  * ([MediaServerPlaybackSessions]), and the explicit "mark played" fires only when Tuvora considers the item
  * finished but the stop report did not cross the server's own threshold (no double-scrobble).

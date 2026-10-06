@@ -153,7 +153,7 @@ class AddServerControllerTest {
         c.usePassword()
         c.submitPassword("kid", "hunter2")
         advanceUntilIdle()
-        assertEquals(AddStage.DONE, c.state.value.stage)
+        assertEquals(AddStage.OFFER_HOME_ROW, c.state.value.stage, "a signed-in server asks about Recently added before finishing")
         assertEquals("jellyfin|$M|$U", c.state.value.signedIn?.key)
         assertEquals("TOKEN-9", rig.credentials.token("jellyfin:$M:$U"))
         assertEquals(listOf("jellyfin|$M|$U"), signedIn)
@@ -191,7 +191,7 @@ class AddServerControllerTest {
         assertEquals(AddStage.QUICK_CONNECT, c.state.value.stage)
         this.launch { c.runQuickConnect() }
         advanceUntilIdle()
-        assertEquals(AddStage.DONE, c.state.value.stage)
+        assertEquals(AddStage.OFFER_HOME_ROW, c.state.value.stage, "a signed-in server asks about Recently added before finishing")
         assertEquals("TOKEN-9", rig.credentials.token("jellyfin:$M:$U"))
     }
 
@@ -231,7 +231,7 @@ class AddServerControllerTest {
         this.launch { c.runQuickConnect() }
         advanceUntilIdle()
         assertEquals(2, initiates)
-        assertEquals(AddStage.DONE, c.state.value.stage)
+        assertEquals(AddStage.OFFER_HOME_ROW, c.state.value.stage, "a signed-in server asks about Recently added before finishing")
     }
 
     @Test
@@ -265,9 +265,80 @@ class AddServerControllerTest {
         val c = controller(rig, existing)
         c.setAddress("nas:8096"); c.connect(); advanceUntilIdle()
         c.usePassword(); c.submitPassword("kid", "pw"); advanceUntilIdle()
-        assertEquals(AddStage.DONE, c.state.value.stage)
+        assertEquals(AddStage.OFFER_HOME_ROW, c.state.value.stage, "a signed-in server asks about Recently added before finishing")
         assertEquals("TOKEN-9", rig.credentials.token(existing.serverKey))
         assertEquals(1, rig.store.current().size, "the synced entry was signed in, not duplicated")
         assertEquals("http://nas:8096", rig.store.current().single().address, "and now carries the address that was verified")
+    }
+
+    @Test
+    fun theServerNameDefaultsToTheServersOwnNameNotTheHostAndCanBeEdited() = runTest {
+        val rig = rig(jellyfin { r -> if (path(r) == "/Users/AuthenticateByName") json(authOk) else null })
+        val c = controller(rig)
+        c.setAddress("192.168.1.20:8096"); c.connect(); advanceUntilIdle()
+        assertEquals("Living Room", c.state.value.serverName, "the server's own ServerName, not 192.168.1.20")
+        c.setServerName("Basement NAS")
+        c.usePassword(); c.submitPassword("kid", "pw"); advanceUntilIdle()
+        assertEquals("Basement NAS", c.state.value.signedIn?.name)
+        assertEquals("Basement NAS", rig.store.current().single().name)
+    }
+
+    @Test
+    fun aBlankServerNameFallsBackToTheServersOwnName() = runTest {
+        val rig = rig(jellyfin { r -> if (path(r) == "/Users/AuthenticateByName") json(authOk) else null })
+        val c = controller(rig)
+        c.setAddress("nas:8096"); c.connect(); advanceUntilIdle()
+        c.setServerName("   ")
+        c.usePassword(); c.submitPassword("kid", "pw"); advanceUntilIdle()
+        assertEquals("Living Room", c.state.value.signedIn?.name)
+    }
+
+    @Test
+    fun oneTapTurnsRecentlyAddedOnAndLeavesTheOtherRowsOff() = runTest {
+        val rig = rig(jellyfin { r -> if (path(r) == "/Users/AuthenticateByName") json(authOk) else null })
+        val signedIn = mutableListOf<String>()
+        val c = controller(rig, signedIn = signedIn)
+        c.setAddress("nas:8096"); c.connect(); advanceUntilIdle()
+        c.usePassword(); c.submitPassword("kid", "pw"); advanceUntilIdle()
+        assertTrue(rig.store.current().single().homeRows.isEmpty(), "default off until the person says yes")
+        c.enableRecentlyAdded()
+        assertEquals(AddStage.DONE, c.state.value.stage)
+        assertEquals(setOf(com.nuvio.app.features.mediaserver.api.MediaServerHomeRow.RECENTLY_ADDED), rig.store.current().single().homeRows)
+        assertEquals(setOf(com.nuvio.app.features.mediaserver.api.MediaServerHomeRow.RECENTLY_ADDED), c.state.value.signedIn?.homeRows)
+        assertEquals(2, signedIn.size, "Home is told again so the new row shows")
+    }
+
+    @Test
+    fun skippingTheOfferLeavesEveryServerRowOff() = runTest {
+        val rig = rig(jellyfin { r -> if (path(r) == "/Users/AuthenticateByName") json(authOk) else null })
+        val c = controller(rig)
+        c.setAddress("nas:8096"); c.connect(); advanceUntilIdle()
+        c.usePassword(); c.submitPassword("kid", "pw"); advanceUntilIdle()
+        c.skipHomeRowOffer()
+        assertEquals(AddStage.DONE, c.state.value.stage)
+        assertTrue(rig.store.current().single().homeRows.isEmpty())
+    }
+
+    @Test
+    fun anEntryThatAlreadyShowsRecentlyAddedIsNotAskedAgain() = runTest {
+        val existing = entry(address = null).copy(homeRows = setOf(com.nuvio.app.features.mediaserver.api.MediaServerHomeRow.RECENTLY_ADDED))
+        val rig = rig(jellyfin { r -> if (path(r) == "/Users/AuthenticateByName") json(authOk) else null })
+        rig.store.applyFromRemote(1, listOf(existing))
+        val c = controller(rig, existing)
+        c.setAddress("nas:8096"); c.connect(); advanceUntilIdle()
+        c.usePassword(); c.submitPassword("kid", "pw"); advanceUntilIdle()
+        assertEquals(AddStage.DONE, c.state.value.stage)
+    }
+
+    @Test
+    fun signingAnExistingEntryInNeverRenamesIt() = runTest {
+        val existing = entry(address = null)
+        val rig = rig(jellyfin { r -> if (path(r) == "/Users/AuthenticateByName") json(authOk) else null })
+        rig.store.applyFromRemote(1, listOf(existing))
+        val c = controller(rig, existing)
+        c.setAddress("nas:8096"); c.connect(); advanceUntilIdle()
+        c.setServerName("Something else")
+        c.usePassword(); c.submitPassword("kid", "pw"); advanceUntilIdle()
+        assertEquals(existing.name, rig.store.current().single().name)
     }
 }

@@ -54,16 +54,16 @@ class MediaServerSessionReporterTest {
         val r = reporter(rig, invalidated)
         r.onStart(state(0))
         rig.nowMs += 4_000
-        r.onProgress(state(4_000), paused = false) // inside the 10 s window: nothing
-        rig.nowMs += 8_000
-        r.onProgress(state(12_000), paused = false)
+        r.onProgress(state(4_000), paused = false) // inside the 15 s window: nothing
+        rig.nowMs += 12_000
+        r.onProgress(state(16_000), paused = false)
         rig.nowMs += 1_000
-        r.onProgress(state(13_000), paused = true)
-        r.onStop(state(13_000))
+        r.onProgress(state(17_000), paused = true)
+        r.onStop(state(17_000))
         assertEquals(listOf(PlaybackReportKind.START, PlaybackReportKind.PROGRESS, PlaybackReportKind.PROGRESS, PlaybackReportKind.STOPPED), client.reports.map { it.kind })
         assertTrue(client.reports.all { it.playMethod == "Transcode" && it.itemId == "m1" && it.playSessionId == "ps1" && it.mediaSourceId == "srcA" })
         assertEquals(listOf(false, true), client.reports.filter { it.kind == PlaybackReportKind.PROGRESS }.map { it.isPaused })
-        assertEquals(120_000_000L, client.reports[1].positionTicks)
+        assertEquals(160_000_000L, client.reports[1].positionTicks)
         assertEquals(listOf(sourceKey.substringBeforeLast(':')), invalidated, "the Home contributor learns the server's rows changed")
     }
 
