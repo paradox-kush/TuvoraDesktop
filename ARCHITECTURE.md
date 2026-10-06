@@ -38,6 +38,6 @@ behaviour's test into `desktopTest` (or `commonTest`) when it must be proven on 
 
 ## The firewall (merge safety)
 The fork side is defined by **upstream absence** (`git cat-file -e origin/cmp-rewrite:<path>`), NOT
-directory naming: `features/{radar,iptv,epg,livetv,dev}` plus `core/{analytics,diag,memory,rec}` and a
+directory naming: `features/{radar,iptv,epg,livetv,dev,announcements,mediaserver}` plus `core/{analytics,diag,memory,rec}` and a
 few fork-only files in shared dirs. Re-verify the set at every upstream sync. `ArchBaseline` freezes the
 26 current crossings; each seam burns its entries down. Never add a baseline entry to silence a rule.

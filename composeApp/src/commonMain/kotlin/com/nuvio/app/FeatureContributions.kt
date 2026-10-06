@@ -22,6 +22,8 @@ import com.nuvio.app.features.iptv.XtreamLivePlaybackProvider
 import com.nuvio.app.features.iptv.XtreamLiveRecentsProvider
 import com.nuvio.app.features.iptv.XtreamRecentsCleaner
 import com.nuvio.app.features.iptv.IptvSourceRegistrations
+import com.nuvio.app.features.iptv.PlaylistMediaServerSyncSink
+import com.nuvio.app.features.mediaserver.api.MediaServerFeature
 import com.nuvio.app.features.iptv.XtreamRepository
 import com.nuvio.app.features.iptv.XtreamSubtitleIdResolver
 import com.nuvio.app.features.iptv.XtreamSyncParticipant
@@ -48,6 +50,9 @@ fun registerLogicFeatureContributions() {
     // Plural source ports (media-servers design 5.1): IPTV registers as ONE entry in each - content
     // classifier, stream source, meta source, search provider - plus its own-source id predicates.
     IptvSourceRegistrations.register()
+    // Media servers (Jellyfin/Emby, Wave 3): one entry in each plural source port, the Home contributor and the
+    // playback-session reporter; their server ENTRIES ride the playlist-sync engine through the sink below.
+    MediaServerFeature.registerLogic(syncSink = PlaylistMediaServerSyncSink)
     SyncParticipantRegistry.register(XtreamSyncParticipant)
     SyncParticipantRegistry.register(RadarSyncParticipant)
     SyncParticipantRegistry.register(IptvOverlaySyncParticipant)

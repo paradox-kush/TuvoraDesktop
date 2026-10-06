@@ -22,6 +22,7 @@ fun registerAndroidStartup() {
     if (registered) return
     registered = true
     AndroidStartup.registerTask { XtreamAccountStorage.initialize(it) }
+    AndroidStartup.registerTask { com.nuvio.app.features.mediaserver.api.MediaServerAndroid.initialize(it) }
     AndroidStartup.registerTask { M3UFilePicker.initialize(it) }
     AndroidStartup.registerTask { MatchDbDriver.initialize(it) }
     AndroidStartup.registerTask { IptvContentDbDriver.initialize(it) }

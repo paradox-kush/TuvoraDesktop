@@ -1356,6 +1356,8 @@ kotlin {
                 }
                 implementation(libs.kotlinx.coroutines.swing)
                 implementation(libs.ktor.client.cio)
+                // Media-server (Jellyfin/Emby) client: per-server TLS trust needs OkHttp's SSLSocketFactory/HostnameVerifier hooks.
+                implementation(libs.ktor.client.okhttp)
                 implementation(libs.posthog.core)
                 implementation("com.squareup.okhttp3:okhttp:4.12.0")
                 implementation(libs.quickjs.kt)
@@ -1422,6 +1424,8 @@ kotlin {
         commonTest.dependencies {
             implementation(libs.kotlin.test)
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${libs.versions.kotlinx.coroutines.get()}")
+            // Media-server (Jellyfin/Emby) client tests run real Ktor requests against canned responses.
+            implementation("io.ktor:ktor-client-mock:${libs.versions.ktor.get()}")
         }
         val desktopTest by getting {
             dependencies {
