@@ -86,6 +86,35 @@ class MediaServerStreamSourceProviderTest {
         assertFalse(s.url!!.contains("TOKEN-1"))
     }
 
+    private fun withSidecars(vararg streams: com.nuvio.app.features.mediaserver.internal.client.mediabrowser.MediaStreamDto) =
+        source("srcA").let { it.copy(mediaStreams = it.mediaStreams + streams) }
+
+    @Test
+    fun sidecarTextSubtitlesRideWithTheStreamAsTokenlessUrls() {
+        val rig = rig()
+        val sub = com.nuvio.app.features.mediaserver.internal.client.mediabrowser.MediaStreamDto(index = 4, type = "Subtitle", codec = "subrip", language = "eng", displayTitle = "English (SRT)", isExternal = true)
+        val embedded = sub.copy(index = 5, isExternal = false)
+        val bitmap = sub.copy(index = 6, codec = "pgssub")
+        register(rig, item("m1", sources = listOf(withSidecars(sub, embedded, bitmap))))
+        val s = provider(rig).directStreamItem(id())!!
+        val only = s.externalSubtitles.single()
+        assertEquals("http://nas:8096/Videos/m1/srcA/Subtitles/4/0/Stream.srt", only.url)
+        assertEquals("eng", only.language); assertEquals("English (SRT)", only.name)
+        assertNull(only.headers, "Jellyfin serves subtitle files anonymously")
+        assertFalse(only.url.contains("TOKEN-1"))
+    }
+
+    @Test
+    fun embySidecarSubtitlesCarryTheTokenInTheHeaderNotTheUrl() {
+        val rig = rig(MediaServerType.EMBY)
+        val sub = com.nuvio.app.features.mediaserver.internal.client.mediabrowser.MediaStreamDto(index = 3, type = "Subtitle", codec = "srt", isExternal = true)
+        register(rig, item("m1", sources = listOf(withSidecars(sub))))
+        val only = provider(rig).directStreamItem(id("emby"))!!.externalSubtitles.single()
+        assertEquals(mapOf("X-Emby-Token" to "TOKEN-1"), only.headers)
+        assertFalse(only.url.contains("TOKEN-1"))
+        assertEquals("und", only.language, "an unlabelled track is still listed")
+    }
+
     @Test
     fun anItemWithNoKnownSourcesStillGetsADeferredUrl() {
         val rig = rig()

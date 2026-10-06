@@ -65,4 +65,19 @@ class AddonSubtitleIdPolicyTest {
         )
         assertEquals("https://subs.example/subtitles/movie/tt0133093.json", url)
     }
+
+    @Test
+    fun aMediaServerItemIdIsProviderScopedAndNeverReachesAnAddon() {
+        // The ms: id embeds the server's own machine id and the user id; an add-on request URL must not carry them.
+        com.nuvio.app.core.contracts.OwnSourcePolicy.resetForTest()
+        com.nuvio.app.core.contracts.OwnSourcePolicy.registerContentIdPredicate("test") { it.startsWith("ms:") }
+        try {
+            val id = "ms:jellyfin:6f3c1a9e2b7d4c58a1e0f9d8c7b6a543:0f1e2d3c4b5a69788796a5b4c3d2e1f0:movie:abc123"
+            assertTrue(AddonSubtitleIdPolicy.isProviderScoped(id))
+            assertNull(AddonSubtitleIdPolicy.requestVideoId(id, resolvedPublicId = null))
+            assertEquals("tt0133093", AddonSubtitleIdPolicy.requestVideoId(id, resolvedPublicId = "tt0133093"))
+        } finally {
+            com.nuvio.app.core.contracts.OwnSourcePolicy.resetForTest()
+        }
+    }
 }

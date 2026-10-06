@@ -32,8 +32,36 @@ object OwnSourcePolicy {
     fun isOwnProviderId(addonId: String?): Boolean =
         !addonId.isNullOrBlank() && providerIdPredicates.all.any { it(addonId) }
 
+    private val scrobbleExclusions = NamedRegistry<(String) -> Boolean>("tracking-scrobble exclusion")
+    private val telemetryRewriters = NamedRegistry<(id: String, salt: String) -> String?>("telemetry-id rewriter")
+
+    /**
+     * A source whose items must never be scrobbled to a tracking provider (Trakt/Simkl/MDBList) - a media server's
+     * own items in v1 (owner decision 2026-10-06; servers usually run their own tracker plugin). A TMDB title merely
+     * PLAYED from such a source is a different content id and is unaffected.
+     */
+    fun registerScrobbleExclusion(name: String, predicate: (String) -> Boolean) =
+        scrobbleExclusions.register(name, predicate)
+
+    fun isExcludedFromTrackingScrobble(id: String?): Boolean =
+        id != null && scrobbleExclusions.all.any { it(id) }
+
+    /**
+     * A source whose content ids embed something that must not leave the device (a media server's machine id and user
+     * id) registers how a TELEMETRY event may name the item instead: null = "not mine". Applied at the chokepoints that
+     * ship ids off-device (the recommendation event log).
+     */
+    fun registerTelemetryRewriter(name: String, rewriter: (id: String, salt: String) -> String?) =
+        telemetryRewriters.register(name, rewriter)
+
+    /** The id a telemetry event may carry for [id]: the owning source's rewrite, else [id] unchanged. */
+    fun telemetryId(id: String, installSalt: String): String =
+        telemetryRewriters.all.firstNotNullOfOrNull { it(id, installSalt) } ?: id
+
     internal fun resetForTest() {
         contentIdPredicates.resetForTest()
         providerIdPredicates.resetForTest()
+        scrobbleExclusions.resetForTest()
+        telemetryRewriters.resetForTest()
     }
 }

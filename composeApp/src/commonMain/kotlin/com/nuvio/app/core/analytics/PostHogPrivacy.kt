@@ -18,6 +18,10 @@ internal object PostHogPrivacy {
     )
     // The MediaBrowser Authorization header carries the session token as a QUOTED pair: Token="...".
     private val quotedTokenPattern = Regex("""(?i)(\btoken=")[^"]*(")""")
+    // A media-server content id `ms:{type}:{machineId}:{userId}:{kind}:{itemId}` embeds the server's own id and the
+    // user's id: neither may leave the device (owner decision 2026-10-06). Kept as a SHAPE match so any event that
+    // stringifies one is covered; only the type and kind survive.
+    private val mediaServerIdPattern = Regex("""\bms:(jellyfin|emby):[^:\s"'<>]+:[^:\s"'<>]+:(movie|series|season|episode):[^\s"'<>,;]+""")
     private val sensitiveKeys = setOf(
         "url", "uri", "href", "referrer", "\$referrer", "code", "state", "token",
         "access_token", "refresh_token", "authorization", "password", "secret", "cookie",
@@ -62,7 +66,8 @@ internal object PostHogPrivacy {
     }
 
     private fun redactString(value: String): String {
-        val withoutUrls = urlPattern.replace(value, "[redacted-url]")
+        val withoutServerIds = mediaServerIdPattern.replace(value) { match -> "ms:${match.groupValues[1]}:[redacted]:${match.groupValues[2]}" }
+        val withoutUrls = urlPattern.replace(withoutServerIds, "[redacted-url]")
         val withoutAuthorization = authorizationHeaderPattern.replace(withoutUrls, "[redacted-auth]")
         val withoutQuotedToken = quotedTokenPattern.replace(withoutAuthorization) { match ->
             "${match.groupValues[1]}[redacted]${match.groupValues[2]}"

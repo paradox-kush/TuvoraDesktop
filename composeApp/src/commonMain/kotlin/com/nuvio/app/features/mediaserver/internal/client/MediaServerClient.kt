@@ -114,4 +114,10 @@ internal interface MediaServerClient {
      * tokens are device-bound and never shared. Jellyfin only; Emby throws a 404 [MediaServerException.Http].
      */
     suspend fun authorizeQuickConnect(code: String)
+
+    /**
+     * Ends THIS device's session on the server (`POST /Sessions/Logout`): removing a server in Tuvora must not leave a
+     * live token behind in the server's device list (owner decision 2026-10-06). Callers treat a failure as best-effort.
+     */
+    suspend fun logout()
 }

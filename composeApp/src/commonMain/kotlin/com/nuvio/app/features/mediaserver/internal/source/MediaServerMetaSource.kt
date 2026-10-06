@@ -56,7 +56,9 @@ internal class MediaServerMetaSource(
      * single-use (unlike Stalker links), so [forceFresh]/[forceMint] need no special handling beyond skipping the cache.
      */
     override suspend fun ensureStreamRegistered(id: String, forceFresh: Boolean, forceMint: Boolean): Boolean {
-        if (!forceFresh && MediaServerItemRegistry.get(id) != null) return true
+        // A row / episode list registers cards WITHOUT media sources (a light fetch); play needs them (labels, sidecar subtitles), so such a record is refetched once.
+        val cached = MediaServerItemRegistry.get(id)
+        if (!forceFresh && cached != null && (cached.sources.isNotEmpty() || cached.kind == Kind.SERIES)) return true
         val parsed = MediaServerIds.parse(id) ?: return false
         val entry = store.entryByServerKey(parsed.serverKey) ?: return false
         val client = services.clientFor(entry) ?: return false

@@ -96,4 +96,17 @@ class HomeRefreshPolicyTest {
     fun aServerRowHidesWhatTuvoraContinueWatchingAlreadyShows() {
         assertEquals(listOf("ms:a", "ms:c"), HomeRefreshPolicy.dedupeAgainstContinueWatching(listOf("ms:a", "ms:b", "ms:c"), setOf("ms:b")))
     }
+
+    @Test
+    fun aLibraryRowFollowsTheSameTtlAndBackoffGate() {
+        assertTrue(HomeRefreshPolicy.shouldFetchList(ServerState(), 1_000, false), "never fetched")
+        val fresh = HomeRefreshPolicy.afterSuccess(ServerState(), 1_000)
+        assertFalse(HomeRefreshPolicy.shouldFetchList(fresh, 1_000 + 60_000, false), "inside the ttl: no request")
+        assertTrue(HomeRefreshPolicy.shouldFetchList(fresh, 1_000 + 60_000, true), "pull-to-refresh")
+        assertTrue(HomeRefreshPolicy.shouldFetchList(fresh, 1_000 + HomeRefreshPolicy.ROW_TTL_MS, false), "aged out")
+        assertTrue(HomeRefreshPolicy.shouldFetchList(HomeRefreshPolicy.invalidate(fresh), 2_000, false), "invalidated by our own report")
+        val failing = HomeRefreshPolicy.afterFailure(ServerState(), 5_000, httpStatus = null, retryAfterSeconds = null)
+        assertFalse(HomeRefreshPolicy.shouldFetchList(failing, 5_000 + 10_000, false), "backing off")
+        assertTrue(HomeRefreshPolicy.shouldFetchList(failing, 5_000 + 31_000, false))
+    }
 }

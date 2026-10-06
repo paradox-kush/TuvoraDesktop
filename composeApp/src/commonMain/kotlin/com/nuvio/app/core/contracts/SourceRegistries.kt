@@ -12,4 +12,5 @@ internal fun resetAllSourceRegistriesForTest() {
     OwnSourcePolicy.resetForTest()
     HomeSectionContributorRegistry.resetForTest()
     PlaybackSessionReporterRegistry.resetForTest()
+    PlaybackResumeOfferRegistry.resetForTest()
 }

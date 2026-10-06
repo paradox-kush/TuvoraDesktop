@@ -63,3 +63,48 @@ internal object IptvSettingsSectionAccess {
         section = null
     }
 }
+
+
+/**
+ * Spatial contract: the media-server pages of the settings screen (the server list, add/sign-in, one server's
+ * details, "approve a code"). Same shape and reason as [IptvSettingsSection]: SettingsScreen is shared and must
+ * not name the fork's media-server feature, so the feature registers an implementation from the composition
+ * root and this screen only forwards the page into the settings list. No registration = the pages (and the
+ * Integrations row that opens them) simply do not exist.
+ */
+internal interface MediaServerSettingsSection {
+    /**
+     * Renders [page] into the settings list when it is one of the media-server pages (true), false to fall
+     * through. [onPageChange] opens a page (forward); [onNavigateBack] pops to the parent (a finished form must
+     * go back, never push its parent on top of itself - B103).
+     */
+    fun LazyListScope.renderPage(
+        page: SettingsPage,
+        isTablet: Boolean,
+        onPageChange: (SettingsPage) -> Unit,
+        onNavigateBack: () -> Unit,
+    ): Boolean
+
+    /** Header-title override (the details page is titled with the server's own name), or null for the static title res. */
+    @Composable
+    fun headerTitleOrNull(page: SettingsPage): String?
+
+    /** The same override, resolved composably but READ AT NAVIGATION TIME (the target server is chosen in the click handler). */
+    @Composable
+    fun rememberNavigationTitleOverride(): (SettingsPage) -> String?
+}
+
+internal object MediaServerSettingsSectionAccess {
+    private var section: MediaServerSettingsSection? = null
+
+    fun register(s: MediaServerSettingsSection) {
+        section = s
+    }
+
+    /** Null until the media-server feature registers. */
+    fun current(): MediaServerSettingsSection? = section
+
+    fun resetForTest() {
+        section = null
+    }
+}

@@ -51,6 +51,21 @@ class MediaServerSourceRegistrationsTest {
     }
 
     @Test
+    fun aServersItemsAreNeverScrobbledAndTelemetryNeverNamesTheServerOrUser() {
+        val rig = runtime()
+        registerBoth(rig)
+        assertTrue(OwnSourcePolicy.isExcludedFromTrackingScrobble(ms))
+        assertFalse(OwnSourcePolicy.isExcludedFromTrackingScrobble(xtream), "IPTV scrobbling is unchanged")
+        assertFalse(OwnSourcePolicy.isExcludedFromTrackingScrobble("tmdb:603"))
+        val wire = OwnSourcePolicy.telemetryId(ms, installSalt = "salt-1")
+        assertFalse(M in wire || U in wire, "machine and user ids stay on the device: $wire")
+        assertTrue(wire.startsWith("ms:jellyfin:") && wire.endsWith(":movie:m1"), wire)
+        assertEquals(wire, OwnSourcePolicy.telemetryId(ms, "salt-1"), "stable for one install")
+        assertTrue(wire != OwnSourcePolicy.telemetryId(ms, "salt-2"), "different installs cannot be joined")
+        assertEquals("tt0133093", OwnSourcePolicy.telemetryId("tt0133093", "salt-1"), "everything else is untouched")
+    }
+
+    @Test
     fun theNameIsMediaserverInEveryPluralPort() {
         val rig = runtime()
         registerBoth(rig)

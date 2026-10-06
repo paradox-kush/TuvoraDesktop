@@ -49,6 +49,15 @@ internal object HomeRefreshPolicy {
         return Decision.Fetch(enabledRows)
     }
 
+    /** One list with no per-row choice (a library on Home): the same TTL / backoff gate, fetched whole or not at all. */
+    fun shouldFetchList(state: ServerState, nowMs: Long, force: Boolean): Boolean {
+        val blockedUntil = state.blockedUntilMs
+        if (blockedUntil != null && nowMs < blockedUntil && !force) return false
+        val last = state.lastFetchedAtMs
+        val fresh = last != null && !state.invalidated && nowMs - last < ROW_TTL_MS
+        return force || !fresh
+    }
+
     fun afterSuccess(state: ServerState, nowMs: Long): ServerState =
         ServerState(lastFetchedAtMs = nowMs, invalidated = false, consecutiveFailures = 0, blockedUntilMs = null)
 

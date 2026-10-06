@@ -110,9 +110,13 @@ internal class FakeClient : com.nuvio.app.features.mediaserver.internal.client.M
     private fun check() { failWith?.let { throw it } }
 
     override suspend fun me() = com.nuvio.app.features.mediaserver.internal.client.mediabrowser.UserDto(id = "u")
-    override suspend fun views() = emptyList<com.nuvio.app.features.mediaserver.internal.client.mediabrowser.ItemDto>()
+    var viewsList = emptyList<com.nuvio.app.features.mediaserver.internal.client.mediabrowser.ItemDto>()
+    var loggedOut = 0
+    val itemQueries = mutableListOf<com.nuvio.app.features.mediaserver.internal.client.ItemsQuery>()
+    var authorized = mutableListOf<String>()
+    override suspend fun views(): List<com.nuvio.app.features.mediaserver.internal.client.mediabrowser.ItemDto> { check(); return viewsList }
     override suspend fun items(query: com.nuvio.app.features.mediaserver.internal.client.ItemsQuery): com.nuvio.app.features.mediaserver.internal.client.ItemsPage {
-        check()
+        check(); itemQueries += query
         return com.nuvio.app.features.mediaserver.internal.client.ItemsPage(searchHits, searchHits.size, query.startIndex ?: 0)
     }
     override suspend fun item(itemId: String, fields: String?): com.nuvio.app.features.mediaserver.internal.client.mediabrowser.ItemDto? {
@@ -140,7 +144,8 @@ internal class FakeClient : com.nuvio.app.features.mediaserver.internal.client.M
     }
     override suspend fun report(report: com.nuvio.app.features.mediaserver.internal.client.PlaybackReport) { check(); reports += report }
     override suspend fun setPlayed(itemId: String, played: Boolean) { check(); this.played += itemId to played }
-    override suspend fun authorizeQuickConnect(code: String) { check() }
+    override suspend fun authorizeQuickConnect(code: String) { check(); authorized += code }
+    override suspend fun logout() { check(); loggedOut++ }
 }
 
 internal fun item(

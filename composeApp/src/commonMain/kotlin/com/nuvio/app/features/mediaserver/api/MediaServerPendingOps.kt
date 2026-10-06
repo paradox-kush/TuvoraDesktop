@@ -74,6 +74,7 @@ object MediaServerPendingOps {
             syncAddress = edited.syncAddress,
             userName = edited.userName,
             homeRows = edited.homeRows,
+            homeLibraries = edited.homeLibraries,
         )
     }
 
@@ -90,6 +91,7 @@ object MediaServerPendingOps {
                 syncAddress = l.syncAddress,
                 userName = if (r.userId == l.userId) l.userName else null,
                 homeRows = l.homeRows,
+                homeLibraries = l.homeLibraries,
             )
         }
 }

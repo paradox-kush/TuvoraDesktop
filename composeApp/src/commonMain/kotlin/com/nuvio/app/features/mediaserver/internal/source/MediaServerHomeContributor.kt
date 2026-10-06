@@ -1,6 +1,7 @@
 package com.nuvio.app.features.mediaserver.internal.source
 
 import co.touchlab.kermit.Logger
+import com.nuvio.app.core.contracts.ContributedRowDeclaration
 import com.nuvio.app.core.contracts.HomeSectionContributor
 import com.nuvio.app.features.catalog.CATALOG_PAGE_SIZE
 import com.nuvio.app.features.catalog.CatalogPage
@@ -47,6 +48,8 @@ internal class MediaServerHomeContributor(
     private val lock = SynchronizedObject()
     private val states = mutableMapOf<String, ServerState>()
     private val cache = mutableMapOf<String, List<Pair<MediaServerHomeRow, List<MetaPreview>>>>()
+    private val libraryCache = mutableMapOf<String, List<MetaPreview>>()
+    private val declaredTitles = mutableMapOf<String, String>()
 
     /** A websocket `UserDataChanged` / `LibraryChanged`, or one of our own playback reports: the next refresh refetches. */
     fun invalidate(sourceKey: String) = synchronized(lock) {
@@ -56,14 +59,112 @@ internal class MediaServerHomeContributor(
     fun resetForProfile() = synchronized(lock) {
         states.clear()
         cache.clear()
+        libraryCache.clear()
     }
 
     /** The server's own refresh state (for a Settings "offline" badge). */
     fun isOffline(serverKey: String): Boolean = synchronized(lock) { states[serverKey]?.let(HomeRefreshPolicy::isOffline) == true }
 
     override suspend fun sections(forceRefresh: Boolean): List<HomeCatalogSection> {
-        val entries = store.current().filter { it.enabled && it.homeRows.isNotEmpty() && !it.address.isNullOrBlank() && services.isSignedIn(it) }
-        return coroutineScope { entries.map { entry -> async { sectionsFor(entry, forceRefresh) } }.awaitAll().flatten() }
+        prepareDeclaredRows()
+        val entries = store.current().filter {
+            it.enabled && (it.homeRows.isNotEmpty() || it.homeLibraries.isNotEmpty()) && !it.address.isNullOrBlank() && services.isSignedIn(it)
+        }
+        return coroutineScope {
+            entries.map { entry ->
+                async { (if (entry.homeRows.isEmpty()) emptyList() else sectionsFor(entry, forceRefresh)) + librarySections(entry, forceRefresh) }
+            }.awaitAll().flatten()
+        }
+    }
+
+    /**
+     * The rows the Home layout settings should list for the servers' current settings - NOT tied to whether a row has
+     * items right now (an empty or offline row must stay reorderable / hideable). Synchronous and network-free.
+     */
+    override fun declaredRows(): List<ContributedRowDeclaration> =
+        store.current().filter { it.enabled }.flatMap { entry ->
+            val rows = MediaServerHomeRow.entries.filter { it in entry.homeRows }.map { row ->
+                ContributedRowDeclaration(rowKey(entry, row), declaredTitle(entry, row), entry.name)
+            }
+            val libraries = entry.homeLibraries.map { (viewId, name) ->
+                ContributedRowDeclaration(libraryKey(entry, viewId), name, entry.name)
+            }
+            rows + libraries
+        }
+
+    private fun declaredTitle(entry: MediaServerEntry, row: MediaServerHomeRow): String =
+        synchronized(lock) { declaredTitles["${row.name}|${entry.name}"] } ?: fallbackTitle(row)
+
+    /** English stand-ins until [prepareDeclaredRows] has fetched the localized titles (never resource I/O on a caller's thread). */
+    private fun fallbackTitle(row: MediaServerHomeRow): String = when (row) {
+        MediaServerHomeRow.CONTINUE_WATCHING -> "Continue Watching"
+        MediaServerHomeRow.NEXT_UP -> "Next Up"
+        MediaServerHomeRow.RECENTLY_ADDED -> "Recently Added"
+    }
+
+    /** Fetches the localized titles of every configured row so [declaredRows] (synchronous) can name them. */
+    suspend fun prepareDeclaredRows() {
+        store.current().filter { it.enabled }.forEach { entry ->
+            entry.homeRows.forEach { row ->
+                val key = "${row.name}|${entry.name}"
+                if (synchronized(lock) { declaredTitles[key] } == null) {
+                    val title = titles.home(row, entry.name)
+                    synchronized(lock) { declaredTitles[key] = title }
+                }
+            }
+        }
+    }
+
+    private suspend fun librarySections(entry: MediaServerEntry, force: Boolean): List<HomeCatalogSection> =
+        coroutineScope {
+            entry.homeLibraries.map { (viewId, name) -> async { librarySection(entry, viewId, name, force) } }.awaitAll().filterNotNull()
+        }
+
+    private suspend fun librarySection(entry: MediaServerEntry, viewId: String, name: String, force: Boolean): HomeCatalogSection? {
+        val stateKey = "${entry.serverKey}|lib:$viewId"
+        val now = nowMs()
+        val state = synchronized(lock) { states[stateKey] ?: ServerState() }
+        val items: List<MetaPreview> = if (HomeRefreshPolicy.shouldFetchList(state, now, force)) {
+            val client = services.clientFor(entry) ?: return null
+            try {
+                val query = HomeRefreshPolicy.rowQuery
+                val page = client.items(
+                    ItemsQuery(
+                        parentId = viewId, includeItemTypes = listOf("Movie", "Series"), sortBy = "DateCreated", sortOrder = "Descending",
+                        limit = query.limit, fields = query.fields, collapseBoxSetItems = true, enableTotalRecordCount = query.enableTotalRecordCount,
+                    ),
+                ).items
+                MediaServerItemRegistry.registerAll(page.mapNotNull { MediaServerItemMapper.registered(entry, it) })
+                val built = page.mapNotNull { MediaServerItemMapper.preview(entry, it) }.distinctBy { it.id }
+                synchronized(lock) {
+                    states[stateKey] = HomeRefreshPolicy.afterSuccess(states[stateKey] ?: ServerState(), now)
+                    libraryCache[stateKey] = built
+                }
+                built
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: MediaServerException) {
+                val http = e as? MediaServerException.Http
+                if (http?.isUnauthorized == true) services.onUnauthorized(entry.serverKey)
+                log.w { "library row refresh failed: ${http?.status ?: e::class.simpleName}" }
+                val next = synchronized(lock) {
+                    HomeRefreshPolicy.afterFailure(states[stateKey] ?: ServerState(), now, http?.status, http?.retryAfterSeconds).also { states[stateKey] = it }
+                }
+                if (HomeRefreshPolicy.isOffline(next)) emptyList() else synchronized(lock) { libraryCache[stateKey] }.orEmpty()
+            }
+        } else {
+            if (HomeRefreshPolicy.isOffline(state)) emptyList() else synchronized(lock) { libraryCache[stateKey] }.orEmpty()
+        }
+        if (items.isEmpty()) return null
+        return HomeCatalogSection(
+            key = libraryKey(entry, viewId),
+            title = name,
+            subtitle = entry.name,
+            addonName = entry.name,
+            target = CatalogTarget.Source(entry.sourceKey, "$LIBRARY_PREFIX$viewId", "movie"),
+            items = items,
+            hasMore = true,
+        )
     }
 
     private suspend fun sectionsFor(entry: MediaServerEntry, force: Boolean): List<HomeCatalogSection> {
@@ -126,7 +227,7 @@ internal class MediaServerHomeContributor(
             else items.filterNot { it.id in tuvoraIds }
             if (visible.isEmpty()) return@mapNotNull null
             HomeCatalogSection(
-                key = "${MediaServerIds.CONTENT_PREFIX}:${entry.sourceKey}:${rowId(row)}",
+                key = rowKey(entry, row),
                 title = titles.home(row, entry.name),
                 subtitle = entry.name,
                 addonName = entry.name,
@@ -183,6 +284,11 @@ internal class MediaServerHomeContributor(
 
     companion object {
         const val LIBRARY_PREFIX = "library:"
+
+        /** `ms:{type}:{machineId}:{rowId}` - stable across a re-login (never carries a user id): the join with Home preferences. */
+        fun rowKey(entry: MediaServerEntry, row: MediaServerHomeRow): String = "${MediaServerIds.CONTENT_PREFIX}:${entry.sourceKey}:${rowId(row)}"
+
+        fun libraryKey(entry: MediaServerEntry, viewId: String): String = "${MediaServerIds.CONTENT_PREFIX}:${entry.sourceKey}:$LIBRARY_PREFIX$viewId"
 
         fun rowId(row: MediaServerHomeRow): String = when (row) {
             MediaServerHomeRow.CONTINUE_WATCHING -> "continue_watching"

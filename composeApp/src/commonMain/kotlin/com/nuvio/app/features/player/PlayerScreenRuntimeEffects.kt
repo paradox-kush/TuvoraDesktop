@@ -486,6 +486,8 @@ private fun PlayerScreenRuntime.BindPlayerUiVisibilityEffects() {
         if (playbackSnapshot.isPlaying) {
             val startedSession = reportSessionStart()
             if (!previousIsPlaying && !startedSession) reportSessionProgress(paused = false)
+            // A media-server item watched further elsewhere: offer the jump once, as the session starts.
+            if (startedSession) offerServerResumeIfNewer()
         }
 
         if (!playbackSnapshot.isLoading) {

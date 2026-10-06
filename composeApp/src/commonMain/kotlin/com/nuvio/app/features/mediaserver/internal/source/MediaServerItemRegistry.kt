@@ -12,7 +12,10 @@ import kotlinx.atomicfu.locks.synchronized
  * and the stream a list shows is a deferred reference minted at play time (design 5.5).
  */
 internal object MediaServerItemRegistry {
-    data class Source(val id: String, val label: String, val container: String?)
+    /** A text subtitle that lives beside the file (not inside the container): the engines list embedded tracks themselves, these must be handed over. */
+    data class SidecarSubtitle(val index: Int, val language: String, val label: String)
+
+    data class Source(val id: String, val label: String, val container: String?, val subtitles: List<SidecarSubtitle> = emptyList())
 
     data class Item(
         val contentId: String,

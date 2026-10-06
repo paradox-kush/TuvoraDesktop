@@ -132,6 +132,11 @@ internal class MediaServerAccounts(
     /** D2: which of the server's own shelves show on Home (device-local; none by default). */
     fun setHomeRows(entry: MediaServerEntry, rows: Set<MediaServerHomeRow>): Boolean = store.update(entry.key) { it.copy(homeRows = rows) }
 
+    /** A library on Home as a row of its own ([name] is kept so the Home layout can list the row without asking the server). */
+    fun setHomeLibrary(entry: MediaServerEntry, viewId: String, name: String, on: Boolean): Boolean = store.update(entry.key) {
+        it.copy(homeLibraries = if (on) it.homeLibraries + (viewId to name) else it.homeLibraries - viewId)
+    }
+
     private fun saveCredential(serverKey: String, session: AuthSession): Boolean = try {
         services.credentials.save(serverKey, StoredCredential(session.accessToken, session.userName))
         true

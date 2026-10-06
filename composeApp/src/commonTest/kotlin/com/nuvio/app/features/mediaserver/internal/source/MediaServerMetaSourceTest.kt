@@ -6,6 +6,7 @@ import com.nuvio.app.features.mediaserver.internal.TestRig
 import com.nuvio.app.features.mediaserver.internal.U
 import com.nuvio.app.features.mediaserver.internal.client.MediaServerException
 import com.nuvio.app.features.mediaserver.internal.entry
+import com.nuvio.app.features.mediaserver.internal.policy.MediaServerIds
 import com.nuvio.app.features.mediaserver.internal.item
 import com.nuvio.app.features.mediaserver.internal.source
 import com.nuvio.app.features.mediaserver.internal.store.StoredCredential
@@ -91,6 +92,18 @@ class MediaServerMetaSourceTest {
         assertEquals(2, client.itemRequests.size)
         assertFalse(src.ensureStreamRegistered(id("movie", "gone"), false, false))
         assertFalse(src.ensureStreamRegistered("tt1", false, false))
+    }
+
+    @Test
+    fun aCardRegisteredWithoutMediaSourcesIsRefetchedOnceForPlayback() = runTest {
+        val rig = rig()
+        client.items["m1"] = item("m1", "The Matrix", sources = listOf(source("a")))
+        val src = MediaServerMetaSource(rig.store, rig.services)
+        // a Home row / episode list registers cards from a light fetch: no MediaSources yet
+        MediaServerItemRegistry.register(MediaServerItemRegistry.Item(id("movie", "m1"), "jellyfin:$M:$U", MediaServerIds.Kind.MOVIE, "m1", "The Matrix", null, emptyList(), null, null, null))
+        assertTrue(src.ensureStreamRegistered(id("movie", "m1"), forceFresh = false, forceMint = false))
+        assertEquals(1, client.itemRequests.size, "the sourceless record is completed with one fetch")
+        assertEquals(listOf("a"), MediaServerItemRegistry.get(id("movie", "m1"))!!.sources.map { it.id })
     }
 
     @Test

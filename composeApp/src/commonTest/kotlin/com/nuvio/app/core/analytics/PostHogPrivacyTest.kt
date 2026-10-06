@@ -85,4 +85,18 @@ class PostHogPrivacyTest {
         assertEquals("api key rotation token refresh ok monkey=banana", sanitized["note"])
         assertEquals("apikey length 32", sanitized["phase"])
     }
+
+    @Test
+    fun aMediaServerContentIdLosesItsMachineAndUserIdsInAnyEvent() {
+        val id = "ms:jellyfin:6f3c1a9e2b7d4c58a1e0f9d8c7b6a543:0f1e2d3c4b5a69788796a5b4c3d2e1f0:episode:d9bd104991fd8d5f"
+        val sanitized = PostHogPrivacy.sanitize(
+            mapOf("content_id" to id, "note" to "playing $id now", "nested" to mapOf("id" to id), "type" to "movie"),
+        )
+        val everything = sanitized.toString()
+        assertFalse("6f3c1a9e2b7d4c58a1e0f9d8c7b6a543" in everything, "machine id must not leave the device: $everything")
+        assertFalse("0f1e2d3c4b5a69788796a5b4c3d2e1f0" in everything, "user id must not leave the device: $everything")
+        assertFalse("d9bd104991fd8d5f" in everything, "item id must not leave the device: $everything")
+        assertEquals("movie", sanitized["type"])
+        assertTrue((sanitized["note"] as String).startsWith("playing ") && (sanitized["note"] as String).endsWith(" now"))
+    }
 }

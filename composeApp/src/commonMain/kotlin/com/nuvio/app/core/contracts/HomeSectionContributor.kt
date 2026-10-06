@@ -6,6 +6,13 @@ import com.nuvio.app.features.home.HomeCatalogSection
 import kotlinx.coroutines.CancellationException
 
 /**
+ * A row a contributor WOULD show (its settings say it is on), independent of whether it currently has items -
+ * what the Home layout settings list so the viewer can reorder / hide / rename it even while it is empty or the
+ * server is offline. [key] is the same stable [HomeCatalogSection.key] the row renders under.
+ */
+data class ContributedRowDeclaration(val key: String, val title: String, val subtitle: String)
+
+/**
  * A source that contributes its own rows to Home (a media server's Continue Watching / Next Up /
  * Recently added). Unlike the fixed-position slots ([HomeSportsSection], [HomeAnnouncementsSection]) the
  * rows are ordinary [HomeCatalogSection]s: [HomeRepository][com.nuvio.app.features.home.HomeRepository]
@@ -32,6 +39,12 @@ interface HomeSectionContributor {
 
     /** One page of a "see all" listing for a [CatalogTarget.Source] this contributor owns. */
     suspend fun loadSourcePage(target: CatalogTarget.Source, skip: Int?): CatalogPage
+
+    /**
+     * The rows this contributor is configured to show, for the Home layout settings. Cheap and synchronous (no
+     * network): derived from the contributor's own settings. Default none.
+     */
+    fun declaredRows(): List<ContributedRowDeclaration> = emptyList()
 }
 
 object HomeSectionContributorRegistry {
@@ -55,6 +68,18 @@ object HomeSectionContributorRegistry {
                 contributor.sections(forceRefresh)
             } catch (cancelled: CancellationException) {
                 throw cancelled
+            } catch (_: Throwable) {
+                emptyList()
+            }
+        }.filter { seen.add(it.key) }
+    }
+
+    /** Every contributor's declared rows (a failing contributor declares none), first declaration of a key wins. */
+    fun declaredRows(): List<ContributedRowDeclaration> {
+        val seen = mutableSetOf<String>()
+        return all.flatMap { contributor ->
+            try {
+                contributor.declaredRows()
             } catch (_: Throwable) {
                 emptyList()
             }

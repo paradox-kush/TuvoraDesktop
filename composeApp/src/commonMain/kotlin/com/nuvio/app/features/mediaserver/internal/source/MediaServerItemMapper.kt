@@ -174,7 +174,19 @@ internal object MediaServerItemMapper {
         id = s.id.orEmpty(),
         label = sourceLabel(s),
         container = s.container,
+        subtitles = sidecarSubtitles(s),
     )
+
+    /** External TEXT subtitles of [s] (a bitmap sidecar - `.sup`, `.sub` image - cannot be converted to text and is left out). */
+    fun sidecarSubtitles(s: MediaSourceDto): List<MediaServerItemRegistry.SidecarSubtitle> = s.mediaStreams.mapNotNull { m ->
+        if (!m.type.equals("Subtitle", true) || !m.isExternal) return@mapNotNull null
+        if (m.codec?.lowercase() !in TEXT_SUBTITLE_CODECS) return@mapNotNull null
+        val language = m.language?.takeIf { it.isNotBlank() } ?: "und"
+        val label = (m.displayTitle ?: m.title)?.takeIf { it.isNotBlank() } ?: language.uppercase()
+        MediaServerItemRegistry.SidecarSubtitle(m.index, language, label)
+    }
+
+    private val TEXT_SUBTITLE_CODECS = setOf("srt", "subrip", "ass", "ssa", "vtt", "webvtt", "ttml", "smi")
 
     /** "1080p · HEVC · 4.2 GB" - one entry per `MediaSource` on a title page ("Home Server · 4K HEVC · 12.4 GB" in the matched lane). */
     fun sourceLabel(s: MediaSourceDto): String {

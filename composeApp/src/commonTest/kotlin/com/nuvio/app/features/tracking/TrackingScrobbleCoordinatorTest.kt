@@ -55,6 +55,39 @@ class TrackingScrobbleCoordinatorTest {
         assertEquals(0, simkl.callCount)
     }
 
+    @Test
+    fun `a media-server item is never scrobbled while a matched title still is`() = runBlocking {
+        com.nuvio.app.core.contracts.OwnSourcePolicy.resetForTest()
+        com.nuvio.app.core.contracts.OwnSourcePolicy.registerScrobbleExclusion("test") { it.startsWith("ms:") }
+        try {
+            val trakt = FakeScrobbler(TrackingProviderId.TRAKT)
+            val serverItem = TrackingScrobbleEvent(
+                media = TrackingMediaReference(
+                    kind = TrackingMediaKind.MOVIE,
+                    title = "Test Movie",
+                    year = 2024,
+                    catalog = TrackingCatalogReference(contentId = "ms:jellyfin:m1:u1:movie:abc", contentType = "movie"),
+                ),
+                progressPercent = 10.0,
+            )
+            val failures = dispatchTrackingScrobble(listOf(trakt), 1, TrackingScrobbleAction.START, serverItem)
+            assertEquals(0, trakt.callCount, "owner decision 2026-10-06: no Trakt scrobble for ms: items in v1")
+            assertEquals(emptyList(), failures.map(TrackingScrobbleFailure::providerId))
+            assertEquals(0, dispatchTrackingSeekScrobble(listOf(trakt), 1, TrackingScrobbleAction.STOP, serverItem).size)
+
+            val matched = serverItem.copy(
+                media = serverItem.media.copy(
+                    ids = TrackingExternalIds(tmdb = 603),
+                    catalog = TrackingCatalogReference(contentId = "tmdb:603", contentType = "movie", videoId = "tmdb:603"),
+                ),
+            )
+            dispatchTrackingScrobble(listOf(trakt), 1, TrackingScrobbleAction.START, matched)
+            assertEquals(1, trakt.callCount, "a TMDB title played from a server is a normal scrobble")
+        } finally {
+            com.nuvio.app.core.contracts.OwnSourcePolicy.resetForTest()
+        }
+    }
+
     private class FakeScrobbler(
         override val providerId: TrackingProviderId,
         override val seekScrobblePolicy: TrackingSeekScrobblePolicy = TrackingSeekScrobblePolicy.NONE,

@@ -25,6 +25,14 @@ internal object MediaBrowserUrls {
         return "${base(baseUrl)}/Videos/${percentEncode(itemId)}/stream?${query(params)}"
     }
 
+    /**
+     * A sidecar subtitle file: `{base}/Videos/{id}/{mediaSourceId}/Subtitles/{index}/0/Stream.{format}` - the server converts any
+     * text subtitle to the requested [format]. Tokenless (Jellyfin serves it anonymously, like images); Emby's token rides the
+     * player's request headers, never this URL.
+     */
+    fun subtitle(baseUrl: String, itemId: String, mediaSourceId: String, index: Int, format: String = "srt"): String =
+        "${base(baseUrl)}/Videos/${percentEncode(itemId)}/${percentEncode(mediaSourceId)}/Subtitles/$index/0/Stream.${percentEncode(format)}"
+
     /** Resolves a server-relative path (`/videos/..`, `/Videos/..`) or an absolute URL against [baseUrl]; the server's own query (incl. its ApiKey) is kept verbatim. */
     fun resolve(baseUrl: String, pathOrUrl: String): String {
         val value = pathOrUrl.trim()

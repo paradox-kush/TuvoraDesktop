@@ -383,6 +383,10 @@ internal class MediaBrowserClient(
         post("/QuickConnect/Authorize", listOf("code" to code.trim()))
     }
 
+    override suspend fun logout() {
+        post("/Sessions/Logout")
+    }
+
     private companion object {
         const val NEXT_UP_WINDOW_MS = 365L * 24 * 3600 * 1000
     }

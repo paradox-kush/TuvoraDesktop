@@ -56,6 +56,8 @@ data class MediaServerEntry(
     val userName: String? = null,
     /** D2: the server's own shelves the user enabled on Home. Device-local. */
     val homeRows: Set<MediaServerHomeRow> = emptySet(),
+    /** Libraries (server view id -> its name) the user put on Home as a row of their own. Device-local, like [homeRows]. */
+    val homeLibraries: Map<String, String> = emptyMap(),
 ) {
     /** `{type}:{machineId}:{userId}` (design 4) - what content ids and deferred URLs embed. */
     val serverKey: String get() = "${type.wire}:$machineId:$userId"

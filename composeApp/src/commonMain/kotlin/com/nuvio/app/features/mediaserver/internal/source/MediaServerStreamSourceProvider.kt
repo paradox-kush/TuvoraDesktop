@@ -16,6 +16,7 @@ import com.nuvio.app.features.mediaserver.internal.store.MediaServerEntryStore
 import com.nuvio.app.features.streams.StreamBehaviorHints
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamProxyHeaders
+import com.nuvio.app.features.streams.StreamSubtitle
 import kotlinx.coroutines.CancellationException
 
 /**
@@ -52,6 +53,17 @@ internal class MediaServerStreamSourceProvider(
             behaviorHints = StreamBehaviorHints(
                 proxyHeaders = headers?.let { StreamProxyHeaders(request = it) },
             ),
+            // Sidecar text subtitles ride with the stream; the engines list the container's own tracks by themselves.
+            externalSubtitles = source?.let { src ->
+                src.subtitles.map { sub ->
+                    StreamSubtitle(
+                        url = MediaBrowserUrls.subtitle(entry.address.orEmpty(), item.itemId, src.id, sub.index),
+                        language = sub.language,
+                        name = sub.label,
+                        headers = headers,
+                    )
+                }
+            }.orEmpty(),
         )
     }
 
