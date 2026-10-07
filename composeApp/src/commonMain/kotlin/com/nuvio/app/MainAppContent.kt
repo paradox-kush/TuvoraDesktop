@@ -1756,7 +1756,16 @@ internal fun MainAppContent(
                                 // The controller's tryLock rejects the 2nd+ rapid tap, so stacked taps
                                 // can't spin up concurrent switch/warm/pull pipelines.
                                 coroutineScope.launch {
-                                    ProfileSwitchController.switch(profile.profileIndex, syncOnEnter = true)
+                                    try {
+                                        ProfileSwitchController.switch(profile.profileIndex, syncOnEnter = true)
+                                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                        throw cancelled
+                                    } catch (failure: Exception) {
+                                        co.touchlab.kermit.Logger.withTag("ProfileSwitch").e(failure) { "Profile switch failed" }
+                                        onSwitchProfile()
+                                    } finally {
+                                        NativeTabBridge.publishTabBarVisible(true)
+                                    }
                                 }
                             }
                         },

@@ -372,23 +372,9 @@ object XtreamClient : IptvClient {
         val text = panelText(acc) { a -> playerApi(a, "get_series_info") + "&series_id=$seriesId" }
         val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return@call null
         val info = root["info"] as? JsonObject
-        val episodes = (root["episodes"] as? JsonObject).orEmptyEntries().flatMap { (seasonKey, seasonEps) ->
-            (seasonEps as? JsonArray).orEmpty().mapNotNull { element ->
-                val e = element as? JsonObject ?: return@mapNotNull null
-                val epId = e["id"].asStringOrNull() ?: return@mapNotNull null
-                val epInfo = e["info"] as? JsonObject   // null when the panel sends info: []
-                val num = e["episode_num"].asIntOrNull() ?: 0
-                XtreamEpisode(
-                    episodeId = epId,
-                    season = e["season"].asIntOrNull() ?: seasonKey.toIntOrNull() ?: 0,
-                    episodeNum = num,
-                    title = e["title"].asStringOrNull() ?: "Episode $num",
-                    plot = epInfo?.get("plot").asStringOrNull(),
-                    still = epInfo?.get("movie_image").asStringOrNull(),
-                    containerExtension = e["container_extension"].asStringOrNull()
-                )
-            }
-        }.sortedWith(compareBy({ it.season }, { it.episodeNum }))
+        val episodes = XtreamEpisodeRows.parse(root["episodes"]).map { e ->
+            XtreamEpisode(e.id, e.season, e.number, e.title, e.plot, e.still, e.extension)
+        }
         XtreamSeriesDetail(
             name = info?.get("name").asStringOrNull(),
             poster = info?.get("cover").asStringOrNull(),

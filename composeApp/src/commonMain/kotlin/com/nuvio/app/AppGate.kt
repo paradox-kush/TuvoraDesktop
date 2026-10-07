@@ -258,24 +258,6 @@ internal fun AppGate(
         }
     }
 
-    LaunchedEffect(nativeProfileSwitcherController, appGateController, renderMainContent) {
-        if (renderMainContent || appGateController == null) return@LaunchedEffect
-        nativeProfileSwitcherController?.selectedProfileIndices?.collect { profileIndex ->
-            if (profileIndex == ProfileRepository.state.value.activeProfile?.profileIndex) return@collect
-            val profile = ProfileRepository.state.value.profiles
-                .firstOrNull { it.profileIndex == profileIndex }
-                ?: return@collect
-            autoSkipProfileSelection = false
-            profileSelectionLoading = true
-            profileSelectionTransitionActive = true
-            skipProfileSelectionEnterAnimation = true
-            appGateController.beginContentReload()
-            ProfileSwitchController.switch(profile.profileIndex, syncOnEnter = true)
-            gateScreen = AppGateScreen.Main.name
-            onActivate?.invoke(AppScreenTab.Home)
-        }
-    }
-
     LaunchedEffect(externalMainContentReady, renderMainContent) {
         if (!renderMainContent && externalMainContentReady) {
             profileSelectionLoading = false
@@ -314,12 +296,25 @@ internal fun AppGate(
     // profile-bound repos, then pulls; Main is revealed only after that awaited sequence, which also
     // keeps AddonRepository.onProfileChanged from racing (and wiping) a fast pull.
     fun requestProfileSwitch(profile: NuvioProfile, sync: Boolean) {
+        // Do not replace LaunchedEffect's request while its reset/warm pipeline owns the lock.
+        if (pendingProfileSwitch != null || ProfileSwitchController.switchingTo.value != null) return
         if (!renderMainContent) {
             appGateController?.beginContentReload()
         }
         autoSkipProfileSelection = false
         pendingProfileSwitch = PendingProfileSwitch(profile, sync)
         gateScreen = AppGateScreen.ProfileSwitching.name
+    }
+
+    LaunchedEffect(nativeProfileSwitcherController, appGateController, renderMainContent) {
+        if (renderMainContent || appGateController == null) return@LaunchedEffect
+        nativeProfileSwitcherController?.selectedProfileIndices?.collect { profileIndex ->
+            if (profileIndex == ProfileRepository.state.value.activeProfile?.profileIndex) return@collect
+            val profile = ProfileRepository.state.value.profiles
+                .firstOrNull { it.profileIndex == profileIndex }
+                ?: return@collect
+            requestProfileSwitch(profile, sync = true)
+        }
     }
 
     LaunchedEffect(gateScreen, pendingProfileSwitch) {
@@ -332,12 +327,15 @@ internal fun AppGate(
     LaunchedEffect(pendingProfileSwitch) {
         val request = pendingProfileSwitch ?: return@LaunchedEffect
         runCatching {
-            ProfileSwitchController.switch(request.profile.profileIndex, request.syncOnEnter)
+            check(ProfileSwitchController.switch(request.profile.profileIndex, request.syncOnEnter)) {
+                "A profile switch is already running"
+            }
         }.onSuccess {
             pendingProfileSwitch = null
             autoSkipProfileSelection = false
             gateScreen = AppGateScreen.Main.name
         }.onFailure {
+            if (it is kotlinx.coroutines.CancellationException) throw it
             pendingProfileSwitch = null
             profileSelectionLoading = false
             profileSelectionTransitionActive = false
