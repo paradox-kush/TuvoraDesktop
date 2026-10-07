@@ -199,6 +199,14 @@ class MediaBrowserClientTest {
         assertTrue("MaxStreamingBitrate" !in com.nuvio.app.features.mediaserver.internal.client.mediabrowser.MediaBrowserDeviceProfile.build(null, false).keys, "uncapped direct play sends no cap")
     }
 
+    @Test
+    fun theDeviceProfileDoesNotClaimMpeg2DirectPlay() = runTest {
+        val p = com.nuvio.app.features.mediaserver.internal.client.mediabrowser.MediaBrowserDeviceProfile.build(null, false)
+        val codecs = p.getValue("DirectPlayProfiles").jsonArray.flatMap { it.jsonObject.getValue("VideoCodec").jsonPrimitive.content.split(",") }
+        assertFalse("mpeg2video" in codecs, "MPEG-2 must not be claimed as direct-playable: such files go to a transcode")
+        assertTrue(codecs.containsAll(listOf("h264", "hevc", "av1", "vp9")), "the common codecs stay direct-play")
+    }
+
     private fun lastBody(http: FakeHttp): JsonObject = Json.parseToJsonElement(http.requests.last().body!!).jsonObject
 
     @Test
