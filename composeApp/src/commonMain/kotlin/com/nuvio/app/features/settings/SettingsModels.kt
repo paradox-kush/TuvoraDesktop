@@ -17,6 +17,10 @@ import nuvio.composeapp.generated.resources.compose_settings_page_appearance
 import nuvio.composeapp.generated.resources.compose_settings_page_content_discovery
 import nuvio.composeapp.generated.resources.compose_settings_page_debrid
 import nuvio.composeapp.generated.resources.compose_settings_page_iptv
+import nuvio.composeapp.generated.resources.ms_settings_page_add
+import nuvio.composeapp.generated.resources.ms_settings_page_approve
+import nuvio.composeapp.generated.resources.ms_settings_page_details
+import nuvio.composeapp.generated.resources.ms_settings_page_servers
 import nuvio.composeapp.generated.resources.compose_settings_page_iptv_add_playlist
 import nuvio.composeapp.generated.resources.compose_settings_page_iptv_content
 import nuvio.composeapp.generated.resources.compose_settings_page_iptv_category_checklist
@@ -179,6 +183,27 @@ internal enum class SettingsPage(
         titleRes = Res.string.compose_settings_page_iptv_category_checklist,
         category = SettingsCategory.General,
         parentPage = IptvContent,
+    ),
+    // Jellyfin / Emby servers as sources (design 5.4): the list, add + sign in, one server, "approve a code".
+    MediaServers(
+        titleRes = Res.string.ms_settings_page_servers,
+        category = SettingsCategory.General,
+        parentPage = Integrations,
+    ),
+    MediaServerAdd(
+        titleRes = Res.string.ms_settings_page_add,
+        category = SettingsCategory.General,
+        parentPage = MediaServers,
+    ),
+    MediaServerDetails(
+        titleRes = Res.string.ms_settings_page_details,
+        category = SettingsCategory.General,
+        parentPage = MediaServers,
+    ),
+    MediaServerApprove(
+        titleRes = Res.string.ms_settings_page_approve,
+        category = SettingsCategory.General,
+        parentPage = MediaServers,
     ),
     TraktAuthentication(
         // Keep the enum name for saved navigation-state compatibility.

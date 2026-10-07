@@ -1,5 +1,6 @@
 package com.nuvio.app.features.catalog
 
+import com.nuvio.app.core.contracts.HomeSectionContributorRegistry
 import com.nuvio.app.core.poster.CustomPosterUrlRepository
 import com.nuvio.app.core.poster.withCustomPosterUrls
 import com.nuvio.app.features.collection.CollectionRepository
@@ -147,6 +148,11 @@ object CatalogRepository {
                         target = target,
                         page = requestedSkip.takeIf { it > 0 } ?: 1,
                     )
+
+                    is CatalogTarget.Source -> HomeSectionContributorRegistry.loadSourcePage(
+                        target = target,
+                        skip = requestedSkip.takeIf { it > 0 },
+                    ) ?: error(getString(Res.string.catalog_load_failed))
 
                     is CatalogTarget.Library -> error(getString(Res.string.catalog_load_failed))
                 }.withUnreleasedFilter(request.hideUnreleasedContent)

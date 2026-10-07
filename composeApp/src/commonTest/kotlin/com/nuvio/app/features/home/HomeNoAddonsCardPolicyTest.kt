@@ -2,6 +2,8 @@ package com.nuvio.app.features.home
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /** UX38: Home kept saying "No content yet - add your IPTV playlist" after a playlist was added. */
 class HomeNoAddonsCardPolicyTest {
@@ -31,5 +33,13 @@ class HomeNoAddonsCardPolicyTest {
             HomeNoAddonsCard.NoActiveAddons,
             HomeNoAddonsCardPolicy.card(addonsEnabled = true, hasAnyIptvPlaylist = true),
         )
+    }
+
+    @Test
+    fun aMediaServerRowIsContentSoAServerOnlyHomeIsNotTheNoAddonsScreen() {
+        assertTrue(isNoAddonsHome(hasActiveAddons = false, hasRenderableCollectionRows = false, hasContributedOrCatalogSections = false))
+        assertFalse(isNoAddonsHome(false, false, hasContributedOrCatalogSections = true), "rows a source contributed must render")
+        assertFalse(isNoAddonsHome(true, false, false))
+        assertFalse(isNoAddonsHome(false, true, false))
     }
 }

@@ -17,7 +17,10 @@ object AddonSubtitleIdPolicy {
     private val IMDB_ID = Regex("^tt\\d{5,10}$")
 
     /** True for ids that embed provider identity and must not reach an add-on. */
-    fun isProviderScoped(id: String?): Boolean = id?.trim()?.startsWith(PROVIDER_PREFIX) == true
+    fun isProviderScoped(id: String?): Boolean =
+        id?.trim()?.startsWith(PROVIDER_PREFIX) == true ||
+            // Any other own source (a media server: `ms:` ids embed the server and user ids) is provider-scoped too.
+            com.nuvio.app.core.contracts.OwnSourcePolicy.isOwnContentId(id?.trim())
 
     /** The Stremio-style public id for an IPTV item, or null when it cannot be formed. */
     fun publicVideoId(imdbId: String?, isSeries: Boolean, season: Int?, episode: Int?): String? {

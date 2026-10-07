@@ -2,15 +2,17 @@ package com.nuvio.app.core.contracts
 
 import com.nuvio.app.features.streams.StreamItem
 
-/** One IPTV match source (an enabled account), identified by an opaque id the fork maps back. */
+/** One match source (an enabled IPTV account, a signed-in media server), identified by an opaque id its owner maps back. */
 data class StreamSourceGroup(val sourceId: String, val addonName: String)
 
 /**
- * Firewall port for IPTV stream resolution, consumed by the shared streams repositories. The fork
- * owns all Xtream/Stalker access; the shared repo orchestrates with neutral results only — StreamItem
- * plus opaque source ids. The account is encoded inside [StreamSourceGroup.sourceId] and resolved
- * back fork-side, so no fork type crosses the firewall. No-op default (see [StreamSourceAccess]):
- * not-handled / empty everywhere, so a build without IPTV simply resolves nothing here.
+ * Firewall port for own-source stream resolution (IPTV, media servers), consumed by the shared streams
+ * repositories. The fork owns all Xtream/Stalker access; the shared repo orchestrates with neutral
+ * results only — StreamItem plus opaque source ids. The account is encoded inside
+ * [StreamSourceGroup.sourceId] and resolved back fork-side, so no fork type crosses the firewall.
+ * Sources are PLURAL: each registers under its own name in [StreamSourceRegistry] and shared code reads
+ * the combined view from [StreamSourceAccess.current] (see [CompositeStreamSourceProvider]); with
+ * nothing registered it is not-handled / empty everywhere.
  */
 interface StreamSourceProvider {
     /** True when [videoId] is a namespaced IPTV id (VOD/live) that resolves to one direct stream. */
@@ -44,33 +46,72 @@ interface StreamSourceProvider {
     suspend fun resolveDeferredUrl(url: String, forceMint: Boolean): String?
 }
 
+/**
+ * Every registered stream-source provider, in registration order; a duplicate name is refused. Content
+ * id namespaces and match-group id prefixes are disjoint per source, so ownership is "first provider
+ * that claims the id".
+ */
+object StreamSourceRegistry {
+    private val providers = NamedRegistry<StreamSourceProvider>("StreamSourceProvider")
+
+    fun register(name: String, provider: StreamSourceProvider) = providers.register(name, provider)
+
+    val all: List<StreamSourceProvider> get() = providers.all
+
+    internal fun resetForTest() = providers.resetForTest()
+}
+
+/**
+ * The plural view of [StreamSourceProvider]s behind the single-provider interface the shared code
+ * already speaks. With exactly one provider every answer is that provider's own (behaviour-identical to
+ * the old single slot); with none, everything is not-handled / empty / null.
+ *  - id-keyed calls ([isHandledId], [isStalkerSource], [directStreamItem]) go to the first provider that
+ *    handles the id;
+ *  - [matchSourceGroups] concatenates in registration order (each provider's own ordering is kept);
+ *  - [resolveMatchStreams] goes to the provider that owns the group id ([isMatchSourceId]);
+ *  - [isDeferredUrl] is true if any provider claims the url, and [resolveDeferredUrl] mints through the
+ *    claiming provider (null when none claims it - callers always check [isDeferredUrl] first).
+ */
+class CompositeStreamSourceProvider(
+    private val providers: () -> List<StreamSourceProvider>,
+) : StreamSourceProvider {
+    override fun isHandledId(videoId: String?): Boolean = providers().any { it.isHandledId(videoId) }
+
+    override fun isStalkerSource(videoId: String): Boolean =
+        providers().firstOrNull { it.isHandledId(videoId) }?.isStalkerSource(videoId) ?: false
+
+    override fun directStreamItem(videoId: String): StreamItem? =
+        providers().firstOrNull { it.isHandledId(videoId) }?.directStreamItem(videoId)
+
+    override fun matchSourceGroups(type: String): List<StreamSourceGroup> =
+        providers().flatMap { it.matchSourceGroups(type) }
+
+    override suspend fun resolveMatchStreams(
+        sourceId: String,
+        type: String,
+        videoId: String,
+        season: Int?,
+        episode: Int?,
+    ): List<StreamItem> =
+        providers().firstOrNull { it.isMatchSourceId(sourceId) }
+            ?.resolveMatchStreams(sourceId, type, videoId, season, episode)
+            ?: emptyList()
+
+    override fun isMatchSourceId(providerAddonId: String): Boolean =
+        providers().any { it.isMatchSourceId(providerAddonId) }
+
+    override fun isDeferredUrl(url: String?): Boolean = providers().any { it.isDeferredUrl(url) }
+
+    override suspend fun resolveDeferredUrl(url: String, forceMint: Boolean): String? =
+        providers().firstOrNull { it.isDeferredUrl(url) }?.resolveDeferredUrl(url, forceMint)
+}
+
+/** Thin read facade (call sites do not churn): the combined view of [StreamSourceRegistry]. */
 object StreamSourceAccess {
-    private val noOp = object : StreamSourceProvider {
-        override fun isHandledId(videoId: String?) = false
-        override fun isStalkerSource(videoId: String) = false
-        override fun directStreamItem(videoId: String): StreamItem? = null
-        override fun matchSourceGroups(type: String) = emptyList<StreamSourceGroup>()
-        override suspend fun resolveMatchStreams(
-            sourceId: String,
-            type: String,
-            videoId: String,
-            season: Int?,
-            episode: Int?,
-        ) = emptyList<StreamItem>()
-        override fun isMatchSourceId(providerAddonId: String) = false
-        override fun isDeferredUrl(url: String?) = false
-        override suspend fun resolveDeferredUrl(url: String, forceMint: Boolean): String? = null
-    }
-    private var provider: StreamSourceProvider? = null
+    private val composite = CompositeStreamSourceProvider { StreamSourceRegistry.all }
 
-    fun register(p: StreamSourceProvider) {
-        provider = p
-    }
+    /** The combined provider - not-handled / empty until a source registers. Stable instance. */
+    fun current(): StreamSourceProvider = composite
 
-    /** The registered provider, or a no-op until IPTV registers. */
-    fun current(): StreamSourceProvider = provider ?: noOp
-
-    fun resetForTest() {
-        provider = null
-    }
+    fun resetForTest() = StreamSourceRegistry.resetForTest()
 }

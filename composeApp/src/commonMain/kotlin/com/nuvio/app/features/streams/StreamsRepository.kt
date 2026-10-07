@@ -170,12 +170,7 @@ object StreamsRepository {
             val isStalkerSource = streamProvider.isStalkerSource(videoId)
             val xtreamStream = if (isStalkerSource) null else streamProvider.directStreamItem(videoId)
             if (xtreamStream != null) {
-                val group = AddonStreamGroup(
-                    addonName = xtreamStream.addonName,
-                    addonId = "xtream",
-                    streams = listOf(xtreamStream),
-                    isLoading = false,
-                )
+                val group = xtreamStream.asDirectSourceGroup()
                 val presentedGroup = StreamBadgePresentation.apply(
                     groups = listOf(group),
                     rules = streamBadgeRules,
@@ -183,7 +178,7 @@ object StreamsRepository {
                 _uiState.value = StreamsUiState(
                     requestToken = requestToken,
                     groups = listOf(presentedGroup),
-                    activeAddonIds = setOf("xtream"),
+                    activeAddonIds = setOf(xtreamStream.addonId),
                     isAnyLoading = false,
                 )
             } else {
@@ -199,12 +194,7 @@ object StreamsRepository {
                     }.getOrDefault(false)
                     val retried = if (rebuilt) streamProvider.directStreamItem(videoId) else null
                     if (retried != null) {
-                        val group = AddonStreamGroup(
-                            addonName = retried.addonName,
-                            addonId = "xtream",
-                            streams = listOf(retried),
-                            isLoading = false,
-                        )
+                        val group = retried.asDirectSourceGroup()
                         val presentedGroup = StreamBadgePresentation.apply(
                             groups = listOf(group),
                             rules = streamBadgeRules,
@@ -212,7 +202,7 @@ object StreamsRepository {
                         _uiState.value = StreamsUiState(
                             requestToken = requestToken,
                             groups = listOf(presentedGroup),
-                            activeAddonIds = setOf("xtream"),
+                            activeAddonIds = setOf(retried.addonId),
                             isAnyLoading = false,
                         )
                     } else {

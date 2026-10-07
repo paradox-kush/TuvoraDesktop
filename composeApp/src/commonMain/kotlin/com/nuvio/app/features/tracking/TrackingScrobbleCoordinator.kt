@@ -78,6 +78,8 @@ internal suspend fun dispatchTrackingScrobble(
     action: TrackingScrobbleAction,
     event: TrackingScrobbleEvent,
 ): List<TrackingScrobbleFailure> = supervisorScope {
+    // A source's own items (a media server's, v1) are never scrobbled: their content id is not a public identity.
+    if (event.media.isExcludedFromScrobble()) return@supervisorScope emptyList()
     scrobblers.map { scrobbler ->
         async {
             try {
@@ -90,4 +92,10 @@ internal suspend fun dispatchTrackingScrobble(
             }
         }
     }.awaitAll().filterNotNull()
+}
+
+private fun TrackingMediaReference.isExcludedFromScrobble(): Boolean {
+    val catalog = catalog ?: return false
+    return com.nuvio.app.core.contracts.OwnSourcePolicy.isExcludedFromTrackingScrobble(catalog.contentId) ||
+        com.nuvio.app.core.contracts.OwnSourcePolicy.isExcludedFromTrackingScrobble(catalog.videoId)
 }

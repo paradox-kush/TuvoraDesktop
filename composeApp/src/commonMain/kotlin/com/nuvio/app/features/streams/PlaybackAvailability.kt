@@ -5,6 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.build.AppFeaturePolicy
+import com.nuvio.app.core.contracts.OwnSourcePolicy
 import kotlinx.coroutines.flow.MutableStateFlow
 import com.nuvio.app.core.contracts.IptvCatalogAccess
 import com.nuvio.app.features.addons.AddonManifest
@@ -59,11 +60,12 @@ internal class PlaybackAvailability(
     ) != null
 
     companion object {
-        // Fork: IPTV items (Xtream/Stalker/M3U all carry "xtream:") are played by the IPTV resolver
-        // directly and never need an addon or scraper. Without this, upstream's play-disable check
-        // greys out Play/Resume for IPTV-only users (store builds hide addons). TV twin: 96324df71.
-        private const val IPTV_ID_PREFIX = "xtream:"
-        fun isIptvId(id: String): Boolean = id.startsWith(IPTV_ID_PREFIX)
+        // Fork: items of an own source (IPTV Xtream/Stalker/M3U carry "xtream:", media servers their own
+        // namespace) are played by that source's resolver directly and never need an addon or scraper.
+        // Without this, upstream's play-disable check greys out Play/Resume for IPTV-only users (store
+        // builds hide addons). Which ids are "own" is the registered [OwnSourcePolicy], not a literal
+        // here. TV twin: 96324df71.
+        fun isIptvId(id: String): Boolean = OwnSourcePolicy.isOwnContentId(id)
 
         fun current(): PlaybackAvailability = PlaybackAvailability(
             addons = AddonRepository.uiState.value.addons,

@@ -65,6 +65,57 @@ class HomeCatalogSettingsRepositoryTest {
         HomeRepository.clear()
     }
 
+    private class FakeRows(var rows: List<com.nuvio.app.core.contracts.ContributedRowDeclaration>) : com.nuvio.app.core.contracts.HomeSectionContributor {
+        override val name = "fake-rows"
+        override suspend fun sections(forceRefresh: Boolean) = emptyList<HomeCatalogSection>()
+        override fun ownsSource(sourceKey: String) = false
+        override suspend fun loadSourcePage(target: com.nuvio.app.features.catalog.CatalogTarget.Source, skip: Int?) =
+            com.nuvio.app.features.catalog.CatalogPage(emptyList(), 0, null)
+        override fun declaredRows() = rows
+    }
+
+    @Test
+    fun contributedRowsJoinTheLayoutAreOrderableHideableNeverHeroAndNeverSync() {
+        com.nuvio.app.core.contracts.HomeSectionContributorRegistry.resetForTest()
+        try {
+            val declared = com.nuvio.app.core.contracts.ContributedRowDeclaration("ms:jellyfin:m1:next_up", "Next Up", "Home server")
+            val fake = FakeRows(listOf(declared))
+            com.nuvio.app.core.contracts.HomeSectionContributorRegistry.register(fake)
+            HomeCatalogSettingsRepository.syncCatalogs(listOf(addon()))
+
+            val items = HomeCatalogSettingsRepository.uiState.value.items
+            assertEquals(listOf("test:movie:popular", "ms:jellyfin:m1:next_up"), items.map { it.key })
+            val row = items.last()
+            assertTrue(row.isContributed && !row.heroSourceEnabled && row.enabled)
+            assertEquals("Home server", row.addonName)
+
+            // reorder + hide + rename work through the same preferences as add-on rows
+            HomeCatalogSettingsRepository.moveUp("ms:jellyfin:m1:next_up")
+            HomeCatalogSettingsRepository.setEnabled("ms:jellyfin:m1:next_up", false)
+            HomeCatalogSettingsRepository.setCustomTitle("ms:jellyfin:m1:next_up", "Up next")
+            val after = HomeCatalogSettingsRepository.uiState.value.items
+            assertEquals(listOf("ms:jellyfin:m1:next_up", "test:movie:popular"), after.map { it.key })
+            assertTrue(!after.first().enabled)
+            assertEquals("Up next", after.first().displayTitle)
+            assertEquals(listOf("test:movie:popular"), HomeCatalogSettingsRepository.snapshot().preferences.keys.filter { !it.startsWith("ms:") })
+
+            // device-local: the account sync payload never carries a server's rows
+            assertTrue(HomeCatalogSettingsRepository.exportToSyncPayload().items.none { it.key.startsWith("ms:") })
+
+            // a row switched off in the server's settings leaves the list; its order/hidden choice is remembered for when it returns
+            fake.rows = emptyList()
+            HomeCatalogSettingsRepository.syncContributed()
+            assertEquals(listOf("test:movie:popular"), HomeCatalogSettingsRepository.uiState.value.items.map { it.key })
+            fake.rows = listOf(declared)
+            HomeCatalogSettingsRepository.syncContributed()
+            val back = HomeCatalogSettingsRepository.uiState.value.items
+            assertEquals("ms:jellyfin:m1:next_up", back.first().key, "its place is remembered")
+            assertTrue(!back.first().enabled, "...and so is hiding it")
+        } finally {
+            com.nuvio.app.core.contracts.HomeSectionContributorRegistry.resetForTest()
+        }
+    }
+
     @Test
     fun unchangedCatalogsDoNotRewriteSettings() {
         val addons = listOf(addon())

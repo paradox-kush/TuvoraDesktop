@@ -102,6 +102,8 @@ internal class PlayerScreenRuntime(
     val isSeries: Boolean get() = parentMetaType == "series"
 
     lateinit var scope: CoroutineScope
+    /** The in-flight mint of a picked deferred source ([mintDeferredStreamThen]); a newer pick replaces it. */
+    var deferredSourceMintJob: Job? = null
     lateinit var hapticFeedback: HapticFeedback
 
     var playerSettingsUiState by mutableStateOf(PlayerSettingsUiState())
@@ -208,6 +210,8 @@ internal class PlayerScreenRuntime(
     var completionRecordedForVideoId: String? = null
     var previousIsPlaying by mutableStateOf(false)
     var hasRequestedScrobbleStartForCurrentItem by mutableStateOf(false)
+    /** Key of the playback session announced to PlaybackSessionReporters (see reportSessionStart), or null. */
+    var reportedSessionKey: String? = null
     var scrobbleStartRequestGeneration by mutableStateOf(0L)
     var pendingSeekScrobbleRestart by mutableStateOf(false)
     var hasSentCompletionScrobbleForCurrentItem by mutableStateOf(false)

@@ -2622,4 +2622,9 @@
     <string name="iptv_favourite_added_toast">“%1$s” added to Favorites.</string>
     <string name="iptv_favourite_removed_toast">“%1$s” removed from Favorites.</string>
     <string name="compose_iptv_hub_all_favorites">All favorites</string>
+    <string name="media_server_row_continue_watching">Continue Watching · %1$s</string>
+    <string name="media_server_row_next_up">Next Up · %1$s</string>
+    <string name="media_server_row_recently_added">Recently Added · %1$s</string>
+    <string name="media_server_search_movies">Movies · %1$s</string>
+    <string name="media_server_search_series">TV Shows · %1$s</string>
 </resources>

@@ -22,7 +22,18 @@ class WatchProgressRulesTest {
     }
 
     @BeforeTest
-    fun registerClassifier() { com.nuvio.app.core.contracts.IptvContentClassifierAccess.register(TestIptvClassifier) }
+    fun registerClassifier() {
+        com.nuvio.app.core.contracts.resetAllSourceRegistriesForTest()
+        com.nuvio.app.core.contracts.ContentClassifierRegistry.register("test-iptv", TestIptvClassifier)
+        // The same id namespaces the classifier fake speaks, as the own-source predicates.
+        com.nuvio.app.core.contracts.OwnSourcePolicy.registerContentIdPredicate("test-iptv") { it.startsWith("xtream:") }
+        com.nuvio.app.core.contracts.OwnSourcePolicy.registerProviderIdPredicate("test-iptv") {
+            it == "xtream" || it.startsWith("xtream-match:")
+        }
+    }
+
+    @kotlin.test.AfterTest
+    fun unregisterClassifier() = com.nuvio.app.core.contracts.resetAllSourceRegistriesForTest()
 
     @Test
     fun `codec round trips entries in descending updated order`() {

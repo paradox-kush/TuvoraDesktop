@@ -1,6 +1,7 @@
 package com.nuvio.app.features.streams
 
 import com.nuvio.app.core.build.AppFeaturePolicy
+import com.nuvio.app.core.contracts.OwnSourcePolicy
 import com.nuvio.app.features.addons.AddonSourcePolicy
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -137,14 +138,12 @@ object StreamLinkCacheRepository {
     }
 
     /**
-     * True for a stream produced by an IPTV account rather than an addon/debrid provider: the
-     * direct hybrid lane ("xtream") and the TMDB-matched lane ("xtream-match:<accountId>").
+     * True for a stream produced by an own source (an IPTV account, a media server) rather than an
+     * addon/debrid provider: the direct hybrid lane ("xtream") and the TMDB-matched lane
+     * ("xtream-match:<accountId>") for IPTV. Which provider ids are "own" is the registered
+     * [OwnSourcePolicy]; this stays as the cache's thin adapter so its call sites do not churn.
      */
-    internal fun isIptvAddon(addonId: String?): Boolean {
-        if (addonId.isNullOrBlank()) return false
-        return addonId == "xtream" ||
-            com.nuvio.app.core.contracts.IptvContentClassifierAccess.classifier.isXtreamStreamGroup(addonId)
-    }
+    internal fun isIptvAddon(addonId: String?): Boolean = OwnSourcePolicy.isOwnProviderId(addonId)
 
     private fun hashedKey(contentKey: String): String {
         val hash = contentKey.fold(0L) { acc, c -> acc * 31 + c.code }.toULong()

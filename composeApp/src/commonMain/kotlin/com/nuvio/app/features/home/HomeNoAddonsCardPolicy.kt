@@ -25,3 +25,10 @@ internal object HomeNoAddonsCardPolicy {
             else -> HomeNoAddonsCard.AddIptvPlaylist
         }
 }
+
+/**
+ * Whether Home is the "no add-ons" screen (the card, no rows). A row a source contributes (a media server's) is
+ * content too: a household that uses only a server has no add-ons and must still see its rows.
+ */
+internal fun isNoAddonsHome(hasActiveAddons: Boolean, hasRenderableCollectionRows: Boolean, hasContributedOrCatalogSections: Boolean): Boolean =
+    !hasActiveAddons && !hasRenderableCollectionRows && !hasContributedOrCatalogSections

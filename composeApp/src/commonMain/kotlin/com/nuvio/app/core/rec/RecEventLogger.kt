@@ -1,5 +1,6 @@
 package com.nuvio.app.core.rec
 
+import com.nuvio.app.core.contracts.OwnSourcePolicy
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.build.AppVersionConfig
 import com.nuvio.app.core.network.SupabaseProvider
@@ -104,6 +105,8 @@ object RecEventLogger {
                 event = event.copy(
                     clientTs = recIsoTimestamp(now),
                     profileId = activeProfileId(),
+                    // A media-server id embeds the server's and the user's own ids: only its salted hash may leave the device.
+                    itemId = event.itemId?.let { OwnSourcePolicy.telemetryId(it, RecEventIdentity.deviceId()) },
                 ),
             )
             val shouldFlush = synchronized(queueLock) {

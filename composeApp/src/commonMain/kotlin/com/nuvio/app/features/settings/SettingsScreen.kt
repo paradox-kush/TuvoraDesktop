@@ -29,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.foundation.gestures.stopScroll
 import com.nuvio.app.core.contracts.IptvSettingsSectionAccess
+import com.nuvio.app.core.contracts.MediaServerSettingsSectionAccess
 import com.nuvio.app.core.ui.LocalScreenActive
 import com.nuvio.app.core.ui.ScreenActivityEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -126,6 +127,7 @@ private fun SettingsPage.isEnabledByPolicy(): Boolean =
 @Composable
 private fun settingsPageHeaderTitle(page: SettingsPage): String =
     IptvSettingsSectionAccess.current()?.headerTitleOrNull(page)
+        ?: MediaServerSettingsSectionAccess.current()?.headerTitleOrNull(page)
         ?: stringResource(page.titleRes)
 
 @Composable
@@ -271,7 +273,11 @@ fun SettingsScreen(
         val scrollToTopRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
         val pageTitles = if (onNavigatePage != null) settingsPageTitles() else emptyMap()
         // UX19: feature-owned title overrides (Edit vs Add Playlist), read when navigating.
-        val navigationTitleOverride = IptvSettingsSectionAccess.current()?.rememberNavigationTitleOverride()
+        val iptvTitleOverride = IptvSettingsSectionAccess.current()?.rememberNavigationTitleOverride()
+        val mediaServerTitleOverride = MediaServerSettingsSectionAccess.current()?.rememberNavigationTitleOverride()
+        val navigationTitleOverride: ((SettingsPage) -> String?)? =
+            if (iptvTitleOverride == null && mediaServerTitleOverride == null) null
+            else { target -> iptvTitleOverride?.invoke(target) ?: mediaServerTitleOverride?.invoke(target) }
         val page = remember(currentPage) {
             runCatching { SettingsPage.valueOf(currentPage) }
                 .getOrDefault(SettingsPage.Root)
@@ -582,6 +588,7 @@ private fun MobileSettingsScreen(
     val saveableStateHolder = rememberSaveableStateHolder()
     val iptvSection = IptvSettingsSectionAccess.current()
     val iptvSettingsState = if (iptvSection != null) iptvSection.rememberState() else null
+    val mediaServerSection = MediaServerSettingsSectionAccess.current()
     saveableStateHolder.SaveableStateProvider(page.name) {
         var settingsSearchQuery by rememberSaveable { mutableStateOf("") }
         var rootSearchVisible by rememberSaveable { mutableStateOf(false) }
@@ -835,6 +842,7 @@ private fun MobileSettingsScreen(
                     onMdbListClick = { onPageChange(SettingsPage.MdbListRatings) },
                     onDebridClick = { onPageChange(SettingsPage.Debrid) },
                     onIptvClick = { onPageChange(SettingsPage.Iptv) },
+                    onMediaServersClick = if (mediaServerSection != null) { { onPageChange(SettingsPage.MediaServers) } } else null,
                 )
                 SettingsPage.TmdbEnrichment -> tmdbSettingsContent(
                     isTablet = false,
@@ -865,6 +873,18 @@ private fun MobileSettingsScreen(
                                 onPageChange = onPageChange,
                                 onNavigateBack = onNavigateBack,
                             )
+                        }
+                    }
+                }
+                SettingsPage.MediaServers,
+                SettingsPage.MediaServerAdd,
+                SettingsPage.MediaServerDetails,
+                SettingsPage.MediaServerApprove -> {
+                    // Media-server pages live in the fork's MediaServerSettingsSection (firewall); forwarded like IPTV's.
+                    val section = mediaServerSection
+                    if (section != null) {
+                        with(section) {
+                            renderPage(page, isTablet = false, onPageChange = onPageChange, onNavigateBack = onNavigateBack)
                         }
                     }
                 }
@@ -993,6 +1013,7 @@ private fun TabletSettingsScreen(
     var selectedCategory by rememberSaveable { mutableStateOf(SettingsCategory.General.name) }
     val iptvSection = IptvSettingsSectionAccess.current()
     val iptvSettingsState = if (iptvSection != null) iptvSection.rememberState() else null
+    val mediaServerSection = MediaServerSettingsSectionAccess.current()
     val activeCategory = SettingsCategory.valueOf(selectedCategory)
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val effectiveTopOffset = topChromePadding ?: (statusBarPadding + 24.dp)
@@ -1321,6 +1342,7 @@ private fun TabletSettingsScreen(
                                 onMdbListClick = { onPageChange(SettingsPage.MdbListRatings) },
                                 onDebridClick = { onPageChange(SettingsPage.Debrid) },
                                 onIptvClick = { onPageChange(SettingsPage.Iptv) },
+                                onMediaServersClick = if (mediaServerSection != null) { { onPageChange(SettingsPage.MediaServers) } } else null,
                             )
                             SettingsPage.TmdbEnrichment -> tmdbSettingsContent(
                                 isTablet = true,
@@ -1351,6 +1373,18 @@ private fun TabletSettingsScreen(
                                             onPageChange = onPageChange,
                                             onNavigateBack = onNavigateBack,
                                         )
+                                    }
+                                }
+                            }
+                            SettingsPage.MediaServers,
+                            SettingsPage.MediaServerAdd,
+                            SettingsPage.MediaServerDetails,
+                            SettingsPage.MediaServerApprove -> {
+                                // Media-server pages live in the fork's MediaServerSettingsSection (firewall); forwarded like IPTV's.
+                                val section = mediaServerSection
+                                if (section != null) {
+                                    with(section) {
+                                        renderPage(page, isTablet = true, onPageChange = onPageChange, onNavigateBack = onNavigateBack)
                                     }
                                 }
                             }
