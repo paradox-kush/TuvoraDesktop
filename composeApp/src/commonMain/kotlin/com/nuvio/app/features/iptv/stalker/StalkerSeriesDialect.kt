@@ -1,5 +1,7 @@
 package com.nuvio.app.features.iptv.stalker
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -29,17 +31,29 @@ object StalkerSeriesDialect {
      * XC when `type=series` answered with categories; MINISTRA when it didn't but `type=vod` did;
      * null when neither answered (nothing is proven — the caller surfaces the original failure).
      */
+    fun allowsVodFallback(probeFailed: Boolean, emptySection: Boolean): Boolean = !probeFailed || emptySection
+
     fun decide(seriesCategoriesUsable: Boolean, vodCategoriesUsable: Boolean): Dialect? = when {
         seriesCategoriesUsable -> Dialect.XC
         vodCategoriesUsable -> Dialect.MINISTRA
         else -> null
     }
 
-    /** `is_series` as stock Ministra emits it: "1"/1/true. Absent (every XC vod row) = not a series. */
-    fun isSeriesRow(row: JsonObject): Boolean {
-        val v = (row["is_series"] as? JsonPrimitive)?.contentOrNull?.trim() ?: return false
-        return v == "1" || v.equals("true", ignoreCase = true) || (v.toIntOrNull() ?: 0) != 0
+    /** Legacy MAG rows have episode numbers in `series`, often with is_series=0 or absent. */
+    fun isSeriesRow(row: JsonObject): Boolean =
+        row.strField("is_series")?.let { it.equals("true", true) || (it.toIntOrNull() ?: 0) != 0 } == true ||
+            legacyEpisodeNumbers(row).isNotEmpty()
+
+    fun legacyEpisodeNumbers(row: JsonObject): List<Int> {
+        val raw = row["series"]
+        val array = raw as? JsonArray ?: (raw as? JsonPrimitive)?.contentOrNull?.let {
+            runCatching { Json.parseToJsonElement(it) as? JsonArray }.getOrNull()
+        }
+        return array.orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.toIntOrNull() }
+            .filter { it > 0 }.distinct().sorted()
     }
+
+    fun movieFilesParams(movieId: Int): Map<String, String> = tree("movie_id" to movieId.toString(), page = 1)
 
     fun seasonsParams(seriesId: Int, page: Int): Map<String, String> =
         tree("movie_id" to seriesId.toString(), page = page)

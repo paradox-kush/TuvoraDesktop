@@ -199,6 +199,10 @@ object StalkerClient : IptvClient {
             rememberDialect(acc, StalkerSeriesDialect.Dialect.XC)
             return xc
         }
+        val failure = xc.exceptionOrNull()
+        if (failure is kotlinx.coroutines.CancellationException) throw failure
+        // An unavailable series module is capability evidence; a network/auth failure is not.
+        if (!StalkerSeriesDialect.allowsVodFallback(failure != null, (failure as? StalkerSessionUnavailableException)?.emptySection == true)) return xc
         val vod = categories(acc, "vod", "get_categories")
         return when (StalkerSeriesDialect.decide(false, vod.getOrNull()?.isNotEmpty() == true)) {
             StalkerSeriesDialect.Dialect.MINISTRA -> {
@@ -714,9 +718,14 @@ object StalkerClient : IptvClient {
     /** [nameHint] lets a cold-start play (Library/Continue Watching) find the row via the portal's own
      *  search instead of scanning a 63k-item catalog — pass the registered title when you have it. */
     suspend fun resolveMovieUrl(acc: XtreamAccount, streamId: Int, nameHint: String? = null, forceMint: Boolean = false): String? {
-        val cmd = vodCmd(acc, streamId, nameHint) ?: return null
-        staticUrlOrNull(acc, "vod", streamId, cmd, forceMint)?.let { return it }
-        return createLink(acc, "vod", cmd)
+        val cmd = vodCmd(acc, streamId, nameHint)
+        if (!forceMint && cmd != null) {
+            staticUrlOrNull(acc, "vod", streamId, cmd, false)?.let { return it }
+            createLink(acc, "vod", cmd)?.let { return it }
+        }
+        val fileCmd = movieFileCmd(acc, streamId)
+        return if (fileCmd != null) createLink(acc, "vod", fileCmd)
+        else if (forceMint) cmd?.let { createLink(acc, "vod", it) } else null
     }
 
     /**
@@ -795,7 +804,15 @@ object StalkerClient : IptvClient {
 
     /** Every episode of a Ministra series: seasons (`movie_id`), then each season's pages (`season_id`). */
     private suspend fun ministraSeriesInfo(acc: XtreamAccount, seriesId: Int): XtreamSeriesDetail? {
-        val row = rowCache[rowKey(acc.id, "vod", seriesId)]
+        val row = rowCache[rowKey(acc.id, "vod", seriesId)] ?: row(acc, "vod", seriesId)
+        val legacyNumbers = row?.let(StalkerSeriesDialect::legacyEpisodeNumbers).orEmpty()
+        val legacyCmd = row?.str("cmd")?.takeIf { it.isNotBlank() }
+        if (legacyNumbers.isNotEmpty() && legacyCmd != null) {
+            seasonMutex.withLock { seasonCache["${acc.id}:$seriesId"] = listOf(StalkerSeason(1, legacyCmd, legacyNumbers)) }
+            return XtreamSeriesDetail(name = row?.str("name"), poster = row?.str("screenshot_uri")?.let { absolutize(acc, it) },
+                tmdbId = null, plot = row?.str("description"), genres = emptyList(), rating = null, releaseDate = row?.str("year"),
+                episodes = legacyNumbers.map { n -> XtreamEpisode("${seriesId}_1_$n", 1, n, "Episode $n", null, null, null) })
+        }
         val db = if (row == null) IptvContentDb.seriesRow(acc.id, seriesId) else null
         val episodes = ministraSeasonsOf(acc, seriesId).flatMap { season ->
             ministraEpisodesOf(acc, seriesId, season.id).map { ep ->
@@ -830,6 +847,12 @@ object StalkerClient : IptvClient {
      * that is the XC season-container convention. Always mints, like XC episodes.
      */
     private suspend fun ministraEpisodeUrl(acc: XtreamAccount, seriesId: Int, season: Int?, episodeNum: Int): String? {
+        val parent = rowCache[rowKey(acc.id, "vod", seriesId)] ?: row(acc, "vod", seriesId)
+        val legacy = parent?.let(StalkerSeriesDialect::legacyEpisodeNumbers).orEmpty()
+        if (episodeNum in legacy && (season == null || season == 1)) {
+            val cmd = parent?.str("cmd") ?: return null
+            return createLink(acc, "vod", cmd, extraParams = mapOf("series" to episodeNum.toString()))
+        }
         val seasons = ministraSeasonsOf(acc, seriesId)
         val s = (season?.let { n -> seasons.firstOrNull { it.number == n } } ?: seasons.firstOrNull()) ?: return null
         val ep = ministraEpisodesOf(acc, seriesId, s.id).firstOrNull { it.node.number == episodeNum } ?: return null
@@ -933,6 +956,19 @@ object StalkerClient : IptvClient {
             seasons
         }
 
+    private suspend fun movieFileCmd(acc: XtreamAccount, movieId: Int): String? {
+        val reply = try { browse(acc, StalkerSeriesDialect.movieFilesParams(movieId)) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { return null }
+        val rows = (reply as? JsonObject)?.get("data") as? JsonArray ?: return null
+        return rows.mapNotNull { it as? JsonObject }.firstNotNullOfOrNull { file ->
+            val flag = file.str("is_file")?.trim()
+            file.str("cmd")?.takeIf { cmd ->
+                cmd.isNotBlank() && (flag == "1" || flag.equals("true", true) || cmd.contains("/media/file_"))
+            }
+        }
+    }
+
     private suspend fun createLink(
         acc: XtreamAccount,
         type: String,
@@ -948,7 +984,7 @@ object StalkerClient : IptvClient {
             putAll(extraParams)
         }
         // Playback: the ACTIVE portal only — a create_link failure never walks to a backup (Step 0.3).
-        val js = runCatching { playbackSession(acc).request(params) }.getOrNull() as? JsonObject ?: return null
+        val js = try { playbackSession(acc).request(params) as? JsonObject } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (_: Exception) { null } ?: return null
         return StalkerProtocol.extractStreamUrl(js.str("cmd"))
     }
 

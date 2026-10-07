@@ -56,7 +56,7 @@ internal class StalkerDeviceConflictException(message: String) : StalkerPortalRe
  * Typed because it is the one browse failure with a user-facing explanation that is neither "the
  * portal is down" nor "your MAC is wrong" — see IptvLoadFailurePolicy.
  */
-internal class StalkerSessionUnavailableException(message: String) : IllegalStateException(message)
+internal class StalkerSessionUnavailableException(message: String, val emptySection: Boolean = false) : IllegalStateException(message)
 
 /**
  * A stateful Stalker-portal (MAG/Ministra) session for ONE playlist. Owns endpoint probing (the user
@@ -172,7 +172,8 @@ internal class StalkerSession(
             val kind = StalkerEmptyReplyPolicy.classify(retryBody)
             if (StalkerEmptyReplyPolicy.startsCooldown(kind)) lastFailedReauthAtMs = now
             throw StalkerSessionUnavailableException(
-                StalkerEmptyReplyPolicy.message(kind, account.name, params, retryBody)
+                StalkerEmptyReplyPolicy.message(kind, account.name, params, retryBody),
+                emptySection = kind == StalkerEmptyReplyPolicy.Kind.NOTHING_FOR_SECTION,
             )
         }
         lastFailedReauthAtMs = 0L

@@ -85,7 +85,10 @@ internal object XtreamMetaSource : MetaSourceProvider {
      * default. Returns true once a playable item is registered. Called from the direct-play path
      * (StreamsRepository) so it doesn't have to go through the detail screen first.
      */
-    override suspend fun ensureStreamRegistered(id: String, forceFresh: Boolean, forceMint: Boolean): Boolean {
+    override suspend fun ensureStreamRegistered(id: String, forceFresh: Boolean, forceMint: Boolean): Boolean =
+        kotlinx.coroutines.withTimeoutOrNull(30_000) { registerStreamWithinDeadline(id, forceFresh, forceMint) } ?: false
+
+    private suspend fun registerStreamWithinDeadline(id: String, forceFresh: Boolean, forceMint: Boolean): Boolean {
         // A blank registered URL is a Stalker placeholder — fall through to resolve it fresh.
         // [forceFresh] skips the cache short-circuit: Stalker create_link URLs are single-use /
         // short-TTL, so a replay (or a mid-playback 401) must mint a NEW link even though the

@@ -21,11 +21,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
 
 /**
- * Fork-owned orchestration for an in-app profile switch: the awaited
- * `switch -> warm -> pull` pipeline plus a **single-flight guard**.
+ * Fork-owned orchestration for an in-app profile switch: the
+ * `switch -> warm -> schedule pull` pipeline plus a **single-flight guard**.
  *
  * ## Why this exists
  * Every in-app switch site (the native OS profile switcher, the in-app profile sheet, and the gate
@@ -33,7 +36,7 @@ import kotlinx.coroutines.withContext
  * 1. [ProfileRepository.switchToProfile] — the ~30-way `onProfileChanged` fan-out, run off the main
  *    thread under [ProfileRepository]'s own mutex.
  * 2. [warmProfileBoundRepositories] — reload the now-active profile's repositories.
- * 3. [SyncManager.pullAllForProfile] — pull that profile's synced state from the backend.
+ * 3. [SyncManager.pullAllForProfile] — schedule that profile's background sync after reset/warm.
  *
  * Keeping this pipeline (and its imports) in a fork-owned file — rather than inline in `App.kt` —
  * keeps the shared `App.kt` spine merge-clean when upstream is pulled in: the orchestration is not a
@@ -91,13 +94,27 @@ object ProfileSwitchController {
         switchProfile: suspend () -> Unit,
         warm: suspend () -> Unit,
         pull: suspend () -> Unit,
+        timeoutMs: Long = 30_000,
     ): Boolean {
         if (!mutex.tryLock()) return false
         try {
             _switchingTo.value = profileIndex
-            switchProfile()
-            warm()
-            pull()
+            val log = co.touchlab.kermit.Logger.withTag("ProfileSwitch")
+            try {
+                withTimeout(timeoutMs) {
+                    log.i { "Switch $profileIndex: reset" }
+                    switchProfile()
+                    log.i { "Switch $profileIndex: warm" }
+                    warm()
+                    log.i { "Switch $profileIndex: schedule sync" }
+                    pull()
+                    log.i { "Switch $profileIndex: ready" }
+                }
+            } catch (timeout: TimeoutCancellationException) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                // An internal deadline is a recoverable switch failure, not cancellation of the UI.
+                throw IllegalStateException("Profile switch timed out", timeout)
+            }
             return true
         } finally {
             _switchingTo.value = null

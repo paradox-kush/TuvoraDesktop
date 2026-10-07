@@ -116,4 +116,27 @@ class ProfileSwitchSequencingTest {
             "the later admitted switch runs all steps in order",
         )
     }
+
+    @Test
+    fun failedWarmupUnlocksAndAllowsAnotherSwitch() = runBlocking {
+        try {
+            ProfileSwitchController.runSwitch(1, {}, { error("disk failure") }, {})
+            error("failure was swallowed")
+        } catch (_: IllegalStateException) { }
+        assertEquals(null, ProfileSwitchController.switchingTo.value)
+        assertEquals(true, ProfileSwitchController.runSwitch(2, {}, {}, {}))
+    }
+
+    @Test
+    fun stalledWarmupTimesOutAndUnlocks() = kotlinx.coroutines.test.runTest {
+        var pulled = false
+        var failed = false
+        try {
+            ProfileSwitchController.runSwitch(1, {}, { kotlinx.coroutines.awaitCancellation() }, { pulled = true }, timeoutMs = 100)
+        } catch (_: IllegalStateException) { failed = true }
+        assertEquals(true, failed)
+        assertEquals(false, pulled)
+        assertEquals(null, ProfileSwitchController.switchingTo.value)
+        assertEquals(true, ProfileSwitchController.runSwitch(2, {}, {}, {}))
+    }
 }
