@@ -57,7 +57,7 @@ class MediaServerIdsTest {
         assertTrue(MediaServerIds.isOwnProviderId("ms-match:jellyfin:$m:$u"))
         assertFalse(MediaServerIds.isOwnProviderId("xtream"))
         assertFalse(MediaServerIds.isOwnProviderId("xtream-match:http://a|b"))
-        assertFalse(MediaServerIds.isOwnProviderId("addon:torrentio"))
+        assertFalse(MediaServerIds.isOwnProviderId("addon:example"))
         assertFalse(MediaServerIds.isOwnProviderId("msx"), "only the exact direct id or the match prefix")
     }
 

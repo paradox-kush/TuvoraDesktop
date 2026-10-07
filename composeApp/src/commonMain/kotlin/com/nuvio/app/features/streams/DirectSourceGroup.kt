@@ -12,3 +12,9 @@ internal fun StreamItem.asDirectSourceGroup(): AddonStreamGroup = AddonStreamGro
     streams = listOf(this),
     isLoading = false,
 )
+
+/** The direct lane's group when its source lists several versions of the one title (a media server's MediaSources). */
+internal fun List<StreamItem>.asDirectSourceGroup(): AddonStreamGroup {
+    val first = first()
+    return AddonStreamGroup(addonName = first.addonName, addonId = first.addonId, streams = this, isLoading = false)
+}

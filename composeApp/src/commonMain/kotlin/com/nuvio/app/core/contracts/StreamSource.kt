@@ -24,6 +24,9 @@ interface StreamSourceProvider {
     /** The registered direct stream item for [videoId], or null on a registry miss. */
     fun directStreamItem(videoId: String): StreamItem?
 
+    /** Every version of [videoId] when its source has several (a media server's MediaSources); one item otherwise. */
+    fun directStreamItems(videoId: String): List<StreamItem> = listOfNotNull(directStreamItem(videoId))
+
     /** One match source per enabled Xtream/Stalker account, for TMDB [type] ("movie"/"series"). */
     fun matchSourceGroups(type: String): List<StreamSourceGroup>
 
@@ -82,6 +85,9 @@ class CompositeStreamSourceProvider(
 
     override fun directStreamItem(videoId: String): StreamItem? =
         providers().firstOrNull { it.isHandledId(videoId) }?.directStreamItem(videoId)
+
+    override fun directStreamItems(videoId: String): List<StreamItem> =
+        providers().firstOrNull { it.isHandledId(videoId) }?.directStreamItems(videoId).orEmpty()
 
     override fun matchSourceGroups(type: String): List<StreamSourceGroup> =
         providers().flatMap { it.matchSourceGroups(type) }

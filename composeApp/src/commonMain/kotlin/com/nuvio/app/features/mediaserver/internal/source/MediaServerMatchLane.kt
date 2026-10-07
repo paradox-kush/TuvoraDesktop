@@ -118,12 +118,23 @@ internal class MediaServerMatchLane(
 
     private suspend fun withSources(client: MediaServerClient, itemId: String): ItemDto? = client.item(itemId, fields = SOURCE_FIELDS)
 
-    /** The server's own episode for a TMDB (season, episode): seasons -> that season's episodes -> the episode with its sources. */
+    /**
+     * The server's own episode for a TMDB (season, episode): seasons -> that season's episodes -> the episode with its sources.
+     * A server with no season items (an on-demand library whose season fetcher is off answers `/Seasons` with `[]` while
+     * `/Episodes` lists everything with `ParentIndexNumber`) or no `/Seasons` route at all falls back to the series' episode list.
+     */
     private suspend fun episodeOf(client: MediaServerClient, seriesId: String, season: Int, episode: Int): ItemDto? {
-        val seasonItem = client.seasons(seriesId).firstOrNull { it.indexNumber == season } ?: return null
-        val seasonId = seasonItem.id ?: return null
-        val ep = client.episodes(seriesId, seasonId).firstOrNull { it.indexNumber == episode && (it.parentIndexNumber ?: season) == season }
-            ?: return null
+        val seasonItem = try {
+            client.seasons(seriesId).firstOrNull { it.indexNumber == season }
+        } catch (e: MediaServerException.Http) {
+            if (e.isUnauthorized) throw e else null
+        }
+        val seasonId = seasonItem?.id
+        val ep = if (seasonId != null) {
+            client.episodes(seriesId, seasonId).firstOrNull { it.indexNumber == episode && (it.parentIndexNumber ?: season) == season }
+        } else {
+            client.episodes(seriesId).firstOrNull { it.indexNumber == episode && it.parentIndexNumber == season }
+        } ?: return null
         val epId = ep.id ?: return null
         return client.item(epId, fields = SOURCE_FIELDS)
     }

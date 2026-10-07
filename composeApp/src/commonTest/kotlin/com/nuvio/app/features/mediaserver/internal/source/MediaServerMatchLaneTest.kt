@@ -193,6 +193,23 @@ class MediaServerMatchLaneTest {
     }
 
     @Test
+    fun aServerWithoutSeasonItemsStillResolvesTheEpisodeFromItsEpisodeList() = runTest {
+        // recorded (Jellyfin server that creates items on demand and has season listing off): GET /Shows/{id}/Seasons answers [] while
+        // GET /Shows/{id}/Episodes lists every episode with ParentIndexNumber/IndexNumber
+        val rig = rig()
+        facts = TitleFacts(ExternalIds(imdb = "tt0000100"), primary = "Test Show", year = 2023)
+        client.lookupAnswer = { listOf(item("show1", "Test Show", type = "Series") { it.copy(providerIds = mapOf("Imdb" to "tt0000100")) }) }
+        client.episodesOf["show1"] = listOf(
+            item("e1", "Episode 1x1", type = "Episode") { it.copy(indexNumber = 1, parentIndexNumber = 1) },
+            item("e4", "Episode 2x1", type = "Episode") { it.copy(indexNumber = 1, parentIndexNumber = 2) },
+        )
+        client.items["e4"] = item("e4", "Episode 2x1", type = "Episode", sources = listOf(source("srcE4"))) { it.copy(indexNumber = 1, parentIndexNumber = 2) }
+        val streams = lane(rig).streams(groupId(), "series", "tmdb:1", 2, 1)
+        assertEquals("ms-deferred:jellyfin:$M:$U|e4|srcE4", streams.single().url)
+        assertEquals(emptyList(), lane(rig).streams(groupId(), "series", "tmdb:1", 3, 1), "no season 3 in the episode list either")
+    }
+
+    @Test
     fun noFactsMeansNothingIsAskedOfTheServer() = runTest {
         val rig = rig()
         facts = null

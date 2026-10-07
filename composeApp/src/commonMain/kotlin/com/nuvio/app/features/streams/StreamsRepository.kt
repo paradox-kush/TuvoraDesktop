@@ -168,9 +168,10 @@ object StreamsRepository {
             // registry-cached one (it was consumed by the last play) — force a fresh mint every
             // stream-list build. Xtream/M3U URLs are stable, so the cache stays their fast path.
             val isStalkerSource = streamProvider.isStalkerSource(videoId)
-            val xtreamStream = if (isStalkerSource) null else streamProvider.directStreamItem(videoId)
+            val directStreams = if (isStalkerSource) emptyList() else streamProvider.directStreamItems(videoId)
+            val xtreamStream = directStreams.firstOrNull()
             if (xtreamStream != null) {
-                val group = xtreamStream.asDirectSourceGroup()
+                val group = directStreams.asDirectSourceGroup()
                 val presentedGroup = StreamBadgePresentation.apply(
                     groups = listOf(group),
                     rules = streamBadgeRules,
@@ -192,9 +193,10 @@ object StreamsRepository {
                     val rebuilt = runCatchingUnlessCancelled {
                         MetaDetailsRepository.ensureXtreamStreamRegistered(videoId, forceFresh = isStalkerSource)
                     }.getOrDefault(false)
-                    val retried = if (rebuilt) streamProvider.directStreamItem(videoId) else null
+                    val retriedStreams = if (rebuilt) streamProvider.directStreamItems(videoId) else emptyList()
+                    val retried = retriedStreams.firstOrNull()
                     if (retried != null) {
-                        val group = retried.asDirectSourceGroup()
+                        val group = retriedStreams.asDirectSourceGroup()
                         val presentedGroup = StreamBadgePresentation.apply(
                             groups = listOf(group),
                             rules = streamBadgeRules,
