@@ -379,11 +379,11 @@ jobs:
           dependencies. The AppImage uses
           your system's libmpv and WebKitGTK — on Debian/Ubuntu run
           \`sudo apt install libmpv2 libwebkit2gtk-4.1-0\` first, then \`chmod +x\` the AppImage." \
-            dist/Tuvora-macOS-arm64-${VERSION}.dmg \
-            dist/Tuvora-macOS-x86_64-${VERSION}.dmg \
-            dist/Tuvora-Windows-x64-${VERSION}.msi \
-            dist/Tuvora-Linux-x86_64-${VERSION}.AppImage \
-            dist/Tuvora-Linux-x86_64-${VERSION}.deb
+            "dist/Tuvora-macOS-arm64-${VERSION}.dmg" \
+            "dist/Tuvora-macOS-x86_64-${VERSION}.dmg" \
+            "dist/Tuvora-Windows-x64-${VERSION}.msi" \
+            "dist/Tuvora-Linux-x86_64-${VERSION}.AppImage" \
+            "dist/Tuvora-Linux-x86_64-${VERSION}.deb"
 
       # Community announcements — no-ops until the DISCORD_/TELEGRAM_ secrets exist.
       # Never fails the release (all curl errors are swallowed).
