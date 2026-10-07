@@ -9,6 +9,10 @@ on:
         description: Version to release (e.g. 1.0.0)
         required: true
         type: string
+      announce:
+        description: Send community announcements
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -384,6 +388,7 @@ jobs:
       # Community announcements — no-ops until the DISCORD_/TELEGRAM_ secrets exist.
       # Never fails the release (all curl errors are swallowed).
       - name: Announce release (Discord + Telegram)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.announce }}
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
