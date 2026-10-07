@@ -2,6 +2,8 @@ package com.nuvio.app.features.home
 
 import com.nuvio.app.features.addons.AddonRepository
 import androidx.compose.ui.text.intl.Locale
+import com.nuvio.app.core.contracts.ContributedRowDeclaration
+import com.nuvio.app.core.contracts.HomeSectionContributorRegistry
 import com.nuvio.app.features.addons.ManagedAddon
 import com.nuvio.app.features.addons.enabledAddons
 import com.nuvio.app.features.collection.Collection
@@ -11,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -33,6 +36,8 @@ data class HomeCatalogSettingsItem(
     val isCollection: Boolean = false,
     val collectionId: String? = null,
     val isPinnedToTop: Boolean = false,
+    /** A row a source (a media server) contributes: orderable / hideable / renamable, never a hero source, device-local. */
+    val isContributed: Boolean = false,
 ) {
     val displayTitle: String
         get() = customTitle.ifBlank { defaultTitle }
@@ -121,6 +126,7 @@ object HomeCatalogSettingsRepository {
     private var lastPersistedPayload: String? = null
     private var definitions: List<HomeCatalogDefinition> = emptyList()
     private var collectionDefinitions: List<CollectionCatalogDefinition> = emptyList()
+    private var contributedDefinitions: List<ContributedRowDeclaration> = emptyList()
     private var lastCatalogSync: Triple<List<ManagedAddon>, List<Collection>, String>? = null
     private var lastCollectionSync: Pair<List<Collection>, String>? = null
     private val preferencesRef = atomic<Map<String, StoredHomeCatalogPreference>>(emptyMap())
@@ -143,6 +149,7 @@ object HomeCatalogSettingsRepository {
         showLiveOnHome = true
         definitions = emptyList()
         collectionDefinitions = emptyList()
+        contributedDefinitions = emptyList()
         snapshotRef.value = emptySnapshot
         lastPersistedPayload = null
         lastCatalogSync = null
@@ -154,6 +161,7 @@ object HomeCatalogSettingsRepository {
         hasLoaded = false
         definitions = emptyList()
         collectionDefinitions = emptyList()
+        contributedDefinitions = emptyList()
         lastCatalogSync = null
         lastCollectionSync = null
         preferences = emptyMap()
@@ -176,14 +184,15 @@ object HomeCatalogSettingsRepository {
         ensureLoaded()
         val collections = CollectionRepository.collections.value
         val syncInput = Triple(addons, collections, Locale.current.toLanguageTag())
-        if (lastCatalogSync == syncInput) return
+        val contributedChanged = refreshContributedDefinitions()
+        if (lastCatalogSync == syncInput && !contributedChanged) return
         definitions = buildHomeCatalogDefinitions(addons)
         collectionDefinitions = buildCollectionDefinitions(collections)
         lastCatalogSync = syncInput
         lastCollectionSync = lastCollectionSync?.takeIf {
             it.first == collections && it.second == syncInput.third
         }
-        if (definitions.isEmpty() && collectionDefinitions.isEmpty()) {
+        if (definitions.isEmpty() && collectionDefinitions.isEmpty() && contributedDefinitions.isEmpty()) {
             publish()
             return
         }
@@ -208,7 +217,8 @@ object HomeCatalogSettingsRepository {
     ) {
         ensureLoaded()
         val syncInput = collections to Locale.current.toLanguageTag()
-        if (lastCollectionSync == syncInput) return
+        val contributedChanged = refreshContributedDefinitions()
+        if (lastCollectionSync == syncInput && !contributedChanged) return
         if (definitions.isEmpty()) definitions = buildHomeCatalogDefinitions(addons)
         collectionDefinitions = buildCollectionDefinitions(collections)
         lastCatalogSync = lastCatalogSync?.takeIf {
@@ -220,6 +230,36 @@ object HomeCatalogSettingsRepository {
         publish()
         persist()
         HomeRepository.applyCurrentSettings()
+    }
+
+    private val contributedScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Default)
+
+    /**
+     * Re-reads the rows source contributors (media servers) declare and folds them into the layout settings, so
+     * a server row the viewer just switched on (or a server just removed) shows up in / leaves the list at once.
+     * A no-op when nothing changed. Device-local: contributed rows' order/visibility never ride the account sync.
+     * (Desktop serialises it with the other layout syncs on [syncMutex]; callers are non-suspend UI code.)
+     */
+    fun syncContributed() {
+        contributedScope.launch {
+            syncMutex.withLock {
+                ensureLoaded()
+                if (!refreshContributedDefinitions()) return@withLock
+                normalizePreferences()
+                enforcePinnedCollectionsAtTop()
+                publish()
+                persist()
+                HomeRepository.applyCurrentSettings()
+            }
+        }
+    }
+
+    /** Re-reads the declared contributed rows; true when they differ from what the layout last saw. */
+    private fun refreshContributedDefinitions(): Boolean {
+        val declared = HomeSectionContributorRegistry.declaredRows()
+        if (declared == contributedDefinitions) return false
+        contributedDefinitions = declared
+        return true
     }
 
     internal fun snapshot(): HomeCatalogSettingsSnapshot {
@@ -368,8 +408,10 @@ object HomeCatalogSettingsRepository {
         data class UnifiedEntry(val key: String, val isCollection: Boolean)
         val catalogEntries = definitions.map { UnifiedEntry(it.key, false) }
         val collectionEntries = collectionDefinitions.map { UnifiedEntry(it.key, true) }
-        val allEntries = catalogEntries + collectionEntries
+        val contributedEntries = contributedDefinitions.map { UnifiedEntry(it.key, false) }
+        val allEntries = catalogEntries + contributedEntries + collectionEntries
         val knownKeys = allEntries.mapTo(linkedSetOf(), UnifiedEntry::key)
+        val contributedKeys = contributedDefinitions.mapTo(mutableSetOf()) { it.key }
         var nextOrder = (current.values.maxOfOrNull(StoredHomeCatalogPreference::order) ?: -1) + 1
 
         val orderedEntries = allEntries.mapIndexed { defaultIndex, entry ->
@@ -391,7 +433,7 @@ object HomeCatalogSettingsRepository {
         var enabledHeroSourceCount = 0
         orderedEntries.forEach { entry ->
             val stored = current[entry.key]
-            val heroSourceEnabled = if (entry.isCollection) {
+            val heroSourceEnabled = if (entry.isCollection || entry.key in contributedKeys) {
                 false
             } else {
                 (stored?.heroSourceEnabled ?: true) &&
@@ -439,6 +481,20 @@ object HomeCatalogSettingsRepository {
                 )
             }
 
+        val contributedItems = contributedDefinitions.map { declared ->
+            val preference = preferences[declared.key]
+            HomeCatalogSettingsItem(
+                key = declared.key,
+                defaultTitle = declared.title,
+                addonName = declared.subtitle,
+                customTitle = preference?.customTitle.orEmpty(),
+                enabled = preference?.enabled ?: true,
+                heroSourceEnabled = false,
+                order = preference?.order ?: 0,
+                isContributed = true,
+            )
+        }
+
         val collectionItems = collectionDefinitions.map { colDef ->
             val preference = preferences[colDef.key]
             HomeCatalogSettingsItem(
@@ -456,7 +512,7 @@ object HomeCatalogSettingsRepository {
         }
 
         val rowIndex = allOrderedKeys().withIndex().associate { (index, key) -> key to index }
-        val items = (catalogItems + collectionItems)
+        val items = (catalogItems + contributedItems + collectionItems)
             .sortedBy { rowIndex[it.key] ?: Int.MAX_VALUE }
 
         val nextState = HomeCatalogSettingsUiState(
@@ -543,7 +599,8 @@ object HomeCatalogSettingsRepository {
         ensureLoaded()
         val catalogDefinitionsByKey = definitions.associateBy { it.key }
         val collectionDefinitionsByKey = collectionDefinitions.associateBy { it.key }
-        val items = preferences.values.sortedBy { it.order }.map { pref ->
+        val contributedKeys = contributedDefinitions.mapTo(mutableSetOf()) { it.key }
+        val items = preferences.values.sortedBy { it.order }.filter { it.key !in contributedKeys }.map { pref ->
             val catalogDefinition = catalogDefinitionsByKey[pref.key]
             val collectionDefinition = collectionDefinitionsByKey[pref.key]
             val isCollection = collectionDefinition != null || pref.key.startsWith("collection_")
@@ -616,7 +673,7 @@ object HomeCatalogSettingsRepository {
     /** Rows in display order: stored order with pinned collections first (B81, [HomeRowOrderPolicy]). */
     private fun allOrderedKeys(): List<String> =
         HomeRowOrderPolicy.orderedKeys(
-            catalogKeys = definitions.map { it.key },
+            catalogKeys = definitions.map { it.key } + contributedDefinitions.map { it.key },
             collectionKeys = collectionDefinitions.map { it.key },
             pinnedCollectionKeys = collectionDefinitions.filter { it.isPinnedToTop }.mapTo(mutableSetOf()) { it.key },
             orderOf = { key -> preferences[key]?.order },
@@ -630,7 +687,7 @@ object HomeCatalogSettingsRepository {
     private fun enforcePinnedCollectionsAtTop() {
         if (collectionDefinitions.none { it.isPinnedToTop }) return
         val displayKeys = allOrderedKeys()
-        val storedKeys = (definitions.map { it.key } + collectionDefinitions.map { it.key })
+        val storedKeys = (definitions.map { it.key } + contributedDefinitions.map { it.key } + collectionDefinitions.map { it.key })
             .sortedBy { key -> preferences[key]?.order ?: Int.MAX_VALUE }
         if (displayKeys == storedKeys) return
 
@@ -645,7 +702,8 @@ object HomeCatalogSettingsRepository {
     private fun defaultPreferenceForMissingKey(key: String): StoredHomeCatalogPreference? {
         val isCollection = collectionDefinitions.any { it.key == key }
         val isCatalog = definitions.any { it.key == key }
-        if (!isCollection && !isCatalog) return null
+        val isContributed = contributedDefinitions.any { it.key == key }
+        if (!isCollection && !isCatalog && !isContributed) return null
 
         return StoredHomeCatalogPreference(
             key = key,
@@ -660,6 +718,7 @@ object HomeCatalogSettingsRepository {
     private fun knownPreferenceKeys(): Set<String> =
         definitions.mapTo(mutableSetOf()) { it.key }.also { keys ->
             keys.addAll(collectionDefinitions.map { it.key })
+            keys.addAll(contributedDefinitions.map { it.key })
         }
 
     private fun HomeCatalogDefinition.addonIdForSync(): String {

@@ -1,5 +1,7 @@
 package com.nuvio.app.features.player
 
+import co.touchlab.kermit.Logger
+import com.nuvio.app.core.contracts.StreamSourceAccess
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.features.debrid.DirectDebridPlayableResult
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
@@ -13,6 +15,7 @@ import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.P2pStreamingEngine
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamLinkCacheRepository
+import com.nuvio.app.features.streams.runCatchingUnlessCancelled
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import com.nuvio.app.features.watchprogress.buildPlaybackVideoId
 import kotlinx.coroutines.launch
@@ -246,7 +249,38 @@ internal fun PlayerScreenRuntime.switchToP2pEpisodeStream(
     applyEpisodeStreamMetadata(stream, episode, resume)
 }
 
+private val deferredSourceLog = Logger.withTag("DeferredSourceSwitch")
+
+/**
+ * A source can be LISTED with a deferred (not yet minted) play url - a matched-lane Stalker edition:
+ * listing stays free and the link is minted only for the edition the viewer picks. Every pick site
+ * mints first; this is the in-player one (source switch + episode switch). Returns true when [stream]
+ * was deferred and the mint has been started: [onMinted] then re-enters the switch with the real url.
+ * A failed mint leaves the playing source untouched - the engine must never see the placeholder.
+ */
+internal fun PlayerScreenRuntime.mintDeferredStreamThen(
+    stream: StreamItem,
+    onMinted: (StreamItem) -> Unit,
+): Boolean {
+    val sources = StreamSourceAccess.current()
+    val deferredUrl = stream.playableDirectUrl
+    if (deferredUrl == null || !sources.isDeferredUrl(deferredUrl)) return false
+    // The latest pick wins: a second tap while a mint is in flight replaces it instead of minting twice.
+    deferredSourceMintJob?.cancel()
+    deferredSourceMintJob = scope.launch {
+        val minted = runCatchingUnlessCancelled { sources.resolveDeferredUrl(deferredUrl, forceMint = false) }
+            .getOrNull()
+        if (minted.isNullOrBlank()) {
+            deferredSourceLog.w { "deferred source mint failed - keeping the current source" }
+            return@launch
+        }
+        onMinted(stream.copy(url = minted))
+    }
+    return true
+}
+
 internal fun PlayerScreenRuntime.switchToSource(stream: StreamItem) {
+    if (mintDeferredStreamThen(stream) { minted -> switchToSource(minted) }) return
     if (
         resolveDebridForPlayer(
             stream = stream,
@@ -305,6 +339,7 @@ internal fun PlayerScreenRuntime.switchToSource(stream: StreamItem) {
 }
 
 internal fun PlayerScreenRuntime.switchToEpisodeStream(stream: StreamItem, episode: MetaVideo) {
+    if (mintDeferredStreamThen(stream) { minted -> switchToEpisodeStream(minted, episode) }) return
     if (
         resolveDebridForPlayer(
             stream = stream,

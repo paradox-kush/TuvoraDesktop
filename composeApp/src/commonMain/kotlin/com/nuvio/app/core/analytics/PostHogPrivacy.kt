@@ -7,9 +7,21 @@ internal object PostHogPrivacy {
 
     private val urlPattern = Regex("""(?i)\b[a-z][a-z0-9+.-]*://[^\s\"'<>]+""")
     private val authorizationHeaderPattern = Regex("""(?i)\b(?:bearer|basic)\s+[a-z0-9._~+/=-]+""")
+    // Media-server credentials (Jellyfin/Emby ApiKey / api_key, Plex X-Plex-Token) are named explicitly
+    // even where a looser alternative would already catch them, so the list stays honest if that changes.
     private val authValuePattern = Regex(
-        """(?i)(\b(?:code|state|access_token|refresh_token|token|authorization|password|secret)=)[^&\s\"'<>]+""",
+        """(?i)(\b(?:code|state|access_token|refresh_token|token|authorization|password|secret|apikey|api_key|x-plex-token)=)[^&\s\"'<>]+""",
     )
+    // `X-Emby-Token: <value>` / `X-Plex-Token: <value>` header lines (a colon, not `=`).
+    private val tokenHeaderPattern = Regex(
+        """(?i)(\b(?:x-emby-token|x-plex-token|x-mediabrowser-token)\s*:\s*)[^\s,;\"'<>]+""",
+    )
+    // The MediaBrowser Authorization header carries the session token as a QUOTED pair: Token="...".
+    private val quotedTokenPattern = Regex("""(?i)(\btoken=")[^"]*(")""")
+    // A media-server content id `ms:{type}:{machineId}:{userId}:{kind}:{itemId}` embeds the server's own id and the
+    // user's id: neither may leave the device (owner decision 2026-10-06). Kept as a SHAPE match so any event that
+    // stringifies one is covered; only the type and kind survive.
+    private val mediaServerIdPattern = Regex("""\bms:(jellyfin|emby):[^:\s"'<>]+:[^:\s"'<>]+:(movie|series|season|episode):[^\s"'<>,;]+""")
     private val sensitiveKeys = setOf(
         "url", "uri", "href", "referrer", "\$referrer", "code", "state", "token",
         "access_token", "refresh_token", "authorization", "password", "secret", "cookie",
@@ -54,9 +66,16 @@ internal object PostHogPrivacy {
     }
 
     private fun redactString(value: String): String {
-        val withoutUrls = urlPattern.replace(value, "[redacted-url]")
+        val withoutServerIds = mediaServerIdPattern.replace(value) { match -> "ms:${match.groupValues[1]}:[redacted]:${match.groupValues[2]}" }
+        val withoutUrls = urlPattern.replace(withoutServerIds, "[redacted-url]")
         val withoutAuthorization = authorizationHeaderPattern.replace(withoutUrls, "[redacted-auth]")
-        return authValuePattern.replace(withoutAuthorization) { match ->
+        val withoutQuotedToken = quotedTokenPattern.replace(withoutAuthorization) { match ->
+            "${match.groupValues[1]}[redacted]${match.groupValues[2]}"
+        }
+        val withoutTokenHeader = tokenHeaderPattern.replace(withoutQuotedToken) { match ->
+            "${match.groupValues[1]}[redacted]"
+        }
+        return authValuePattern.replace(withoutTokenHeader) { match ->
             "${match.groupValues[1]}[redacted]"
         }
     }

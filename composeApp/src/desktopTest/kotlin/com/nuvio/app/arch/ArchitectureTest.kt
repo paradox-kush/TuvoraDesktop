@@ -35,6 +35,9 @@ class ArchitectureTest {
     private val forkPaths = listOf(
         "/features/radar/", "/features/iptv/", "/features/epg/", "/features/livetv/", "/features/dev/",
         "/features/announcements/",
+        // Media servers (Jellyfin/Emby): fork-owned from day one, so the firewall already holds when the
+        // first file lands - shared code reaches it only through core/contracts ports.
+        "/features/mediaserver/",
         "/core/analytics/", "/core/diag/", "/core/memory/", "/core/rec/",
     )
     private val forkFiles = listOf("ImmersivePlaybackGate.kt")
@@ -48,7 +51,7 @@ class ArchitectureTest {
 
     // fork FEATURE refs (R2b) + fork-only core SUBSYSTEM refs (R2d — rec+memory get ports;
     // analytics+diag are DELIBERATELY EXEMPT: cross-cutting telemetry, accepted as thin diff).
-    private val forkRef = Regex("""\bcom\.nuvio\.app\.features\.(radar|iptv|epg|livetv|dev|announcements)\.""")
+    private val forkRef = Regex("""\bcom\.nuvio\.app\.features\.(radar|iptv|epg|livetv|dev|announcements|mediaserver)\.""")
     private val forkCoreRef = Regex("""\bcom\.nuvio\.app\.core\.(rec|memory)\.""")
 
     // Strip block + WHOLE-LINE // comments only. A naive //.* eats the // in "https://…" literals and
@@ -63,6 +66,19 @@ class ArchitectureTest {
         // Guard against a vacuous pass: every rule below iterates [files].
         assertTrue(files.size > 200, "scanned only ${files.size} source files")
         assertTrue(files.any { (p, _) -> isWiringFile(p) }, "composition root not in the scan")
+    }
+
+    @Test
+    fun `the fork set names the media-server feature (Wave 3 P0)`() {
+        // The lists are explicit (fork side = upstream absence), so a new fork feature must be ADDED to
+        // both before its first file lands, or shared code could reference it unchecked. The probes are
+        // built by concatenation: this file is scanned by the rules below and must not itself contain a
+        // fork FQN.
+        val feature = "com.nuvio.app." + "features.mediaserver."
+        assertTrue(isForkFile("/composeApp/src/commonMain/kotlin/com/nuvio/app/features/mediaserver/internal/X.kt"))
+        assertTrue(forkRef.containsMatchIn("import " + feature + "api.MediaServerFeature"))
+        assertTrue(forkRef.containsMatchIn("\"" + feature + "internal.Client\""), "FQNs inside string literals count")
+        assertTrue(!forkRef.containsMatchIn("com.nuvio.app.core.contracts.OwnSourcePolicy"), "neutral ports stay reachable")
     }
 
     @Test

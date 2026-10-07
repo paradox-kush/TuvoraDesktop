@@ -1,7 +1,6 @@
 package com.nuvio.app.features.iptv
 
-import com.nuvio.app.core.contracts.IptvContentClassifier
-import com.nuvio.app.core.contracts.IptvContentClassifierAccess
+import com.nuvio.app.core.contracts.resetAllSourceRegistriesForTest
 import com.nuvio.app.features.addons.AddonSourcePolicy
 import com.nuvio.app.features.iptv.match.XtreamStreamSource
 import com.nuvio.app.features.streams.StreamItem
@@ -21,19 +20,14 @@ import kotlin.test.assertTrue
  */
 class StorePostureIptvRecognitionTest {
 
-    private object Unwired : IptvContentClassifier {
-        override fun isLiveId(id: String) = false
-        override fun isOrphaned(id: String) = false
-        override fun isXtreamId(id: String) = false
-        override fun posterFor(id: String): String? = null
-        override fun isXtreamStreamGroup(addonId: String) = false
+    @BeforeTest
+    fun wire() {
+        resetAllSourceRegistriesForTest()
+        IptvSourceRegistrations.register()
     }
 
-    @BeforeTest
-    fun wire() = IptvContentClassifierAccess.register(XtreamContentClassifier)
-
     @AfterTest
-    fun unwire() = IptvContentClassifierAccess.register(Unwired)
+    fun unwire() = resetAllSourceRegistriesForTest()
 
     private val playlistKeys: List<String> = listOfNotNull(
         PlaylistKey.xtream("http://Panel.Example.com:80/player_api.php", "alice"),

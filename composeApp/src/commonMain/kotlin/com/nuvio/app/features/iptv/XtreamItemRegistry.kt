@@ -242,6 +242,9 @@ object XtreamItemRegistry {
     }
 
     private const val PREFIX = "xtream"
+
+    /** Group / provider id of the direct IPTV lane (stamped on every direct [StreamItem]). */
+    const val DIRECT_GROUP_ID = "xtream"
 }
 
 data class ParsedXtreamId(val accountId: String, val kind: XtreamKind, val id: String)
@@ -281,7 +284,7 @@ fun XtreamResolvedItem.toStreamItem(accountName: String, userAgent: String? = nu
         title = name,
         url = url,
         addonName = accountName,
-        addonId = "xtream",
+        addonId = XtreamItemRegistry.DIRECT_GROUP_ID,
         streamType = streamType,
         behaviorHints = behaviorHints,
     )

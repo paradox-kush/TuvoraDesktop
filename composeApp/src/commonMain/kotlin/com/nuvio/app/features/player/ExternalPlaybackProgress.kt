@@ -1,6 +1,8 @@
 package com.nuvio.app.features.player
 
 import com.nuvio.app.features.tracking.TrackingScrobbleAction
+import com.nuvio.app.core.contracts.PlaybackSessionReporterRegistry
+import com.nuvio.app.core.contracts.PlaybackSessionState
 import com.nuvio.app.features.tracking.TrackingScrobbleCoordinator
 import com.nuvio.app.features.tracking.TrackingScrobbleEvent
 import com.nuvio.app.features.tracking.buildTrackingMediaReference
@@ -48,6 +50,16 @@ internal suspend fun recordExternalPlaybackProgress(
             isEnded = !result.endedByUser,
             durationMs = durationMs ?: 0L,
             positionMs = result.positionMs,
+        ),
+    )
+    // The external player's result ends the session for a source that keeps its own watched state.
+    PlaybackSessionReporterRegistry.stop(
+        PlaybackSessionState(
+            videoId = session.videoId,
+            parentMetaId = session.parentMetaId,
+            providerAddonId = session.providerAddonId,
+            positionMs = result.positionMs.coerceAtLeast(0L),
+            durationMs = (durationMs ?: 0L).coerceAtLeast(0L),
         ),
     )
     if (durationMs != null && durationMs > 0L) {

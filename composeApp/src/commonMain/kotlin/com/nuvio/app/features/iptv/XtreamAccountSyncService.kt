@@ -4,6 +4,9 @@ import co.touchlab.kermit.Logger
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
 import com.nuvio.app.core.network.SupabaseProvider
+import com.nuvio.app.features.mediaserver.api.MediaServerEntry
+import com.nuvio.app.features.mediaserver.api.MediaServerFeature
+import com.nuvio.app.features.mediaserver.api.MediaServerSyncCodec
 import com.nuvio.app.features.profiles.ProfileRepository
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Order
@@ -145,7 +148,7 @@ object XtreamAccountSyncService {
                 runCatching { pullJson.decodeFromJsonElement(PlaylistRow.serializer(), el) }.getOrNull()
             }
             val pulled = pulledPlaylists(rows)
-            return PlaylistPullResponse(revision, pulled.map { it.account }, generation, pulled.keyedIds())
+            return PlaylistPullResponse(revision, pulled.map { it.account }, generation, pulled.keyedIds(), mediaServers = mediaServerEntries(rows))
         }
 
         override suspend fun push(
@@ -156,11 +159,35 @@ object XtreamAccountSyncService {
             mutationId: String,
             expectedGeneration: Long?,
         ): PlaylistPushResponse {
+            return pushV2(profileId, expectedRevision, accounts, emptyList(), deleteAll, mutationId, expectedGeneration, SYNCED_SOURCE_TYPES)
+        }
+
+        override suspend fun pushWithMediaServers(
+            profileId: Int,
+            expectedRevision: Long?,
+            accounts: List<XtreamAccount>,
+            mediaServers: List<MediaServerEntry>,
+            deleteAll: Boolean,
+            mutationId: String,
+            expectedGeneration: Long?,
+        ): PlaylistPushResponse =
+            pushV2(profileId, expectedRevision, accounts, mediaServers, deleteAll, mutationId, expectedGeneration, V2_SYNCED_SOURCE_TYPES)
+
+        private suspend fun pushV2(
+            profileId: Int,
+            expectedRevision: Long?,
+            accounts: List<XtreamAccount>,
+            mediaServers: List<MediaServerEntry>,
+            deleteAll: Boolean,
+            mutationId: String,
+            expectedGeneration: Long?,
+            sourceTypes: List<String>,
+        ): PlaylistPushResponse {
             val params = buildJsonObject {
                 put("p_profile_id", profileId)
                 put("p_expected_revision", if (expectedRevision == null) JsonNull else JsonPrimitive(expectedRevision))
-                put("p_playlists", playlistPushPayload(accounts))
-                put("p_source_types", JsonArray(SYNCED_SOURCE_TYPES.map(::JsonPrimitive)))
+                put("p_playlists", playlistPushPayload(accounts, mediaServers))
+                put("p_source_types", JsonArray(sourceTypes.map(::JsonPrimitive)))
                 put("p_delete_all", deleteAll)
                 put("p_mutation_id", mutationId)
                 put("p_expected_generation", if (expectedGeneration == null) JsonNull else JsonPrimitive(expectedGeneration))
@@ -180,6 +207,7 @@ object XtreamAccountSyncService {
                         currentRevision = (result["current_revision"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L,
                         currentRows = pulled.map { it.account },
                         currentKeyedIds = pulled.keyedIds(),
+                        currentMediaServers = mediaServerEntries(curRows),
                     )
                 }
                 else -> PlaylistPushResponse.Rejected(result.toString())
@@ -199,6 +227,8 @@ object XtreamAccountSyncService {
         newMutationId = { newPlaylistMutationId() },
         // Step 0: adopt server playlist keys (re-keys local ids + their saved data, once).
         adoptKeys = { p, pulled, keyed -> XtreamRepository.adoptFromPull(p, pulled.map { PulledPlaylist(it, it.id in keyed) }) },
+        // Wave 3: the profile's Jellyfin/Emby server entries ride this same engine (one revision counter).
+        mediaServers = MediaServerFeature.syncBinding(),
     )
 
     /** Runs one full v2 sync for [profileId], serialized per call. Rejections/conflicts are logged. */
@@ -368,6 +398,19 @@ internal fun PlaylistRow.toAccount(): XtreamAccount? {
     return acc.copy(id = key ?: acc.id, backupUrls = backupUrls.orEmpty())
 }
 
+/**
+ * The SECOND row mapper (Wave 3, design 5.3): a Jellyfin/Emby server entry, or null for any other source type.
+ * [toAccount] drops these rows (unknown type), so the two mappers partition the table with no overlap.
+ */
+internal fun PlaylistRow.toMediaServerEntry(): MediaServerEntry? = MediaServerSyncCodec.entryFromRow(
+    MediaServerSyncCodec.RowColumns(
+        playlistKey = playlistKey, sourceType = sourceType, name = name, enabled = enabled,
+        baseUrl = baseUrl, url = url, username = username,
+    ),
+)
+
+internal fun mediaServerEntries(rows: List<PlaylistRow>): List<MediaServerEntry> = rows.mapNotNull { it.toMediaServerEntry() }
+
 /** The pull's view of [rows]: each usable row's account and whether its id is the server's key. */
 internal fun pulledPlaylists(rows: List<PlaylistRow>): List<PulledPlaylist> =
     rows.mapNotNull { row -> row.toAccount()?.let { PulledPlaylist(it, serverKeyed = !row.playlistKey.isNullOrBlank()) } }
@@ -500,6 +543,13 @@ internal val SYNCED_SOURCE_TYPES = listOf(
 )
 
 /**
+ * The v2 push's full-replace scope: the playlist types plus the media-server types (Wave 3). Kept separate from
+ * [SYNCED_SOURCE_TYPES] on purpose - the v1 push and the legacy migration must NEVER name a media-server type in
+ * their scope (their payload carries none, so the replace would delete the server's rows).
+ */
+internal val V2_SYNCED_SOURCE_TYPES: List<String> = SYNCED_SOURCE_TYPES + MediaServerSyncCodec.SOURCE_TYPES
+
+/**
  * RPC params for `sync_push_iptv_playlists`. Every push is scoped to p_source_types (the source
  * types this client understands) so the full-replace can never delete a newer client's rows of a
  * type we don't know; p_only_if_empty is only set on the legacy-migration push. internal for tests.
@@ -520,7 +570,7 @@ internal fun playlistPushParams(
  * exactly. Omissions are contract: blank name, null epg_url, null per-type extras, and all-null
  * category_selections are left out so the RPC's coalesce defaults apply. internal for tests.
  */
-internal fun playlistPushPayload(accounts: List<XtreamAccount>): JsonArray = buildJsonArray {
+internal fun playlistPushPayload(accounts: List<XtreamAccount>, mediaServers: List<MediaServerEntry> = emptyList()): JsonArray = buildJsonArray {
     accounts.forEachIndexed { index, acc ->
         addJsonObject {
             // Step 0: the permanent id + the client-owned backup list ride every push (an omitted
@@ -577,6 +627,8 @@ internal fun playlistPushPayload(accounts: List<XtreamAccount>): JsonArray = bui
             }
         }
     }
+    // Wave 3: media-server entries follow the playlists (positions continue), each through its own row mapper.
+    mediaServers.forEachIndexed { i, entry -> add(MediaServerSyncCodec.pushRow(entry, accounts.size + i)) }
 }
 
 /** Lenient decode of the jsonb category_selections column: any malformed shape -> all-null (= all). */

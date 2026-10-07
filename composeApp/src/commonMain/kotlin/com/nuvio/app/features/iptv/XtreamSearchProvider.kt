@@ -9,6 +9,11 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.onStart
 
 internal object XtreamSearchProvider : IptvSearchProvider {
+    override fun isEnabled(): Boolean {
+        XtreamRepository.ensureLoaded()
+        return XtreamRepository.hasEnabledAccounts()
+    }
+
     override suspend fun search(query: String): List<HomeCatalogSection> = XtreamSearchIndex.search(query)
 
     override fun sourceSignature(): String? {

@@ -175,7 +175,7 @@ internal object XtreamMetaSource : MetaSourceProvider {
                 // direct stream" — leave streams empty so the play flow resolves it via the xtream-id
                 // miss path (ensureXtreamStreamRegistered) instead of trying to play "".
                 streams = if (episodeUrl.isBlank()) emptyList() else listOf(
-                    StreamItem(name = "Direct", title = ep.title, url = episodeUrl, addonName = account.name, addonId = "xtream")
+                    StreamItem(name = "Direct", title = ep.title, url = episodeUrl, addonName = account.name, addonId = XtreamItemRegistry.DIRECT_GROUP_ID)
                 ),
             )
         }

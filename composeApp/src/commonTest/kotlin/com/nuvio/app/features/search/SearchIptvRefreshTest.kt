@@ -2,7 +2,8 @@ package com.nuvio.app.features.search
 
 import com.nuvio.app.core.contracts.IptvCatalog
 import com.nuvio.app.core.contracts.IptvCatalogAccess
-import com.nuvio.app.core.contracts.IptvSearchAccess
+import com.nuvio.app.core.contracts.SearchProviderRegistry
+import com.nuvio.app.core.contracts.resetAllSourceRegistriesForTest
 import com.nuvio.app.core.contracts.IptvSearchProvider
 import com.nuvio.app.features.catalog.CatalogTarget
 import com.nuvio.app.features.home.HomeCatalogSection
@@ -35,14 +36,15 @@ class SearchIptvRefreshTest {
     fun setUp() {
         SearchRepository.reset()
         IptvCatalogAccess.register(catalog)
-        IptvSearchAccess.register(iptv)
+        resetAllSourceRegistriesForTest()
+        SearchProviderRegistry.register("test-iptv", iptv)
     }
 
     @AfterTest
     fun tearDown() {
         SearchRepository.reset()
         IptvCatalogAccess.unregisterForTest()
-        IptvSearchAccess.unregisterForTest()
+        resetAllSourceRegistriesForTest()
     }
 
     @Test
@@ -129,6 +131,8 @@ class SearchIptvRefreshTest {
         val signature = MutableStateFlow<String?>("sig-A")
 
         fun queriesSnapshot(): List<String> = queries.toList()
+
+        override fun isEnabled(): Boolean = true
 
         override suspend fun search(query: String): List<HomeCatalogSection> {
             queries += query

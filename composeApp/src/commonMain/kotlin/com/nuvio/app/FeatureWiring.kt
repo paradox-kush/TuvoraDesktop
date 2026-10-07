@@ -11,6 +11,8 @@ import com.nuvio.app.core.contracts.HomeRecAccess
 import com.nuvio.app.core.rec.HomeRecBinderImpl
 import com.nuvio.app.core.contracts.IptvSettingsSectionAccess
 import com.nuvio.app.features.iptv.IptvSettingsSectionImpl
+import com.nuvio.app.core.contracts.MediaServerSettingsSectionAccess
+import com.nuvio.app.features.mediaserver.api.MediaServerSettingsSectionImpl
 import com.nuvio.app.core.contracts.HomeSportsSectionAccess
 import com.nuvio.app.features.radar.RadarHomeSportsSection
 import com.nuvio.app.core.contracts.IptvHubContentAccess
@@ -56,6 +58,7 @@ fun registerFeatureContributions() {
     // UI slots: Compose content the fork contributes to shared screens (not compiled on Apple TV).
     HomeRecAccess.register(HomeRecBinderImpl)
     IptvSettingsSectionAccess.register(IptvSettingsSectionImpl)
+    MediaServerSettingsSectionAccess.register(MediaServerSettingsSectionImpl)
     HomeSportsSectionAccess.register(RadarHomeSportsSection)
     IptvHubContentAccess.register(XtreamHubContent)
     SetupCodeEntryAccess.register(SetupCodeEntryImpl)
