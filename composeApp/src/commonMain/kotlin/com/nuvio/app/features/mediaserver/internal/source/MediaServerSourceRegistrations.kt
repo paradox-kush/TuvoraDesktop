@@ -56,7 +56,7 @@ internal object MediaServerSourceRegistrations {
         ContentClassifierRegistry.register(NAME, MediaServerClassifier(store))
         StreamSourceRegistry.register(
             NAME,
-            MediaServerStreamSourceProvider(store, services, MediaServerMatchLane(store, services, runtime.nowMs, TmdbMatchTitleFacts), audioPreference = playerAudioPreference()),
+            MediaServerStreamSourceProvider(store, services, MediaServerMatchLane(store, services, runtime.nowMs, TmdbMatchTitleFacts), audioPreference = playerAudioPreference(), onMintFailure = MediaServerMintNotices::show),
         )
         MetaSourceRegistry.register(NAME, MediaServerMetaSource(store, services))
         SearchProviderRegistry.register(NAME, MediaServerSearchProvider(store, services))

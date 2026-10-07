@@ -55,7 +55,7 @@ class MediaServerStreamSourceProviderTest {
     }
 
     @Test
-    fun ownershipIsBySourceIdPrefixAndNeverClaimsIptvOrAddons() {
+    fun ownershipIsBySourceIdPrefixAndNeverClaimsOtherSources() {
         val p = provider(rig())
         assertTrue(p.isHandledId(id())); assertFalse(p.isHandledId("xtream:http://a|b:vod:1")); assertFalse(p.isHandledId("tt0133093")); assertFalse(p.isHandledId(null))
         assertFalse(p.isStalkerSource(id()))

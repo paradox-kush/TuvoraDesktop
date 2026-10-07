@@ -103,7 +103,7 @@ class MediaServerSourceRegistrationsTest {
         assertTrue(OwnSourcePolicy.isOwnContentId(ms)); assertTrue(OwnSourcePolicy.isOwnContentId(xtream)); assertFalse(OwnSourcePolicy.isOwnContentId("tt0133093"))
         assertTrue(OwnSourcePolicy.isOwnProviderId("ms")); assertTrue(OwnSourcePolicy.isOwnProviderId("ms-match:jellyfin:$M:$U"))
         assertTrue(OwnSourcePolicy.isOwnProviderId("xtream")); assertTrue(OwnSourcePolicy.isOwnProviderId("xtream-match:http://l|a"))
-        assertFalse(OwnSourcePolicy.isOwnProviderId("addon:torrentio"))
+        assertFalse(OwnSourcePolicy.isOwnProviderId("addon:example"))
     }
 
     @Test
