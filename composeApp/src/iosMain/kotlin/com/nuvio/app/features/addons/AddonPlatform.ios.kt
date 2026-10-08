@@ -226,13 +226,7 @@ actual suspend fun httpPostJsonWithHeaders(
             payload
         }
 
-/**
- * Ktor/Darwin streaming twin of the Android OkHttp version. Ktor transparently gunzips a
- * `Content-Encoding: gzip` response, so reading the decoded channel line-by-line keeps memory
- * bounded even for a 190+ MB playlist. (A bare `.gz` body with no encoding header would arrive
- * still-compressed; providers that serve M3U over http set the encoding header, and the
- * upgrade path is a manual gunzip if a real provider is found not to.)
- */
+/** Darwin decodes HTTP gzip; the line reader also handles raw gzip downloads by magic bytes. */
 actual suspend fun httpStreamLines(
     url: String,
     userAgent: String?,
@@ -268,12 +262,8 @@ private const val MAX_LINE_BYTES = 1 * 1024 * 1024
  * whose JSON is typically minified onto one line, so the cap is the only thing bounding it.
  */
 private suspend fun streamBoundedLines(channel: ByteReadChannel, onLine: (String) -> Unit) {
-    val readBuf = ByteArray(64 * 1024)
     var carry = ByteArray(0)
-    while (true) {
-        val read = channel.readAvailable(readBuf, 0, readBuf.size)
-        if (read == -1) break
-        if (read == 0) continue
+    streamMaybeGzipChunks(channel, maxBytes) { readBuf, read ->
         val data = if (carry.isEmpty()) readBuf.copyOf(read) else carry + readBuf.copyOf(read)
         var start = 0
         while (true) {
