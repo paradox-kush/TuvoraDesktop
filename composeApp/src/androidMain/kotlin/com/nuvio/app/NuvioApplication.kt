@@ -42,6 +42,9 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory {
 
     override fun onCreate() {
         super.onCreate()
+        // Consent must be available before feature registration constructs RecSettingsImpl,
+        // including a headless process start with no MainActivity startup tasks.
+        initializeAndroidProcessStorage(this)
         // Resolve the app-wide memory tier once, before anything sizes a cache from it. The OS's
         // own words (ActivityManager) feed the neutral policy; null never happens in practice and
         // falls to the bigger cache, as before. (Desktop's Android target is vestigial — the real

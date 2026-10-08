@@ -1,5 +1,7 @@
 package com.nuvio.app
 
+import android.content.Context
+import com.nuvio.app.core.rec.RecEventStorage
 import com.nuvio.app.core.startup.AndroidStartup
 import com.nuvio.app.features.epg.EpgMirrorDbDriver
 import com.nuvio.app.features.iptv.IptvRefreshWorker
@@ -8,13 +10,17 @@ import com.nuvio.app.features.iptv.XtreamAccountStorage
 import com.nuvio.app.features.iptv.content.IptvContentDbDriver
 import com.nuvio.app.features.iptv.match.MatchDbDriver
 
+/** Process-scoped storage needed before common feature registration or background workers. */
+fun initializeAndroidProcessStorage(context: Context) {
+    RecEventStorage.initialize(context)
+}
+
 /**
  * Android startup wiring — the fork-touching half of MainActivity boot, kept here so MainActivity
  * never names a fork feature. Exempt from the firewall exactly like FeatureWiring
  * (ArchitectureTest.isWiringFile). Idempotent: guarded so an activity recreate does not re-register.
  *
- * Desktop twin: MainActivity here never inited RecEventStorage (unlike Mobile), so it is not
- * registered — behaviour preserved.
+ * Consent storage is application-scoped in NuvioApplication, before any feature registration.
  */
 private var registered = false
 
