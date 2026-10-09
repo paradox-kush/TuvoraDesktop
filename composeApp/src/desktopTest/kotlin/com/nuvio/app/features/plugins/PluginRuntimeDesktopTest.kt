@@ -6,11 +6,18 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
-import kotlin.test.Test
+import org.junit.After
+import org.junit.Before
+import org.junit.Test
 import kotlin.test.assertEquals
 
 class PluginRuntimeDesktopTest {
-    @Test
+    // A preceding player test can leave discovery paused. These exercise the engines
+    // under that exact condition, independently of the UI admission gate.
+    @Before fun pauseDiscovery() = PluginRuntime.setSearchPaused(true)
+    @After fun restoreDiscovery() = PluginRuntime.setSearchPaused(false)
+
+    @Test(timeout = 30_000L)
     fun `desktop runtime executes scraper code`() = runBlocking {
         val results = PluginRuntime.executePlugin(
             code = """
@@ -28,6 +35,8 @@ class PluginRuntimeDesktopTest {
             season = null,
             episode = null,
             scraperId = "desktop-runtime-test",
+            // Exercise engines independently of playback UI search admission.
+            respectSearchPause = false,
         )
 
         assertEquals(1, results.size)
@@ -37,7 +46,7 @@ class PluginRuntimeDesktopTest {
         assertEquals("Desktop Test", results.single().provider)
     }
 
-    @Test
+    @Test(timeout = 30_000L)
     fun `desktop runtime handles concurrent scraper executions`() = runBlocking {
         val results = coroutineScope {
             (0 until 32).map { index ->
@@ -58,6 +67,8 @@ class PluginRuntimeDesktopTest {
                         season = null,
                         episode = null,
                         scraperId = "desktop-runtime-stress-$index",
+                        // Exercise engines independently of playback UI search admission.
+                        respectSearchPause = false,
                     )
                 }
             }.awaitAll()

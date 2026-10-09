@@ -38,6 +38,9 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -72,6 +75,7 @@ import com.nuvio.app.core.analytics.LivePlaybackFreezeReporter
 import com.nuvio.app.core.analytics.LivePlaybackReconnector
 import com.nuvio.app.features.player.EnterImmersivePlayerMode
 import com.nuvio.app.features.player.LIVE_FREEZE_SURFACE_DOCKED
+import com.nuvio.app.features.player.LivePlaybackStartupPolicy
 import com.nuvio.app.features.player.LiveReplayLaunch
 import com.nuvio.app.features.player.onLiveSnapshot
 import com.nuvio.app.features.player.onLiveSnapshotStopped
@@ -287,6 +291,9 @@ fun LiveTvScreen(
     // fast-fail — the AUTOMATIC one-shot re-resolve below must not reset.
     val onRetry: () -> Unit = {
         LiveTvData.resetPanelGuard(currentContentId)
+        source = null
+        controller = null
+        snapshot = PlayerPlaybackSnapshot()
         retryTick++
     }
 
@@ -546,7 +553,25 @@ fun LiveTvScreen(
         val fullscreen =
             if (LiveTvFullscreenFollowsWindowAspect) wideWindow else toggledFullscreen
         val dockedPlayerHeight = maxHeight * DOCKED_PLAYER_HEIGHT_FRACTION
-        val hasError = resolveError || playbackError != null
+        // One deadline per resolved source attempt, cancelled on switch/Retry/screen exit.
+        // Startup failures have their own latch so they never enter the token-refresh loop.
+        val startupPolicy = remember(source, retryTick, isCatchUp) { LivePlaybackStartupPolicy() }
+        var startupFailed by remember(startupPolicy) { mutableStateOf(false) }
+        val lifecycleOwner = LocalLifecycleOwner.current
+        LaunchedEffect(startupPolicy, lifecycleOwner, startupFailed) {
+            if (source == null || isCatchUp || startupFailed) return@LaunchedEffect
+            lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                delay(LivePlaybackStartupPolicy.TIMEOUT_MS)
+                startupFailed = startupPolicy.sample(
+                    PlayerPlaybackSnapshot(), LivePlaybackStartupPolicy.TIMEOUT_MS,
+                )
+                if (startupFailed) {
+                    snapshot = snapshot.copy(isLoading = false, isPlaying = false)
+                    controller = null
+                }
+            }
+        }
+        val hasError = resolveError || playbackError != null || startupFailed
 
         fun setFullscreen(enabled: Boolean) {
             if (LiveTvFullscreenFollowsWindowAspect) manualOrientation = enabled
@@ -607,7 +632,7 @@ fun LiveTvScreen(
                     ),
             ) {
                 LivePlayerSurface(
-                    source = source,
+                    source = source.takeUnless { startupFailed },
                     isCatchUpPlayback = isCatchUp,
                     title = catchUp?.programmeTitle ?: currentTitle,
                     resizeMode = livePicture.resizeMode,
@@ -635,8 +660,14 @@ fun LiveTvScreen(
                         // F47/UX61: live channels get the subtitle style too (was engine defaults).
                         PlayerSettingsRepository.uiState.value.let { settings -> it.applySubtitleStyle(settings.subtitleStyle, settings.useLibass) }
                     },
-                    onSnapshot = {
+                    onSnapshot = onLiveSnapshot@{
                         snapshot = it
+                        if (!isCatchUp && startupPolicy.sample(it, elapsedMs = 0L)) {
+                            startupFailed = true
+                            snapshot = it.copy(isLoading = false, isPlaying = false)
+                            controller = null
+                            return@onLiveSnapshot
+                        }
                         val session = catchUp
                         if (session != null && !session.proven) {
                             when {
@@ -684,8 +715,18 @@ fun LiveTvScreen(
                         }
                     },
                     onError = { message ->
-                        playbackError = message
-                        if (message != null) onCatchUpFailure(message)
+                        if (message != null && !isCatchUp && startupPolicy.sample(
+                                snapshot.copy(isEnded = true, isPlaying = false), elapsedMs = 0L,
+                            )) {
+                            // ExoPlayer reports a failed open as IDLE, not ENDED. Keep it out
+                            // of the mid-playback token-refresh path just like mpv END_FILE.
+                            startupFailed = true
+                            snapshot = snapshot.copy(isLoading = false, isPlaying = false)
+                            controller = null
+                        } else {
+                            playbackError = message
+                            if (message != null) onCatchUpFailure(message)
+                        }
                     },
                 )
 
@@ -714,7 +755,7 @@ fun LiveTvScreen(
                     contentPadding = PaddingValues(end = 16.dp, top = 76.dp),
                 )
 
-                if (LiveTvErrorFramePolicy.coverVideo(resolveError, playbackError != null)) {
+                if (LiveTvErrorFramePolicy.coverVideo(resolveError || startupFailed, playbackError != null)) {
                     Box(Modifier.fillMaxSize().background(Color.Black))
                 }
                 // Loading / error indicators (both orientations).
