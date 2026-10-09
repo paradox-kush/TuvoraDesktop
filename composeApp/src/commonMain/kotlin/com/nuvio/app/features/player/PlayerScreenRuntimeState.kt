@@ -22,6 +22,8 @@ import com.nuvio.app.features.watched.WatchedUiState
 import com.nuvio.app.features.watchprogress.WatchProgressUiState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import org.jetbrains.compose.resources.StringResource
+import org.jetbrains.compose.resources.getString
 
 internal data class PlayerSurfaceSource(
     val sourceUrl: String,
@@ -188,6 +190,11 @@ internal class PlayerScreenRuntime(
     val playerReleaseSurfaceRetention = PlayerReleaseSurfaceRetention()
     var playerControllerSourceUrl by mutableStateOf<String?>(null)
     var errorMessage by mutableStateOf<String?>(null)
+    /**
+     * Resolves a user-facing string for a message the runtime raises itself (toasts). Production uses the
+     * Compose resource environment; tests replace it, since the Android host JVM has no resource system.
+     */
+    var resolveText: suspend (StringResource) -> String = { getString(it) }
     var isScrubbingTimeline by mutableStateOf(false)
     var scrubbingPositionMs by mutableStateOf<Long?>(null)
     var pausedOverlayVisible by mutableStateOf(false)
