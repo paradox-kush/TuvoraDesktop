@@ -79,6 +79,8 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import com.nuvio.app.core.build.AppFeaturePolicy
+import com.nuvio.app.features.home.HomeNoAddonsCard
+import com.nuvio.app.features.home.HomeNoAddonsCardPolicy
 import com.nuvio.app.core.ui.NuvioBackButton
 import com.nuvio.app.core.ui.desktopPageHorizontalPaddingForWidth
 import com.nuvio.app.core.ui.NuvioBottomSheetActionRow
@@ -1531,20 +1533,33 @@ private fun EmptyStateBlock(
     reason: StreamsEmptyStateReason?,
     modifier: Modifier = Modifier,
 ) {
+    val hasAnyIptvPlaylist by remember {
+        com.nuvio.app.core.contracts.IptvCatalogAccess.catalogOrNull?.hasAnyPlaylist
+            ?: kotlinx.coroutines.flow.MutableStateFlow(false)
+    }.collectAsStateWithLifecycle()
+    val noAddonsCard = HomeNoAddonsCardPolicy.card(
+        addonsEnabled = AppFeaturePolicy.addonsEnabled,
+        hasAnyIptvPlaylist = hasAnyIptvPlaylist,
+    )
     val title: String
     val message: String
 
     when (reason) {
-        StreamsEmptyStateReason.NoAddonsInstalled -> {
-            // Store builds hide the addon system, so point at IPTV setup instead.
-            title = stringResource(
-                if (AppFeaturePolicy.addonsEnabled) Res.string.compose_search_empty_no_active_addons_title
-                else Res.string.home_empty_iptv_hint_title
-            )
-            message = stringResource(
-                if (AppFeaturePolicy.addonsEnabled) Res.string.streams_empty_no_addons_message
-                else Res.string.home_empty_iptv_hint_message
-            )
+        // Store builds hide the addon system, so point at IPTV setup — unless a playlist is already
+        // there and simply has no match for this title (M3U playlists have no TMDB match lane) (UX38).
+        StreamsEmptyStateReason.NoAddonsInstalled -> when (noAddonsCard) {
+            HomeNoAddonsCard.NoActiveAddons -> {
+                title = stringResource(Res.string.compose_search_empty_no_active_addons_title)
+                message = stringResource(Res.string.streams_empty_no_addons_message)
+            }
+            HomeNoAddonsCard.AddIptvPlaylist -> {
+                title = stringResource(Res.string.home_empty_iptv_hint_title)
+                message = stringResource(Res.string.home_empty_iptv_hint_message)
+            }
+            HomeNoAddonsCard.None -> {
+                title = stringResource(Res.string.compose_player_no_streams_found)
+                message = stringResource(Res.string.streams_empty_no_playlist_match_message)
+            }
         }
 
         StreamsEmptyStateReason.NoCompatibleAddons -> {
