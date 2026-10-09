@@ -6,7 +6,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
-import kotlin.test.Test
+import org.junit.After
+import org.junit.Before
+import org.junit.Test
 import kotlin.test.assertEquals
 
 /**
@@ -17,7 +19,12 @@ import kotlin.test.assertEquals
  * rather than relying on one — a single burst passed whenever an earlier test had warmed the engine.
  */
 class PluginRuntimeConcurrencyTest {
-    @Test
+    // A preceding player test can leave discovery paused. These exercise the engines
+    // under that exact condition, independently of the UI admission gate.
+    @Before fun pauseDiscovery() = PluginRuntime.setSearchPaused(true)
+    @After fun restoreDiscovery() = PluginRuntime.setSearchPaused(false)
+
+    @Test(timeout = 30_000L)
     fun `repeated concurrent bursts neither hang nor crash`() = runBlocking {
         repeat(ROUNDS) { round ->
             val results = coroutineScope {
@@ -35,6 +42,8 @@ class PluginRuntimeConcurrencyTest {
                             season = null,
                             episode = null,
                             scraperId = "concurrency-$round-$index",
+                            // Exercise engines independently of playback UI search admission.
+                            respectSearchPause = false,
                         )
                     }
                 }.awaitAll()
