@@ -39,18 +39,19 @@ internal object EpgNorm {
 
     private val GLUED_PREFIX = Regex("([a-z-]{2,6}?)(sd|hd|fhd|uhd|4k)")
     private val ID_COUNTRY_SUFFIX = Regex("\\.[a-z]{2,3}$", RegexOption.IGNORE_CASE)
-    private val NON_ALNUM = Regex("[^a-z0-9+]+")
     private val SPACES = Regex("\\s+")
     private val PLUS_ONE_TAIL = Regex("\\s*\\+\\s*1$")
 
     /** Mark-strip (platform NFD), casefold, `&`→" and ", non-alnum→space. (The python used
      *  NFKD; NFD only differs on compatibility chars, absent from real channel names.) */
-    fun baseNorm(s: String): String =
-        stripCombiningMarks(s).lowercase()
-            .replace("&", " and ")
-            .replace(NON_ALNUM, " ")
-            .replace(SPACES, " ")
-            .trim()
+    fun baseNorm(s: String): String {
+        val name = stripCombiningMarks(s).lowercase().replace("&", " and ")
+        // Keep non-Latin names and the literal timeshift '+' with platform character predicates,
+        // without depending on a Unicode regex character class to retain channel identity.
+        return buildString(name.length) {
+            for (c in name) append(if (c.isLetterOrDigit() || c == '+') c else ' ')
+        }.replace(SPACES, " ").trim()
+    }
 
     /** Drop up to 3 leading region/quality tokens: "uk fhd tnt sport 2" -> "tnt sport 2". */
     private fun stripPrefix(s: String): String {

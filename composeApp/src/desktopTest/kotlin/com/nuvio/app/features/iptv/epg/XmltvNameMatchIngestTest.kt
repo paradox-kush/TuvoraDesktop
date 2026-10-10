@@ -148,4 +148,24 @@ class XmltvNameMatchIngestTest {
         assertEquals("ITV1 Plus One now", IptvContentDb.epgAround(acc.id, key!!, System.currentTimeMillis(), 1).firstOrNull()?.title)
         assertEquals(emptyList(), XmltvClient.storedNowNext(acc, 1), "no automatic match: only the pick shows it")
     }
+
+    @Test
+    fun interleavedChannelsAndProgrammesAreMatchedAfterCompleteCensus() = runBlocking {
+        val now = System.currentTimeMillis()
+        val start = fmt.format(Date(now - 30 * 60_000L))
+        val stop = fmt.format(Date(now + 30 * 60_000L))
+        fun channel(id: String, name: String) = "<channel id=\"$id\"><display-name>$name</display-name></channel>"
+        fun programme(id: String, title: String) = "<programme start=\"$start\" stop=\"$stop\" channel=\"$id\"><title>$title</title></programme>"
+        guides["/interleaved.xml"] = "<tv>" +
+            channel("early", "CNN") + programme("early", "Wrong name match") +
+            programme("late", "Correct late id") + channel("late", "CNN") +
+            channel("bbc", "BBC One") + programme("bbc", "Late BBC") +
+            channel("unused", "Unrelated") + programme("unused", "Drop me") + "</tv>"
+        val acc = account("interleaved-regression", url("/interleaved.xml"))
+        lineup(acc.id, row(1, "CNN", "late"), row(2, "BBC One", null))
+        assertTrue(XmltvClient.ensureEpg(acc, force = true))
+        assertEquals("Correct late id", XmltvClient.storedNowNext(acc, 1).firstOrNull()?.title)
+        assertEquals("Late BBC", XmltvClient.storedNowNext(acc, 2).firstOrNull()?.title)
+        assertEquals(1, hits["/interleaved.xml"]?.get(), "one network fetch")
+    }
 }
