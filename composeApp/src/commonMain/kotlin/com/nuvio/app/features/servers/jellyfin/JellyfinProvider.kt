@@ -1,17 +1,23 @@
 package com.nuvio.app.features.servers.jellyfin
 
-import com.nuvio.app.core.network.createApiHttpClient
+import com.nuvio.app.features.servers.FixedServerHttp
+import com.nuvio.app.features.servers.ServerHttp
+import com.nuvio.app.features.servers.TrustedServerHttp
 import com.nuvio.app.features.servers.mediabrowser.Endpoint
 import com.nuvio.app.features.servers.mediabrowser.MediaBrowserProvider
 import com.nuvio.app.features.servers.mediabrowser.pathSegment
 import io.ktor.client.HttpClient
 
 internal class JellyfinProvider(
-    http: HttpClient = createApiHttpClient(),
+    http: ServerHttp = TrustedServerHttp.shared,
 ) : MediaBrowserProvider(authorizationHeader = "Authorization", apiPath = "", http = http) {
+    constructor(http: HttpClient) : this(FixedServerHttp(http))
+
     override val id: String = "jellyfin"
     override val displayName: String = "Jellyfin"
     override val minimumVersion: String = "10.9"
+    override val capabilities: Set<com.nuvio.app.features.servers.ServerCapability> =
+        super.capabilities + com.nuvio.app.features.servers.ServerCapability.QUICK_CONNECT
 
     override fun viewsEndpoint(userId: String) = Endpoint("/UserViews", mapOf("userId" to userId))
 

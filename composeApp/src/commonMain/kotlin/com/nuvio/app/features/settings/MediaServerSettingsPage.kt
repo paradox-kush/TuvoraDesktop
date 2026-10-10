@@ -59,6 +59,7 @@ import nuvio.composeapp.generated.resources.servers_remove_confirm_title
 import nuvio.composeapp.generated.resources.servers_sign_in_again
 import nuvio.composeapp.generated.resources.servers_signed_in_as
 import nuvio.composeapp.generated.resources.servers_status_auth
+import nuvio.composeapp.generated.resources.servers_status_cert_changed
 import nuvio.composeapp.generated.resources.servers_status_disabled
 import nuvio.composeapp.generated.resources.servers_status_unreachable
 import org.jetbrains.compose.resources.getString
@@ -297,6 +298,8 @@ internal fun ServerConnection.status(failure: ServerFailure?): Pair<String, Colo
     return when {
         !enabled -> stringResource(Res.string.servers_status_disabled) to colors.textMuted
         failure == ServerFailure.AUTH_REQUIRED -> stringResource(Res.string.servers_status_auth) to colors.danger
+        failure == ServerFailure.CERTIFICATE_CHANGED || failure == ServerFailure.CERTIFICATE_UNTRUSTED ->
+            stringResource(Res.string.servers_status_cert_changed) to colors.danger
         failure == ServerFailure.UNREACHABLE -> stringResource(Res.string.servers_status_unreachable) to colors.warning
         else -> null
     }

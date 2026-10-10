@@ -1,0 +1,21 @@
+<resources>
+    <string name="servers_quick_connect">Use Quick Connect instead</string>
+    <string name="servers_quick_connect_instructions">On a device already signed in to %1$s, open Quick Connect and enter this code.</string>
+    <string name="servers_quick_connect_waiting">Waiting for approval · %1$s left</string>
+    <string name="servers_quick_connect_expired">This code expired.</string>
+    <string name="servers_quick_connect_disabled">Quick Connect is turned off on this server.</string>
+    <string name="servers_quick_connect_unreachable">Could not reach the server for Quick Connect.</string>
+    <string name="servers_quick_connect_failed">Quick Connect did not finish.</string>
+    <string name="servers_quick_connect_retry">Try again</string>
+    <string name="servers_quick_connect_back">Sign in with a password</string>
+    <string name="servers_cert_title">Trust this certificate?</string>
+    <string name="servers_cert_message">%1$s presented a certificate this device does not recognise. Only trust it if this is your own server.</string>
+    <string name="servers_cert_changed_title">Certificate changed</string>
+    <string name="servers_cert_changed_message">%1$s now presents a different certificate than the one you trusted. That can mean the server was reinstalled, or that someone is intercepting the connection. Only continue if you expect this.</string>
+    <string name="servers_cert_fingerprint">SHA-256 %1$s</string>
+    <string name="servers_cert_trust">Trust certificate</string>
+    <string name="servers_cert_trust_new">Trust the new certificate</string>
+    <string name="servers_failure_cert_untrusted">This server's certificate is not trusted. Sign in again to review it.</string>
+    <string name="servers_failure_cert_changed">This server's certificate changed. Sign in again to review it.</string>
+    <string name="servers_status_cert_changed">Certificate changed</string>
+</resources>

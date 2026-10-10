@@ -1,6 +1,8 @@
 package com.nuvio.app.features.servers.emby
 
-import com.nuvio.app.core.network.createApiHttpClient
+import com.nuvio.app.features.servers.FixedServerHttp
+import com.nuvio.app.features.servers.ServerHttp
+import com.nuvio.app.features.servers.TrustedServerHttp
 import com.nuvio.app.features.servers.mediabrowser.Endpoint
 import com.nuvio.app.features.servers.mediabrowser.MediaBrowserProvider
 import com.nuvio.app.features.servers.mediabrowser.PublicInfo
@@ -8,8 +10,10 @@ import com.nuvio.app.features.servers.mediabrowser.pathSegment
 import io.ktor.client.HttpClient
 
 internal class EmbyProvider(
-    http: HttpClient = createApiHttpClient(),
+    http: ServerHttp = TrustedServerHttp.shared,
 ) : MediaBrowserProvider(authorizationHeader = "X-Emby-Authorization", apiPath = "/emby", http = http) {
+    constructor(http: HttpClient) : this(FixedServerHttp(http))
+
     override val id: String = "emby"
     override val displayName: String = "Emby"
     override val minimumVersion: String = "4.7"

@@ -18,6 +18,16 @@ internal data class AuthRequest(
 )
 
 @Serializable
+internal data class QuickConnectResult(
+    @SerialName("Code") val code: String? = null,
+    @SerialName("Secret") val secret: String? = null,
+    @SerialName("Authenticated") val authenticated: Boolean = false,
+)
+
+@Serializable
+internal data class QuickConnectAuthRequest(@SerialName("Secret") val secret: String)
+
+@Serializable
 internal data class AuthResult(
     @SerialName("User") val user: UserInfo? = null,
     @SerialName("AccessToken") val accessToken: String? = null,
@@ -98,6 +108,7 @@ internal data class UserItemData(
 @Serializable
 internal data class MediaSource(
     @SerialName("Id") val id: String,
+    @SerialName("Type") val type: String? = null,
     @SerialName("Name") val name: String? = null,
     @SerialName("Path") val path: String? = null,
     @SerialName("Container") val container: String? = null,
@@ -108,7 +119,11 @@ internal data class MediaSource(
     @SerialName("TranscodingUrl") val transcodingUrl: String? = null,
     @SerialName("DefaultAudioStreamIndex") val defaultAudioStreamIndex: Int? = null,
     @SerialName("MediaStreams") val mediaStreams: List<MediaStream> = emptyList(),
-)
+) {
+    /** An add-on aggregator's stand-in ("streams resolve on play"): not a playable version. */
+    val isPlaceholder: Boolean
+        get() = type.equals("Placeholder", ignoreCase = true)
+}
 
 @Serializable
 internal data class MediaStream(
@@ -137,6 +152,7 @@ internal data class PlaybackInfoRequest(
     @SerialName("AllowVideoStreamCopy") val allowVideoStreamCopy: Boolean = true,
     @SerialName("AllowAudioStreamCopy") val allowAudioStreamCopy: Boolean = true,
     @SerialName("AutoOpenLiveStream") val autoOpenLiveStream: Boolean = false,
+    @SerialName("IsPlayback") val isPlayback: Boolean = true,
     @SerialName("DeviceProfile") val deviceProfile: DeviceProfile,
 )
 

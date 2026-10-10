@@ -199,10 +199,14 @@ enum class ServerFailure {
     UNSUPPORTED,
     NOT_FOUND,
     INCOMPLETE,
+    /** The server presented a certificate the system does not trust and this device has not pinned. */
+    CERTIFICATE_UNTRUSTED,
+    /** The server now presents a different certificate than the one this device pinned. */
+    CERTIFICATE_CHANGED,
     FAILED,
 }
 
-class ServerException(
+open class ServerException(
     val failure: ServerFailure,
     message: String? = null,
 ) : Exception(message ?: failure.name)

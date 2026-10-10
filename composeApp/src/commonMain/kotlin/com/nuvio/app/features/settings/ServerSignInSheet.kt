@@ -18,10 +18,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldColors
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -33,20 +37,52 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import com.nuvio.app.core.ui.NuvioModalBottomSheet
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.dismissNuvioBottomSheet
 import com.nuvio.app.core.ui.nuvio
+import com.nuvio.app.features.servers.QuickConnectDriver
+import com.nuvio.app.features.servers.QuickConnectFailure
+import com.nuvio.app.features.servers.QuickConnectPolicy
+import com.nuvio.app.features.servers.QuickConnectState
+import com.nuvio.app.features.servers.ServerCapability
+import com.nuvio.app.features.servers.ServerCertificateException
 import com.nuvio.app.features.servers.ServerConnection
+import com.nuvio.app.features.servers.ServerTrust
+import com.nuvio.app.features.servers.supports
 import com.nuvio.app.features.servers.ServerException
 import com.nuvio.app.features.servers.ServerFailure
 import com.nuvio.app.features.servers.ServerProvider
 import com.nuvio.app.features.servers.ServerRepository
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlin.time.Clock
 import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.action_cancel
+import nuvio.composeapp.generated.resources.servers_cert_changed_message
+import nuvio.composeapp.generated.resources.servers_cert_changed_title
+import nuvio.composeapp.generated.resources.servers_cert_fingerprint
+import nuvio.composeapp.generated.resources.servers_cert_message
+import nuvio.composeapp.generated.resources.servers_cert_title
+import nuvio.composeapp.generated.resources.servers_cert_trust
+import nuvio.composeapp.generated.resources.servers_cert_trust_new
+import nuvio.composeapp.generated.resources.servers_quick_connect
+import nuvio.composeapp.generated.resources.servers_quick_connect_back
+import nuvio.composeapp.generated.resources.servers_quick_connect_disabled
+import nuvio.composeapp.generated.resources.servers_quick_connect_expired
+import nuvio.composeapp.generated.resources.servers_quick_connect_failed
+import nuvio.composeapp.generated.resources.servers_quick_connect_instructions
+import nuvio.composeapp.generated.resources.servers_quick_connect_retry
+import nuvio.composeapp.generated.resources.servers_quick_connect_unreachable
+import nuvio.composeapp.generated.resources.servers_quick_connect_waiting
 import nuvio.composeapp.generated.resources.servers_address
 import nuvio.composeapp.generated.resources.servers_address_hint
 import nuvio.composeapp.generated.resources.servers_connect
@@ -84,7 +120,10 @@ internal fun ServerSignInSheet(
     var password by remember { mutableStateOf("") }
     var connecting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<ServerFailure?>(null) }
+    var certificate by remember { mutableStateOf<ServerCertificateException?>(null) }
+    var quickConnect by remember { mutableStateOf<QuickConnectDriver?>(null) }
     val canConnect = !connecting && address.isNotBlank() && username.isNotBlank()
+    val canQuickConnect = !connecting && address.isNotBlank() && request.provider.supports(ServerCapability.QUICK_CONNECT)
 
     fun connect() {
         if (!canConnect) return
@@ -97,6 +136,8 @@ internal fun ServerSignInSheet(
                 dismissNuvioBottomSheet(sheetState) { onConnected(connection) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
+            } catch (untrusted: ServerCertificateException) {
+                certificate = untrusted
             } catch (failure: ServerException) {
                 error = failure.failure
             } catch (_: Exception) {
@@ -107,8 +148,53 @@ internal fun ServerSignInSheet(
         }
     }
 
+    fun startQuickConnect() {
+        if (!canQuickConnect) return
+        error = null
+        val driver = QuickConnectDriver(request.provider, address)
+        quickConnect = driver
+        scope.launch { driver.start() }
+    }
+
+    fun trustCertificate(prompt: ServerCertificateException) {
+        ServerTrust.shared.pin(prompt.authority, prompt.fingerprint)
+        certificate = null
+        // Resume what was being attempted: the Quick Connect request, or the password sign-in.
+        val driver = quickConnect
+        if (driver != null) scope.launch { driver.start() } else connect()
+    }
+
+    val driver = quickConnect
+    val qcState = driver?.state?.collectAsStateWithLifecycle()?.value
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val waiting = qcState is QuickConnectState.Waiting
+    // Lifecycle-bound poll: runs only while this sheet is visible (RESUMED), ends at a terminal state or the 10 minute deadline.
+    LaunchedEffect(driver, waiting) {
+        if (driver != null && waiting) lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) { driver.run() }
+    }
+    var nowMs by remember { mutableLongStateOf(Clock.System.now().toEpochMilliseconds()) }
+    LaunchedEffect(waiting) {
+        while (waiting && isActive) {
+            nowMs = Clock.System.now().toEpochMilliseconds()
+            delay(1_000L)
+        }
+    }
+    LaunchedEffect(qcState) {
+        if (driver != null && qcState == QuickConnectState.Authorised) {
+            try {
+                val connection = driver.complete()
+                dismissNuvioBottomSheet(sheetState) { onConnected(connection) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (untrusted: ServerCertificateException) {
+                certificate = untrusted
+            } catch (_: Exception) {
+            }
+        }
+    }
+
     NuvioModalBottomSheet(
-        onDismissRequest = { if (!connecting) onDismiss() },
+        onDismissRequest = { if (!connecting) { quickConnect?.cancel(); onDismiss() } },
         sheetState = sheetState,
     ) {
         Column(
@@ -126,94 +212,123 @@ internal fun ServerSignInSheet(
                 subtitle = stringResource(Res.string.servers_sign_in_subtitle, request.provider.displayName),
             )
             Spacer(modifier = Modifier.height(NuvioTokens.Space.s20))
-            Column(verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s12)) {
-                OutlinedTextField(
-                    value = address,
-                    onValueChange = {
-                        address = it
-                        error = null
+            val prompt = certificate
+            if (prompt != null) {
+                CertificatePrompt(
+                    prompt = prompt,
+                    onTrust = { trustCertificate(prompt) },
+                    onCancel = { certificate = null },
+                )
+            } else if (driver != null && qcState != null) {
+                QuickConnectPanel(
+                    providerName = request.provider.displayName,
+                    state = qcState,
+                    remainingMs = (qcState as? QuickConnectState.Waiting)
+                        ?.let { QuickConnectPolicy.remainingMs(it.startedAtMs, nowMs) } ?: 0L,
+                    onRetry = { scope.launch { driver.start() } },
+                    onUsePassword = {
+                        driver.cancel()
+                        quickConnect = null
                     },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !connecting,
-                    singleLine = true,
-                    label = { Text(stringResource(Res.string.servers_address)) },
-                    placeholder = { Text(stringResource(Res.string.servers_address_hint)) },
-                    keyboardOptions = KeyboardOptions(
-                        capitalization = KeyboardCapitalization.None,
-                        autoCorrectEnabled = false,
-                        keyboardType = KeyboardType.Uri,
-                        imeAction = ImeAction.Next,
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s12)) {
+                    OutlinedTextField(
+                        value = address,
+                        onValueChange = {
+                            address = it
+                            error = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !connecting,
+                        singleLine = true,
+                        label = { Text(stringResource(Res.string.servers_address)) },
+                        placeholder = { Text(stringResource(Res.string.servers_address_hint)) },
+                        keyboardOptions = KeyboardOptions(
+                            capitalization = KeyboardCapitalization.None,
+                            autoCorrectEnabled = false,
+                            keyboardType = KeyboardType.Uri,
+                            imeAction = ImeAction.Next,
+                        ),
+                        shape = tokens.shapes.button,
+                        colors = sheetFieldColors(),
+                    )
+                    OutlinedTextField(
+                        value = username,
+                        onValueChange = {
+                            username = it
+                            error = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !connecting,
+                        singleLine = true,
+                        label = { Text(stringResource(Res.string.servers_username)) },
+                        keyboardOptions = KeyboardOptions(
+                            capitalization = KeyboardCapitalization.None,
+                            autoCorrectEnabled = false,
+                            imeAction = ImeAction.Next,
+                        ),
+                        shape = tokens.shapes.button,
+                        colors = sheetFieldColors(),
+                    )
+                    SettingsSecretTextField(
+                        value = password,
+                        onValueChange = {
+                            password = it
+                            error = null
+                        },
+                        label = stringResource(Res.string.servers_password),
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !connecting,
+                        shape = tokens.shapes.button,
+                        colors = sheetFieldColors(),
+                        imeAction = ImeAction.Done,
+                        keyboardActions = KeyboardActions(onDone = { connect() }),
+                    )
+                }
+                error?.let { failure ->
+                    Spacer(modifier = Modifier.height(NuvioTokens.Space.s10))
+                    Text(
+                        text = failure.signInMessage(request.provider),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.colors.danger,
+                    )
+                }
+                Spacer(modifier = Modifier.height(NuvioTokens.Space.s20))
+                Button(
+                    onClick = ::connect,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(NuvioTokens.Space.s56),
+                    enabled = canConnect,
+                    shape = tokens.shapes.button,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = tokens.colors.accent,
+                        contentColor = tokens.colors.onAccent,
                     ),
-                    shape = tokens.shapes.button,
-                    colors = sheetFieldColors(),
-                )
-                OutlinedTextField(
-                    value = username,
-                    onValueChange = {
-                        username = it
-                        error = null
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !connecting,
-                    singleLine = true,
-                    label = { Text(stringResource(Res.string.servers_username)) },
-                    keyboardOptions = KeyboardOptions(
-                        capitalization = KeyboardCapitalization.None,
-                        autoCorrectEnabled = false,
-                        imeAction = ImeAction.Next,
-                    ),
-                    shape = tokens.shapes.button,
-                    colors = sheetFieldColors(),
-                )
-                SettingsSecretTextField(
-                    value = password,
-                    onValueChange = {
-                        password = it
-                        error = null
-                    },
-                    label = stringResource(Res.string.servers_password),
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !connecting,
-                    shape = tokens.shapes.button,
-                    colors = sheetFieldColors(),
-                    imeAction = ImeAction.Done,
-                    keyboardActions = KeyboardActions(onDone = { connect() }),
-                )
-            }
-            error?.let { failure ->
-                Spacer(modifier = Modifier.height(NuvioTokens.Space.s10))
-                Text(
-                    text = failure.signInMessage(request.provider),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = tokens.colors.danger,
-                )
-            }
-            Spacer(modifier = Modifier.height(NuvioTokens.Space.s20))
-            Button(
-                onClick = ::connect,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(NuvioTokens.Space.s56),
-                enabled = canConnect,
-                shape = tokens.shapes.button,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = tokens.colors.accent,
-                    contentColor = tokens.colors.onAccent,
-                ),
-            ) {
-                if (connecting) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        NuvioLoadingIndicator(
-                            modifier = Modifier.size(tokens.icons.sm),
-                            color = tokens.colors.onAccent,
-                        )
-                        Text(stringResource(Res.string.servers_connecting))
+                ) {
+                    if (connecting) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            NuvioLoadingIndicator(
+                                modifier = Modifier.size(tokens.icons.sm),
+                                color = tokens.colors.onAccent,
+                            )
+                            Text(stringResource(Res.string.servers_connecting))
+                        }
+                    } else {
+                        Text(stringResource(Res.string.servers_connect))
                     }
-                } else {
-                    Text(stringResource(Res.string.servers_connect))
+                }
+                if (canQuickConnect) {
+                    TextButton(
+                        onClick = ::startQuickConnect,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(Res.string.servers_quick_connect), color = tokens.colors.accent)
+                    }
                 }
             }
         }
@@ -261,5 +376,133 @@ private fun ServerFailure.signInMessage(provider: ServerProvider): String = when
     ServerFailure.UNSUPPORTED -> stringResource(Res.string.servers_error_unsupported, provider.displayName, provider.minimumVersion)
     ServerFailure.FORBIDDEN -> stringResource(Res.string.servers_error_forbidden)
     ServerFailure.INCOMPLETE,
+    ServerFailure.CERTIFICATE_UNTRUSTED,
+    ServerFailure.CERTIFICATE_CHANGED,
     ServerFailure.FAILED -> stringResource(Res.string.servers_error_failed)
+}
+
+@Composable
+private fun CertificatePrompt(
+    prompt: ServerCertificateException,
+    onTrust: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    Column(verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s12)) {
+        Text(
+            text = stringResource(if (prompt.changed) Res.string.servers_cert_changed_title else Res.string.servers_cert_title),
+            style = MaterialTheme.typography.titleMedium,
+            color = if (prompt.changed) tokens.colors.danger else tokens.colors.textPrimary,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = stringResource(
+                if (prompt.changed) Res.string.servers_cert_changed_message else Res.string.servers_cert_message,
+                prompt.authority,
+            ),
+            style = MaterialTheme.typography.bodyMedium,
+            color = tokens.colors.textSecondary,
+        )
+        Text(
+            text = stringResource(Res.string.servers_cert_fingerprint, prompt.fingerprint.chunked(2).joinToString(":")),
+            style = MaterialTheme.typography.bodySmall,
+            color = tokens.colors.textMuted,
+        )
+        Button(
+            onClick = onTrust,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(NuvioTokens.Space.s56),
+            shape = tokens.shapes.button,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (prompt.changed) tokens.colors.danger else tokens.colors.accent,
+                contentColor = tokens.colors.onAccent,
+            ),
+        ) {
+            Text(stringResource(if (prompt.changed) Res.string.servers_cert_trust_new else Res.string.servers_cert_trust))
+        }
+        TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(Res.string.action_cancel), color = tokens.colors.textSecondary)
+        }
+    }
+}
+
+@Composable
+private fun QuickConnectPanel(
+    providerName: String,
+    state: QuickConnectState,
+    remainingMs: Long,
+    onRetry: () -> Unit,
+    onUsePassword: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s12),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        when (state) {
+            is QuickConnectState.Waiting -> {
+                Text(
+                    text = stringResource(Res.string.servers_quick_connect_instructions, providerName),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = tokens.colors.textSecondary,
+                    textAlign = TextAlign.Center,
+                )
+                Text(
+                    text = QuickConnectPolicy.displayCode(state.code),
+                    style = MaterialTheme.typography.displayMedium,
+                    color = tokens.colors.textPrimary,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = stringResource(Res.string.servers_quick_connect_waiting, QuickConnectPolicy.countdownLabel(remainingMs)),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.colors.textMuted,
+                )
+            }
+            QuickConnectState.Idle,
+            QuickConnectState.Starting,
+            QuickConnectState.Authorised -> NuvioLoadingIndicator(
+                modifier = Modifier.size(tokens.icons.md),
+                color = tokens.colors.accent,
+            )
+            QuickConnectState.Expired -> QuickConnectRetry(stringResource(Res.string.servers_quick_connect_expired), onRetry)
+            is QuickConnectState.Failed -> QuickConnectRetry(
+                message = stringResource(
+                    when (state.reason) {
+                        QuickConnectFailure.DISABLED -> Res.string.servers_quick_connect_disabled
+                        QuickConnectFailure.UNREACHABLE -> Res.string.servers_quick_connect_unreachable
+                        QuickConnectFailure.CERTIFICATE,
+                        QuickConnectFailure.SERVER_ERROR -> Res.string.servers_quick_connect_failed
+                    },
+                ),
+                onRetry = onRetry,
+                canRetry = state.reason != QuickConnectFailure.DISABLED,
+            )
+        }
+        TextButton(onClick = onUsePassword) {
+            Text(stringResource(Res.string.servers_quick_connect_back), color = tokens.colors.textSecondary)
+        }
+    }
+}
+
+@Composable
+private fun QuickConnectRetry(message: String, onRetry: () -> Unit, canRetry: Boolean = true) {
+    val tokens = MaterialTheme.nuvio
+    Text(
+        text = message,
+        style = MaterialTheme.typography.bodyMedium,
+        color = tokens.colors.danger,
+        textAlign = TextAlign.Center,
+    )
+    if (canRetry) {
+        Button(
+            onClick = onRetry,
+            shape = tokens.shapes.button,
+            colors = ButtonDefaults.buttonColors(containerColor = tokens.colors.accent, contentColor = tokens.colors.onAccent),
+        ) {
+            Text(stringResource(Res.string.servers_quick_connect_retry))
+        }
+    }
 }

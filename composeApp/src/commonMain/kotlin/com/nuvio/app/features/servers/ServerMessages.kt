@@ -4,6 +4,8 @@ import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.servers_error_failed
 import nuvio.composeapp.generated.resources.servers_error_forbidden
 import nuvio.composeapp.generated.resources.servers_failure_auth
+import nuvio.composeapp.generated.resources.servers_failure_cert_changed
+import nuvio.composeapp.generated.resources.servers_failure_cert_untrusted
 import nuvio.composeapp.generated.resources.servers_failure_incomplete
 import nuvio.composeapp.generated.resources.servers_failure_not_found
 import nuvio.composeapp.generated.resources.servers_failure_unreachable
@@ -30,6 +32,8 @@ internal fun ServerFailure.message(): StringResource = when (this) {
     ServerFailure.INCOMPLETE -> Res.string.servers_failure_incomplete
     ServerFailure.FORBIDDEN -> Res.string.servers_error_forbidden
     ServerFailure.UNSUPPORTED -> Res.string.servers_failure_unsupported
+    ServerFailure.CERTIFICATE_UNTRUSTED -> Res.string.servers_failure_cert_untrusted
+    ServerFailure.CERTIFICATE_CHANGED -> Res.string.servers_failure_cert_changed
     ServerFailure.FAILED -> Res.string.servers_error_failed
 }
 

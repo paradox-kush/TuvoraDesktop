@@ -10,6 +10,7 @@ enum class ServerCapability {
     USER_STATE_READ,
     USER_STATE_WRITE,
     TRANSCODING,
+    QUICK_CONNECT,
 }
 
 interface ServerProvider {
@@ -38,6 +39,17 @@ interface ServerProvider {
     suspend fun report(session: ServerSession, playback: ServerPlaybackSession, event: ServerPlaybackEvent) = Unit
 
     suspend fun signOut(session: ServerSession) = Unit
+
+    /** Whether the server at [address] currently accepts Quick Connect (false when off, unreachable or unsupported). */
+    suspend fun quickConnectAvailable(address: String): Boolean = false
+
+    /** Asks the server for a Quick Connect code to show the user. Only for providers with [ServerCapability.QUICK_CONNECT]. */
+    suspend fun quickConnectStart(address: String): QuickConnectChallenge = unsupported()
+
+    suspend fun quickConnectPoll(challenge: QuickConnectChallenge): QuickConnectPoll = unsupported()
+
+    /** Exchanges an approved request for this device's own token. */
+    suspend fun quickConnectComplete(challenge: QuickConnectChallenge): ServerSignIn = unsupported()
 
     suspend fun collectionPage(
         session: ServerSession,

@@ -70,6 +70,7 @@ object ServerRepository {
         runCatching { ServerStorage.clear() }.onFailure { log.w(it) { "Unable to clear server storage" } }
         _uiState.value = ServersUiState(revision = _uiState.value.revision + 1)
         ServerMatcher.clear()
+        runCatching { ServerTrust.shared.clearAll() }
     }
 
     fun removeProfile(profileId: Int) {
@@ -120,7 +121,8 @@ object ServerRepository {
             }
         } catch (error: ServerException) {
             if (startedGeneration == generation &&
-                (error.failure == ServerFailure.AUTH_REQUIRED || error.failure == ServerFailure.UNREACHABLE)
+                (error.failure == ServerFailure.AUTH_REQUIRED || error.failure == ServerFailure.UNREACHABLE ||
+                    error.failure == ServerFailure.CERTIFICATE_CHANGED || error.failure == ServerFailure.CERTIFICATE_UNTRUSTED)
             ) {
                 setFailure(connectionId, error.failure)
             }
@@ -128,11 +130,18 @@ object ServerRepository {
         }
     }
 
-    suspend fun connect(provider: ServerProvider, address: String, username: String, password: String): ServerConnection {
+    suspend fun connect(provider: ServerProvider, address: String, username: String, password: String): ServerConnection =
+        connectWith(provider) { provider.signIn(address, username, password) }
+
+    /** Quick Connect sign-in: the token it yields is this device's own and stays on this device (never synced). */
+    suspend fun connectWithQuickConnect(provider: ServerProvider, challenge: QuickConnectChallenge): ServerConnection =
+        connectWith(provider) { provider.quickConnectComplete(challenge) }
+
+    private suspend fun connectWith(provider: ServerProvider, signInBlock: suspend () -> ServerSignIn): ServerConnection {
         ensureLoaded()
         val startedGeneration = generation
         val profileId = loadedProfileId ?: ProfileRepository.activeProfileId
-        val signIn = provider.signIn(address, username, password)
+        val signIn = signInBlock()
         val existing = _uiState.value.connections.firstOrNull {
             it.providerId == provider.id &&
                 it.remoteServerId == signIn.serverId &&

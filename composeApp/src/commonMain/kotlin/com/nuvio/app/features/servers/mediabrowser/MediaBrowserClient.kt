@@ -5,8 +5,8 @@ import com.nuvio.app.core.network.readBoundedResponseBody
 import com.nuvio.app.core.sync.SyncClientIdentity
 import com.nuvio.app.features.servers.ServerException
 import com.nuvio.app.features.servers.ServerFailure
+import com.nuvio.app.features.servers.ServerHttp
 import com.nuvio.app.getPlatform
-import io.ktor.client.HttpClient
 import io.ktor.client.request.header
 import io.ktor.client.request.prepareRequest
 import io.ktor.client.request.setBody
@@ -24,7 +24,7 @@ import kotlinx.serialization.json.Json
 
 internal class MediaBrowserClient(
     private val authorizationHeader: String,
-    private val http: HttpClient,
+    private val http: ServerHttp,
 ) {
     val json = Json {
         ignoreUnknownKeys = true
@@ -52,8 +52,9 @@ internal class MediaBrowserClient(
         body: String? = null,
         allowRedirect: Boolean = false,
     ): ApiResponse {
+        val url = buildUrl(baseUrl, path, query)
         val response = try {
-            http.prepareRequest(buildUrl(baseUrl, path, query)) {
+            http.clientFor(url).prepareRequest(url) {
                 this.method = method
                 header("Accept", "application/json")
                 header(authorizationHeader, authorizationValue(token))
@@ -73,6 +74,8 @@ internal class MediaBrowserClient(
         } catch (error: ServerException) {
             throw error
         } catch (_: Exception) {
+            // A handshake the trust glue refused is not "unreachable": the user may be asked to (re-)trust the certificate.
+            http.certificateFailure(url)?.let { throw it }
             throw ServerException(ServerFailure.UNREACHABLE)
         }
         if (allowRedirect && response.status in 300..399) return response
