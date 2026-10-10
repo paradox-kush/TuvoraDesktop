@@ -5,6 +5,7 @@ import com.nuvio.app.features.addons.AddonResource
 import com.nuvio.app.features.addons.buildAddonResourceUrl
 import com.nuvio.app.features.addons.enabledAddons
 import com.nuvio.app.features.addons.fetchAddonResponseText
+import com.nuvio.app.features.servers.ServerItemRef
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -34,6 +35,7 @@ internal fun addonSubtitleRequests(type: String, videoId: String): List<Subtitle
     // Privacy: an IPTV id embeds the playlist key (server/user, M3U URL, MAC). Never send it to an
     // add-on — callers resolve a public id first (AddonSubtitleIdPolicy). Covers Apple TV too.
     if (AddonSubtitleIdPolicy.isProviderScoped(videoId)) return emptyList()
+    if (ServerItemRef.isServerId(videoId)) return emptyList()
     val requestType = canonicalSubtitleType(type)
     return AddonRepository.uiState.value.addons.enabledAddons().mapNotNull { addon ->
         val manifest = addon.manifest ?: return@mapNotNull null

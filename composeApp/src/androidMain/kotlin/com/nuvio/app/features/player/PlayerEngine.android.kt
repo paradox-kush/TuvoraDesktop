@@ -1,5 +1,7 @@
 package com.nuvio.app.features.player
 
+import com.nuvio.app.core.diag.MpvLogLevelPolicy
+import com.nuvio.app.core.diag.LogRedaction
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
@@ -54,8 +56,8 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.TransferListener
-import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.ForwardingRenderer
 import androidx.media3.exoplayer.Renderer
@@ -133,17 +135,13 @@ actual fun PlatformPlayerSurface(
     initialPositionMs: Long?,
     initialPositionRequestKey: String?,
     resizeMode: PlayerResizeMode,
+    videoZoom: VideoZoom,
+    playbackEngine: AndroidPlaybackEngine?,
     useNativeController: Boolean,
-    playerControlsState: PlayerControlsState,
-    onPlayerControlsAction: (PlayerControlsAction) -> Boolean,
-    onPlayerControlsEvent: (String, Double) -> Boolean,
-    onPlayerControlsScrubChange: (Long) -> Boolean,
-    onPlayerControlsScrubFinished: (Long) -> Boolean,
     onInitialPositionHandled: (key: String, handled: Boolean) -> Unit,
     onControllerReady: (PlayerEngineController) -> Unit,
     onSnapshot: (PlayerPlaybackSnapshot) -> Unit,
     onError: (String?) -> Unit,
-    sourceAvailable: Boolean,
 ) {
     val playerSettings = remember {
         PlayerSettingsRepository.ensureLoaded()
@@ -173,8 +171,16 @@ actual fun PlatformPlayerSurface(
     // (Auto -> ExoPlayer); the startup failover below still switches a stream to libmpv if it
     // genuinely cannot sustain on ExoPlayer.
     // ponytail: if a codec class regresses on ExoPlayer, narrow the force back BY CODEC, not by "live".
-    var activeEngine by remember(playerSourceKey, playerSettings.androidPlaybackEngine) {
-        val base = playerSettings.androidPlaybackEngine.initialAndroidEngine()
+    // Upstream "switch player": a per-session override from the player's action row wins over the setting.
+    val requestedEngine = playbackEngine ?: playerSettings.androidPlaybackEngine
+    // F13: the user's live buffer length (null = engine default; VOD and catch-up never get one).
+    val liveBufferPlan = LiveBufferPolicy.planFor(
+        seconds = playerSettings.liveBufferSeconds,
+        isLive = normalizeStreamType(streamType) == "live",
+        isCatchUp = isCatchUpPlayback,
+    )
+    var activeEngine by remember(playerSourceKey, requestedEngine) {
+        val base = requestedEngine.initialAndroidEngine()
         // Fix 2 (telemetry-derived, 2026-08-25): open live on libmpv on the hardware decoders that
         // video-stall on live TS far above the fleet baseline (MediaTek MT8696, Amlogic Onn 4K
         // Streaming Box), even when the resolved engine is ExoPlayer. Live only; device-gated
@@ -205,6 +211,8 @@ actual fun PlatformPlayerSurface(
             initialPositionMs = initialPositionMs,
             initialPositionRequestKey = initialPositionRequestKey,
             resizeMode = resizeMode,
+            videoZoom = videoZoom,
+            liveBufferPlan = liveBufferPlan,
             useNativeController = useNativeController,
             onInitialPositionHandled = onInitialPositionHandled,
             onControllerReady = onControllerReady,
@@ -216,7 +224,7 @@ actual fun PlatformPlayerSurface(
                 // message), so an IPTV token/stream-id failure could never self-heal on Android.
                 // Pass those straight through; keep the engine failover for real playback failures.
                 if (message != null && !linkAuthFailure &&
-                    playerSettings.androidPlaybackEngine == AndroidPlaybackEngine.Auto
+                    requestedEngine == AndroidPlaybackEngine.Auto
                 ) {
                     Log.w(TAG, "ExoPlayer failed; falling back to libmpv: $message")
                     initialPositionRequestKey?.let { key ->
@@ -247,6 +255,8 @@ actual fun PlatformPlayerSurface(
                 modifier = modifier,
                 playWhenReady = playWhenReady,
                 resizeMode = resizeMode,
+                videoZoom = videoZoom,
+                liveBufferPlan = liveBufferPlan,
                 // Routed through the policy: on the live path it downgrades a leaking gpu-next to
                 // gpu (the fence-fd leak fix — see LiveVideoOutputPolicy); off the live path it
                 // passes the user's renderer through unchanged.
@@ -293,6 +303,8 @@ private fun ExoPlayerSurface(
     initialPositionMs: Long?,
     initialPositionRequestKey: String?,
     resizeMode: PlayerResizeMode,
+    videoZoom: VideoZoom,
+    liveBufferPlan: LiveBufferPlan?,
     useNativeController: Boolean,
     onInitialPositionHandled: (key: String, handled: Boolean) -> Unit,
     onControllerReady: (PlayerEngineController) -> Unit,
@@ -384,8 +396,12 @@ private fun ExoPlayerSurface(
         sanitizedSourceResponseHeaders,
         useYoutubeChunkedPlayback,
         externalSubtitles,
+        normalizedStreamType,
+        playerSettings.vodCacheEnabled,
+        playerSettings.vodCacheSizeMode,
+        playerSettings.vodCacheSizeMb,
     ) {
-        PlatformPlaybackDataSourceFactory.create(
+        val upstream = PlatformPlaybackDataSourceFactory.create(
             context = context,
             streamUrl = sourceUrl,
             defaultRequestHeaders = sanitizedSourceHeaders,
@@ -394,6 +410,26 @@ private fun ExoPlayerSurface(
             useLongReadTimeout = isLoopbackPlaybackSource(sourceUrl),
             externalSubtitles = externalSubtitles,
         )
+        val mimeType = playbackMediaItemFromUrl(
+            url = sourceUrl,
+            responseHeaders = sanitizedSourceResponseHeaders,
+            streamType = normalizedStreamType,
+        ).localConfiguration?.mimeType
+        val adaptive = mimeType == MimeTypes.APPLICATION_M3U8 ||
+            mimeType == MimeTypes.APPLICATION_MPD ||
+            mimeType == MimeTypes.APPLICATION_SS
+        if (!playerSettings.vodCacheEnabled || useYoutubeChunkedPlayback || adaptive) {
+            upstream
+        } else {
+            VodCache.wrap(
+                context = context,
+                upstream = upstream,
+                url = sourceUrl,
+                enabled = true,
+                sizeMode = playerSettings.vodCacheSizeMode,
+                sizeMb = playerSettings.vodCacheSizeMb,
+            )
+        }
     }
 
     fun ExoPlayer.setPlaybackMediaItem(videoMediaItem: MediaItem, startPositionMs: Long? = null) {
@@ -423,7 +459,16 @@ private fun ExoPlayerSurface(
         useYoutubeChunkedPlayback,
         effectiveDecoderPriority,
         initialPositionRequestKey,
+        playerSettings.exoNativeMemoryEnabled,
+        playerSettings.bufferEngineEnabled,
+        playerSettings.minBufferMs,
+        playerSettings.maxBufferMs,
+        playerSettings.bufferForPlaybackMs,
+        playerSettings.bufferForPlaybackAfterRebufferMs,
+        playerSettings.backBufferDurationMs,
+        playerSettings.targetBufferSizeMb,
     ) {
+        applyExoPlayerNativeMemory(playerSettings.exoNativeMemoryEnabled)
         val renderersFactory = SubtitleOffsetRenderersFactory(
             context = context,
             subtitleDelayUsProvider = { latestSubtitleDelayMs.value.toLong() * 1_000L },
@@ -431,6 +476,10 @@ private fun ExoPlayerSurface(
                 latestExternalSubtitleMimeType.value == MimeTypes.TEXT_VTT
             },
             shouldStripSdhProvider = { currentSubtitleStyle.stripSdh },
+            // F47: inner horizontal padding inside the cue box (only when a box is drawn).
+            boxPaddingCharsProvider = {
+                if (currentSubtitleStyle.backgroundColor.alpha > 0f) SubtitleBoxPadding.EXO_PAD_CHARS else 0
+            },
             videoBoundsFractionProvider = {
                 playerViewRef?.videoBoundsFraction(latestVideoAspectRatio.value)
             },
@@ -440,20 +489,59 @@ private fun ExoPlayerSurface(
             .setMapDV7ToHevc(playerSettings.mapDV7ToHevc)
 
         val trackSelector = DefaultTrackSelector(context).apply {
-            setParameters(
-                buildUponParameters()
-                    .setAllowInvalidateSelectionsOnRendererCapabilitiesChange(true)
-            )
+            var parameters = buildUponParameters()
+                .setAllowInvalidateSelectionsOnRendererCapabilitiesChange(true)
             if (playerSettings.tunnelingEnabled) {
-                setParameters(buildUponParameters().setTunnelingEnabled(true))
+                parameters = parameters.setTunnelingEnabled(true)
             }
+            val captioningManager = context.getSystemService(Context.CAPTIONING_SERVICE)
+                as? android.view.accessibility.CaptioningManager
+            if (captioningManager != null) {
+                if (!captioningManager.isEnabled) {
+                    parameters = parameters.setIgnoredTextSelectionFlags(
+                        parameters.build().ignoredTextSelectionFlags or C.SELECTION_FLAG_DEFAULT
+                    )
+                }
+                captioningManager.locale?.let { locale ->
+                    parameters = parameters.setPreferredTextLanguage(locale.isO3Language)
+                }
+            }
+            if (playerSettings.subtitleStyle.useForcedSubtitles) {
+                parameters = parameters.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+            } else {
+                parameters = parameters.setIgnoredTextSelectionFlags(
+                    parameters.build().ignoredTextSelectionFlags or C.SELECTION_FLAG_FORCED
+                )
+            }
+            setParameters(parameters)
         }
 
-        val minBufferMs = 15_000
-        val maxBufferMs = 70_000
-        val bufferForPlaybackMs = DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS
-        val bufferForPlaybackAfterRebufferMs = 5_000
-        val loadControl = DefaultLoadControl.Builder()
+        // F13: a live channel with a chosen buffer length uses it (LiveBufferPolicy); otherwise the
+        // tuned defaults. The byte cap below still bounds memory either way.
+        val minBufferMs = liveBufferPlan?.minBufferMs ?: 15_000
+        val maxBufferMs = liveBufferPlan?.maxBufferMs ?: 70_000
+        val bufferForPlaybackMs = liveBufferPlan?.startMs ?: DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS
+        val bufferForPlaybackAfterRebufferMs = liveBufferPlan?.rebufferMs ?: 5_000
+        // Merge 13 (upstream 36228818b): the user-facing buffer engine / native-memory toggles drive
+        // upstream's NuvioExoPlayerPerformanceHelper, but only when the user opted in and this is not a
+        // live channel with its own F13 plan. Both default OFF, so the fork's heap-capped load control
+        // below stays the default.
+        val useUpstreamLoadControl = liveBufferPlan == null &&
+            (playerSettings.bufferEngineEnabled || playerSettings.exoNativeMemoryEnabled)
+        val loadControl = if (useUpstreamLoadControl) {
+            NuvioExoPlayerPerformanceHelper.buildLoadControl(
+                context,
+                PlaybackBufferSettings(
+                    enabled = playerSettings.bufferEngineEnabled,
+                    minBufferMs = playerSettings.minBufferMs,
+                    maxBufferMs = playerSettings.maxBufferMs,
+                    bufferForPlaybackMs = playerSettings.bufferForPlaybackMs,
+                    bufferForPlaybackAfterRebufferMs = playerSettings.bufferForPlaybackAfterRebufferMs,
+                    backBufferDurationMs = playerSettings.backBufferDurationMs,
+                    targetBufferSizeMb = playerSettings.targetBufferSizeMb,
+                ),
+            )
+        } else DefaultLoadControl.Builder()
             .setTargetBufferBytes(playerTargetBufferBytes())
             // Pinned to media3 1.8.0's default, because the heap/4 byte cap above only bounds
             // memory while it holds: shouldContinueLoading keeps loading below minBufferMs
@@ -798,6 +886,32 @@ private fun ExoPlayerSurface(
             lifecycleOwner.lifecycle.removeObserver(observer)
             playerViewRef?.releaseLibassOverlay()
             exoPlayer.releaseWithAssSupportCompat()
+            if (VodCache.playheadBytesProvider != null) {
+                VodCache.playheadBytesProvider = null
+            }
+            VodCache.evictCachedSession()
+        }
+    }
+
+    DisposableEffect(exoPlayer, playerSettings.vodCacheEnabled) {
+        if (!playerSettings.vodCacheEnabled) {
+            return@DisposableEffect onDispose { }
+        }
+        val provider = {
+            val duration = exoPlayer.duration
+            val position = exoPlayer.currentPosition
+            val bitrate = exoPlayer.videoFormat?.bitrate ?: 0
+            if (duration > 0L && position > 0L && bitrate > 0) {
+                position * bitrate.toLong() / 8_000L
+            } else {
+                0L
+            }
+        }
+        VodCache.playheadBytesProvider = provider
+        onDispose {
+            if (VodCache.playheadBytesProvider === provider) {
+                VodCache.playheadBytesProvider = null
+            }
         }
     }
 
@@ -810,6 +924,8 @@ private fun ExoPlayerSurface(
     LaunchedEffect(exoPlayer) {
         onControllerReady(
             object : PlayerEngineController {
+                override val playbackEngine = AndroidPlaybackEngine.ExoPlayer
+
                 override fun play() {
                     exoPlayer.playWhenReady = true
                     exoPlayer.play()
@@ -908,7 +1024,7 @@ private fun ExoPlayerSurface(
                 }
 
                 override fun setSubtitleUri(url: String) {
-                    Log.d(TAG, "setSubtitleUri: url=$url")
+                    Log.d(TAG, "setSubtitleUri: url=${LogRedaction.url(url)}")
                     subtitleSelectionJob?.cancel()
                     subtitleSelectionJob = coroutineScope.launch {
                         val currentPosition = exoPlayer.currentPosition
@@ -928,7 +1044,7 @@ private fun ExoPlayerSurface(
                             .build()
                         Log.d(
                             TAG,
-                            "setSubtitleUri: subtitleConfig built, uri=${subtitleConfig.uri}, mime=${subtitleConfig.mimeType}, selectionFlags=${subtitleConfig.selectionFlags}"
+                            "setSubtitleUri: subtitleConfig built, uri=${LogRedaction.url(subtitleConfig.uri.toString())}, mime=${subtitleConfig.mimeType}, selectionFlags=${subtitleConfig.selectionFlags}"
                         )
                         val newMediaItem = currentMediaItem.buildUpon()
                             .setSubtitleConfigurations(listOf(subtitleConfig))
@@ -984,7 +1100,7 @@ private fun ExoPlayerSurface(
                     Log.d(TAG, "clearExternalSubtitleAndSelect: done, pending=$trackIndex position=$currentPosition")
                 }
 
-                override fun applySubtitleStyle(style: SubtitleStyleState, useLibass: Boolean) {
+                override fun applySubtitleStyle(style: SubtitleStyleState) {
                     currentSubtitleStyle = style
                     playerViewRef?.applySubtitleStyle(style, pipSubtitleScale)
                 }
@@ -1020,6 +1136,7 @@ private fun ExoPlayerSurface(
                     renderType = libassRenderType,
                 )
                 applySubtitleStyle(currentSubtitleStyle, pipSubtitleScale)
+                applyVideoZoom(videoZoom)
             }
         },
         update = { playerView ->
@@ -1034,6 +1151,7 @@ private fun ExoPlayerSurface(
                 renderType = libassRenderType,
             )
             playerView.applySubtitleStyle(currentSubtitleStyle, pipSubtitleScale)
+            playerView.applyVideoZoom(videoZoom)
         },
     )
 }
@@ -1052,6 +1170,8 @@ private fun LibmpvPlayerSurface(
     modifier: Modifier,
     playWhenReady: Boolean,
     resizeMode: PlayerResizeMode,
+    videoZoom: VideoZoom,
+    liveBufferPlan: LiveBufferPlan?,
     /** Already resolved by [LiveVideoOutputPolicy]: gpu on the live path, else the user's renderer. */
     videoOutput: String,
     hardwareDecodingEnabled: Boolean,
@@ -1293,6 +1413,14 @@ private fun LibmpvPlayerSurface(
         playerViewRef?.applyResizeMode(resizeMode)
     }
 
+    LaunchedEffect(playerViewRef, videoZoom) {
+        playerViewRef?.applyVideoZoom(videoZoom)
+    }
+
+    LaunchedEffect(playerViewRef, liveBufferPlan) {
+        liveBufferPlan?.let { plan -> playerViewRef?.applyLiveBuffer(plan) }
+    }
+
     LaunchedEffect(playerViewRef, sourceUrl, sourceAudioUrl, sanitizedSourceHeaders, externalSubtitles) {
         val view = playerViewRef ?: return@LaunchedEffect
         onControllerReady(view.controller(context, nowPlayingController))
@@ -1335,6 +1463,7 @@ private fun LibmpvPlayerSurface(
             view.isLiveStream = isLiveStream
             view.playWhenReadyIntent = playWhenReady
             view.applyResizeMode(resizeMode)
+            view.applyVideoZoom(videoZoom)
         },
         onRelease = { view ->
             if (playerViewRef === view) playerViewRef = null
@@ -1553,7 +1682,9 @@ private class NuvioLibmpvView(
     // getPropertyBoolean → pthread_cond_wait while exiting a live stream).
     @Volatile private var obsPaused = true
     @Volatile private var obsPausedForCache = false
-    @Volatile private var obsCoreIdle = false
+    // Idle until mpv says otherwise (iOS MPVPropertyShadow does the same): starting "busy" made a
+    // not-yet-loaded file read as playing the moment setPaused(false) echoed into the shadow.
+    @Volatile private var obsCoreIdle = true
     @Volatile private var obsEofReached = false
     @Volatile private var obsSeeking = false
     @Volatile private var obsCacheBufferingState: Int? = null
@@ -1603,7 +1734,7 @@ private class NuvioLibmpvView(
             when (property) {
                 "pause" -> obsPaused = true
                 "paused-for-cache" -> obsPausedForCache = false
-                "core-idle" -> obsCoreIdle = false
+                "core-idle" -> obsCoreIdle = true
                 "eof-reached" -> obsEofReached = false
                 "seeking" -> obsSeeking = false
                 "cache-buffering-state" -> obsCacheBufferingState = null
@@ -1742,7 +1873,9 @@ private class NuvioLibmpvView(
         if (yuv420pEnabled) {
             mpv.setOptionString("vf", "format=yuv420p")
         }
-        mpv.setOptionString("msg-level", "all=warn")
+        // B116: libmpv's native layer prints every delivered log line straight to logcat (unredactable);
+        // modules that format URLs ("Failed to open <url>.") stay silent. See MpvLogLevelPolicy.
+        mpv.setOptionString("msg-level", MpvLogLevelPolicy.MSG_LEVEL)
         // The app supplies its own controls; avoid loading mpv's built-in Lua console and its
         // extra interpreter state (also present in the native tombstones seen in production).
         mpv.setOptionString("load-console", "no")
@@ -1932,10 +2065,30 @@ private class NuvioLibmpvView(
         return snapshot.isPlaying || snapshot.isLoading
     }
 
+    @Volatile private var appliedVideoZoom: VideoZoom? = null
+
+    /** F13: cache cap + rebuffer cushion for a live channel (runtime-settable mpv options). */
+    fun applyLiveBuffer(plan: LiveBufferPlan) = ctl {
+        LiveBufferPolicy.mpvProperties(plan).forEach { (name, value) ->
+            runCatching { mpv.setPropertyString(name, value) }
+        }
+    }
+
+    /** F36: video-scale-x/y + video-pan-x/y on the control thread (never mpv on Main). */
+    fun applyVideoZoom(zoom: VideoZoom) {
+        val normalized = VideoZoomPolicy.normalize(zoom)
+        if (appliedVideoZoom == normalized) return
+        appliedVideoZoom = normalized
+        ctl {
+            VideoZoomPolicy.mpvProperties(normalized).forEach { (name, value) ->
+                runCatching { mpv.setPropertyString(name, value) }
+            }
+        }
+    }
+
     fun applyResizeMode(resizeMode: PlayerResizeMode) = ctl {
         when (resizeMode) {
-            PlayerResizeMode.Fit,
-            PlayerResizeMode.Stretch -> {
+            PlayerResizeMode.Fit -> {
                 mpv.setPropertyDouble("panscan", 0.0)
                 mpv.setPropertyString("video-aspect-override", "no")
             }
@@ -2000,6 +2153,8 @@ private class NuvioLibmpvView(
         nowPlayingController: AndroidPlayerNowPlayingController?,
     ): PlayerEngineController =
         object : PlayerEngineController {
+            override val playbackEngine = AndroidPlaybackEngine.Libmpv
+
             override fun play() = setPaused(false)
 
             override fun pause() = setPaused(true)
@@ -2142,22 +2297,21 @@ private class NuvioLibmpvView(
                 }
             }
 
-            override fun applySubtitleStyle(style: SubtitleStyleState, useLibass: Boolean) = ctl {
-                if (useLibass) {
-                    mpv.setPropertyString("sub-ass-override", "no")
-                } else {
-                    mpv.setPropertyString("sub-ass-override", "force")
-                    mpv.setPropertyString("sub-color", style.textColor.toMpvColor())
-                    mpv.setPropertyString("sub-back-color", style.backgroundColor.toMpvColor())
-                    mpv.setPropertyString("sub-outline-color", style.outlineColor.toMpvColor())
-                    mpv.setPropertyString("sub-border-color", style.outlineColor.toMpvColor())
-                    mpv.setPropertyString("sub-border-style", style.toMpvSubtitleBorderStyle())
-                    mpv.setPropertyString("sub-bold", if (style.bold) "yes" else "no")
-                    mpv.setPropertyInt("sub-font-size", style.toMpvSubtitleFontSize())
-                    mpv.setPropertyInt("sub-outline-size", style.toMpvSubtitleOutlineSize())
-                    mpv.setPropertyInt("sub-border-size", style.toMpvSubtitleOutlineSize())
-                    mpv.setPropertyInt("sub-pos", (100 - style.bottomOffset / 10).coerceIn(0, 100))
-                }
+            override fun applySubtitleStyle(style: SubtitleStyleState) = ctl {
+                mpv.setPropertyString("sub-ass-override", "no")
+                mpv.setPropertyString("sub-color", style.textColor.toMpvColor())
+                mpv.setPropertyString("sub-bold", if (style.bold) "yes" else "no")
+                mpv.setPropertyInt("sub-font-size", style.toMpvSubtitleFontSize())
+                // UX61/F47: box, outline and side padding from the shared mapping (background-box, not
+                // opaque-box, so the "dim" alpha is honoured; the box also shows with the outline on).
+                SubtitleStyleMpvMapping.properties(
+                    backgroundColorHex = style.backgroundColor.toMpvColor(),
+                    backgroundAlpha = style.backgroundColor.alpha,
+                    outlineColorHex = style.outlineColor.toMpvColor(),
+                    outlineSize = style.toMpvSubtitleOutlineSize().toDouble(),
+                    sideMarginPercent = style.sideMarginPercent,
+                ).forEach { (name, value) -> runCatching { mpv.setPropertyString(name, value) } }
+                mpv.setPropertyInt("sub-pos", (100 - style.bottomOffset / 10).coerceIn(0, 100))
                 mpv.setPropertyBoolean("sub-filter-sdh", style.stripSdh)
                 mpv.setPropertyBoolean("sub-filter-sdh-harder", style.stripSdh)
             }
@@ -2320,9 +2474,6 @@ private fun androidx.compose.ui.graphics.Color.toMpvColor(): String {
     return "#%02X%02X%02X%02X".format(alpha, red, green, blue)
 }
 
-private fun androidx.compose.ui.graphics.Color.alphaByte(): Int =
-    (toArgb() ushr 24) and 0xff
-
 private fun SubtitleStyleState.toMpvSubtitleFontSize(): Int =
     (fontSizeSp * MPV_SUBTITLE_FONT_SIZE_SCALE).toInt().coerceIn(
         MPV_SUBTITLE_FONT_SIZE_MIN,
@@ -2331,15 +2482,6 @@ private fun SubtitleStyleState.toMpvSubtitleFontSize(): Int =
 
 private fun SubtitleStyleState.toMpvSubtitleOutlineSize(): Int =
     if (!outlineEnabled) 0 else (outlineWidth * MPV_SUBTITLE_OUTLINE_SIZE_SCALE).toInt().coerceAtLeast(1)
-
-private fun SubtitleStyleState.toMpvSubtitleBorderStyle(): String =
-    if (outlineEnabled) {
-        "outline-and-shadow"
-    } else if (backgroundColor.alphaByte() > 0) {
-        "opaque-box"
-    } else {
-        "outline-and-shadow"
-    }
 
 private const val MPV_SUBTITLE_FONT_SIZE_SCALE = 55.0 / 18.0
 private const val MPV_SUBTITLE_FONT_SIZE_MIN = 36
@@ -2494,7 +2636,6 @@ private fun PlayerResizeMode.toExoResizeMode(): Int =
         PlayerResizeMode.Fit -> AspectRatioFrameLayout.RESIZE_MODE_FIT
         PlayerResizeMode.Fill -> AspectRatioFrameLayout.RESIZE_MODE_FILL
         PlayerResizeMode.Zoom -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-        PlayerResizeMode.Stretch -> AspectRatioFrameLayout.RESIZE_MODE_FIT
     }
 
 private fun PlayerView.syncLibassOverlay(
@@ -2564,7 +2705,78 @@ private fun android.widget.FrameLayout.removeAssOverlayChildren() {
     }
 }
 
+/**
+ * F36 on ExoPlayer: scale/translate the video SurfaceView. Since Android N a SurfaceView honours its
+ * view transform (AOSP SurfaceView class docs), so no TextureView is needed. The surface is scaled,
+ * not the content frame, because the SubtitleView lives in that frame and must not zoom with the
+ * picture; the frame stops clipping so a widened 4:3 picture can grow into the letterbox bars, and
+ * the PlayerView (screen bounds) still clips. Re-applied on layout: the pan is a fraction of the size.
+ */
+private fun PlayerView.applyVideoZoom(zoom: VideoZoom) {
+    val surface = videoSurfaceView ?: return
+    val normalized = VideoZoomPolicy.normalize(zoom)
+    (surface.parent as? android.view.ViewGroup)?.clipChildren = normalized == VideoZoom.IDENTITY
+    val listener = zoomListeners.getOrPut(surface) {
+        ZoomLayoutListener().also(surface::addOnLayoutChangeListener)
+    }
+    listener.zoom = normalized
+    listener.apply(surface)
+}
+
+/** Keeps the zoom transform in step with the surface size; state lives here, not in view tags. */
+private class ZoomLayoutListener : android.view.View.OnLayoutChangeListener {
+    var zoom: VideoZoom = VideoZoom.IDENTITY
+
+    fun apply(view: android.view.View) {
+        val t = VideoZoomPolicy.surfaceTransform(zoom, view.width, view.height)
+        if (view.width > 0) view.pivotX = view.width / 2f
+        if (view.height > 0) view.pivotY = view.height / 2f
+        view.scaleX = t.scaleX
+        view.scaleY = t.scaleY
+        view.translationX = t.translationX
+        view.translationY = t.translationY
+    }
+
+    override fun onLayoutChange(
+        v: android.view.View, left: Int, top: Int, right: Int, bottom: Int,
+        oldLeft: Int, oldTop: Int, oldRight: Int, oldBottom: Int,
+    ) = apply(v)
+}
+
+/** F47 side padding on ExoPlayer's SubtitleView, kept in step with its width. */
+private class SubtitleMarginListener : android.view.View.OnLayoutChangeListener {
+    var percent: Int = 0
+
+    fun apply(view: android.view.View) {
+        val pad = SubtitleSideMargin.paddingPx(view.width, percent)
+        if (view.paddingLeft != pad || view.paddingRight != pad) {
+            view.setPadding(pad, view.paddingTop, pad, view.paddingBottom)
+        }
+    }
+
+    override fun onLayoutChange(
+        v: android.view.View, left: Int, top: Int, right: Int, bottom: Int,
+        oldLeft: Int, oldTop: Int, oldRight: Int, oldBottom: Int,
+    ) {
+        // Padding changes re-layout; only react to a width change, posted to avoid a layout loop.
+        if (right - left != oldRight - oldLeft) v.post { apply(v) }
+    }
+}
+
+// Main-thread only (View callbacks); weak keys so a released PlayerView is not kept alive.
+private val zoomListeners = java.util.WeakHashMap<android.view.View, ZoomLayoutListener>()
+private val subtitleMarginListeners = java.util.WeakHashMap<android.view.View, SubtitleMarginListener>()
+
+private fun SubtitleView.applySideMargin(sideMarginPercent: Int) {
+    val listener = subtitleMarginListeners.getOrPut(this) {
+        SubtitleMarginListener().also(::addOnLayoutChangeListener)
+    }
+    listener.percent = sideMarginPercent
+    listener.apply(this)
+}
+
 private fun PlayerView.applySubtitleStyle(style: SubtitleStyleState, pipScale: Float = 1.0f) {
+    subtitleView?.applySideMargin(style.sideMarginPercent)
     subtitleView?.apply {
         val baseBottomPaddingFraction = SubtitleView.DEFAULT_BOTTOM_PADDING_FRACTION * 2f / 3f
         val offsetFraction = (style.bottomOffset / 1000f).coerceIn(0f, 0.2f)
@@ -2574,10 +2786,13 @@ private fun PlayerView.applySubtitleStyle(style: SubtitleStyleState, pipScale: F
         setApplyEmbeddedFontSizes(false)
         setBottomPaddingFraction(bottomPaddingFraction)
         setStyle(
+            // F47: the background is drawn as ONE box per cue (window colour, inner horizontal
+            // padding built in + SubtitleBoxPadding), like libmpv's background-box — not as tight
+            // per-line strips. Media3 draws it with square corners; it has no corner radius.
             CaptionStyleCompat(
                 style.textColor.toArgb(),
-                style.backgroundColor.toArgb(),
                 android.graphics.Color.TRANSPARENT,
+                style.backgroundColor.toArgb(),
                 if (style.outlineEnabled) CaptionStyleCompat.EDGE_TYPE_OUTLINE else CaptionStyleCompat.EDGE_TYPE_NONE,
                 style.outlineColor.toArgb(),
                 if (style.bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT,
@@ -2784,6 +2999,7 @@ private class SubtitleOffsetRenderersFactory(
     private val subtitleDelayUsProvider: () -> Long,
     private val shouldNormalizeCuePositionProvider: () -> Boolean,
     private val shouldStripSdhProvider: () -> Boolean,
+    private val boxPaddingCharsProvider: () -> Int,
     private val videoBoundsFractionProvider: () -> RectF?,
 ) : DefaultRenderersFactory(context) {
     override fun buildTextRenderers(
@@ -2797,6 +3013,7 @@ private class SubtitleOffsetRenderersFactory(
             delegate = output,
             shouldNormalizeCuePositionProvider = shouldNormalizeCuePositionProvider,
             shouldStripSdhProvider = shouldStripSdhProvider,
+            boxPaddingCharsProvider = boxPaddingCharsProvider,
             videoBoundsFractionProvider = videoBoundsFractionProvider,
         )
         val startIndex = out.size
@@ -2814,6 +3031,7 @@ private class CueNormalizingTextOutput(
     private val delegate: TextOutput,
     private val shouldNormalizeCuePositionProvider: () -> Boolean,
     private val shouldStripSdhProvider: () -> Boolean,
+    private val boxPaddingCharsProvider: () -> Int,
     private val videoBoundsFractionProvider: () -> RectF?,
 ) : TextOutput {
     override fun onCues(cueGroup: CueGroup) {
@@ -2837,6 +3055,13 @@ private class CueNormalizingTextOutput(
         }
         if (shouldNormalizeCuePositionProvider()) {
             processed = normalizeCuePosition(processed)
+        }
+        val padChars = boxPaddingCharsProvider()
+        if (padChars > 0 && processed.bitmap == null) {
+            val text = processed.text?.toString()
+            if (!text.isNullOrEmpty()) {
+                processed = processed.buildUpon().setText(SubtitleBoxPadding.padLines(text, padChars)).build()
+            }
         }
         if (processed.bitmap != null) {
             val bounds = videoBoundsFractionProvider()
@@ -2943,8 +3168,9 @@ private fun isLoopbackPlaybackSource(value: String): Boolean = runCatching {
     }
 }.getOrDefault(false)
 
+// B116: mpv/ExoPlayer messages and error chains embed request URLs (credentials included).
 private fun diagnosticPlayerMessage(value: String?): String =
-    value?.replace('\n', ' ')?.replace('\r', ' ')?.take(160) ?: "none"
+    value?.let(LogRedaction::text)?.replace('\n', ' ')?.replace('\r', ' ')?.take(160) ?: "none"
 
 private fun diagnosticThrowableChain(value: Throwable): String =
     generateSequence(value) { it.cause }

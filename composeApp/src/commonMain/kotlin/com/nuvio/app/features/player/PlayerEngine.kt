@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 
 interface PlayerEngineController {
+    val playbackEngine: AndroidPlaybackEngine? get() = null
     fun play()
     fun pause()
     fun seekTo(positionMs: Long)
@@ -71,6 +72,8 @@ interface PlayerEngineController {
     ) {
         onReleased()
     }
+
+    suspend fun getMediaInfo(): PlayerMediaInfo = PlayerMediaInfo()
 }
 
 enum class PlayerControlsAction {
@@ -432,6 +435,7 @@ expect fun PlatformPlayerSurface(
     resizeMode: PlayerResizeMode = PlayerResizeMode.Fit,
     /** F36 manual zoom on top of [resizeMode] — see [VideoZoomPolicy] for how each engine applies it. */
     videoZoom: VideoZoom = VideoZoom.IDENTITY,
+    playbackEngine: AndroidPlaybackEngine? = null,
     useNativeController: Boolean = false,
     playerControlsState: PlayerControlsState = PlayerControlsState(),
     onPlayerControlsAction: (PlayerControlsAction) -> Boolean = { false },

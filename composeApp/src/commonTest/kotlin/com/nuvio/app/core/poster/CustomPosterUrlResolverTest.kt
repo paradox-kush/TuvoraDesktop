@@ -421,13 +421,15 @@ class CustomPosterUrlResolverTest {
     }
 
     @Test
-    fun resolve_pattern_without_any_placeholders_returns_as_is() {
+    fun resolve_pattern_without_any_placeholders_is_rejected() {
+        // Upstream 6ce99ef25: a pattern with no placeholder is not a valid custom-poster pattern.
+        // (Upstream's own test still asserted "returns as is" - fails on pristine origin/Dev at the same line.)
         val ids = CustomPosterUrlResolver.extractIds("tt0137523")
         val url = CustomPosterUrlResolver.resolve(
             "https://example.com/static-poster.jpg",
             ids, "movie"
         )
-        assertEquals("https://example.com/static-poster.jpg", url)
+        assertNull(url)
     }
 
     @Test

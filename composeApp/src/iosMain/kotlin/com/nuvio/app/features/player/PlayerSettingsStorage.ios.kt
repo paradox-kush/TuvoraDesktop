@@ -26,6 +26,11 @@ actual object PlayerSettingsStorage {
     private const val showParentalGuideKey = "show_parental_guide"
     private const val showStreamInfoKey = "show_stream_info"
     private const val resizeModeKey = "resize_mode"
+    // Device-local (not in syncKeys): see PlayerSettingsUiState.rememberPlayerPreferences.
+    private const val rememberPlayerPreferencesKey = "remember_player_preferences"
+    private const val subtitleSideMarginPercentKey = "subtitle_side_margin_percent"
+    // F13: device-local like the other buffer/engine choices (network- and device-dependent).
+    private const val liveBufferSecondsKey = "live_buffer_seconds"
     private const val holdToSpeedEnabledKey = "hold_to_speed_enabled"
     private const val holdToSpeedValueKey = "hold_to_speed_value"
     private const val touchGesturesEnabledKey = "touch_gestures_enabled"
@@ -57,6 +62,17 @@ actual object PlayerSettingsStorage {
     private const val decoderPriorityKey = "decoder_priority"
     private const val mapDV7ToHevcKey = "map_dv7_to_hevc"
     private const val tunnelingEnabledKey = "tunneling_enabled"
+    private const val exoNativeMemoryEnabledKey = "exo_native_memory_enabled"
+    private const val vodCacheEnabledKey = "vod_cache_enabled"
+    private const val vodCacheSizeModeKey = "vod_cache_size_mode"
+    private const val vodCacheSizeMbKey = "vod_cache_size_mb"
+    private const val bufferEngineEnabledKey = "buffer_engine_enabled"
+    private const val minBufferMsKey = "min_buffer_ms"
+    private const val maxBufferMsKey = "max_buffer_ms"
+    private const val bufferForPlaybackMsKey = "buffer_for_playback_ms"
+    private const val bufferForPlaybackAfterRebufferMsKey = "buffer_for_playback_after_rebuffer_ms"
+    private const val backBufferDurationMsKey = "back_buffer_duration_ms"
+    private const val targetBufferSizeMbKey = "target_buffer_size_mb"
     private const val streamAutoPlayModeKey = "stream_auto_play_mode"
     private const val streamAutoPlaySourceKey = "stream_auto_play_source"
     private const val streamAutoPlaySelectedAddonsKey = "stream_auto_play_selected_addons"
@@ -298,6 +314,36 @@ actual object PlayerSettingsStorage {
 
     actual fun saveResizeMode(mode: String) {
         NSUserDefaults.standardUserDefaults.setObject(mode, forKey = ProfileScopedKey.of(resizeModeKey))
+    }
+
+    actual fun loadRememberPlayerPreferences(): Boolean? {
+        val defaults = NSUserDefaults.standardUserDefaults
+        val key = ProfileScopedKey.of(rememberPlayerPreferencesKey)
+        return if (defaults.objectForKey(key) != null) defaults.boolForKey(key) else null
+    }
+
+    actual fun saveRememberPlayerPreferences(enabled: Boolean) {
+        NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = ProfileScopedKey.of(rememberPlayerPreferencesKey))
+    }
+
+    actual fun loadLiveBufferSeconds(): Int? {
+        val defaults = NSUserDefaults.standardUserDefaults
+        val key = ProfileScopedKey.of(liveBufferSecondsKey)
+        return if (defaults.objectForKey(key) != null) defaults.integerForKey(key).toInt() else null
+    }
+
+    actual fun saveLiveBufferSeconds(seconds: Int) {
+        NSUserDefaults.standardUserDefaults.setInteger(seconds.toLong(), forKey = ProfileScopedKey.of(liveBufferSecondsKey))
+    }
+
+    actual fun loadSubtitleSideMarginPercent(): Int? {
+        val defaults = NSUserDefaults.standardUserDefaults
+        val key = ProfileScopedKey.of(subtitleSideMarginPercentKey)
+        return if (defaults.objectForKey(key) != null) defaults.integerForKey(key).toInt() else null
+    }
+
+    actual fun saveSubtitleSideMarginPercent(percent: Int) {
+        NSUserDefaults.standardUserDefaults.setInteger(percent.toLong(), forKey = ProfileScopedKey.of(subtitleSideMarginPercentKey))
     }
 
     actual fun loadHoldToSpeedEnabled(): Boolean? {
@@ -657,6 +703,61 @@ actual object PlayerSettingsStorage {
     actual fun saveTunnelingEnabled(enabled: Boolean) {
         NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = ProfileScopedKey.of(tunnelingEnabledKey))
     }
+
+    actual fun loadExoNativeMemoryEnabled(): Boolean? = loadBoolean(exoNativeMemoryEnabledKey)
+
+    actual fun saveExoNativeMemoryEnabled(enabled: Boolean) {
+        saveBoolean(exoNativeMemoryEnabledKey, enabled)
+    }
+
+    actual fun loadVodCacheEnabled(): Boolean? = loadBoolean(vodCacheEnabledKey)
+
+    actual fun saveVodCacheEnabled(enabled: Boolean) {
+        saveBoolean(vodCacheEnabledKey, enabled)
+    }
+
+    actual fun loadVodCacheSizeMode(): String? =
+        NSUserDefaults.standardUserDefaults.stringForKey(ProfileScopedKey.of(vodCacheSizeModeKey))
+
+    actual fun saveVodCacheSizeMode(mode: String) {
+        NSUserDefaults.standardUserDefaults.setObject(mode, forKey = ProfileScopedKey.of(vodCacheSizeModeKey))
+    }
+
+    actual fun loadVodCacheSizeMb(): Int? = loadInt(vodCacheSizeMbKey)
+
+    actual fun saveVodCacheSizeMb(sizeMb: Int) {
+        saveInt(vodCacheSizeMbKey, sizeMb)
+    }
+
+    actual fun loadBufferEngineEnabled(): Boolean? = loadBoolean(bufferEngineEnabledKey)
+
+    actual fun saveBufferEngineEnabled(enabled: Boolean) {
+        saveBoolean(bufferEngineEnabledKey, enabled)
+    }
+
+    actual fun loadMinBufferMs(): Int? = loadInt(minBufferMsKey)
+
+    actual fun saveMinBufferMs(value: Int) = saveInt(minBufferMsKey, value)
+
+    actual fun loadMaxBufferMs(): Int? = loadInt(maxBufferMsKey)
+
+    actual fun saveMaxBufferMs(value: Int) = saveInt(maxBufferMsKey, value)
+
+    actual fun loadBufferForPlaybackMs(): Int? = loadInt(bufferForPlaybackMsKey)
+
+    actual fun saveBufferForPlaybackMs(value: Int) = saveInt(bufferForPlaybackMsKey, value)
+
+    actual fun loadBufferForPlaybackAfterRebufferMs(): Int? = loadInt(bufferForPlaybackAfterRebufferMsKey)
+
+    actual fun saveBufferForPlaybackAfterRebufferMs(value: Int) = saveInt(bufferForPlaybackAfterRebufferMsKey, value)
+
+    actual fun loadBackBufferDurationMs(): Int? = loadInt(backBufferDurationMsKey)
+
+    actual fun saveBackBufferDurationMs(value: Int) = saveInt(backBufferDurationMsKey, value)
+
+    actual fun loadTargetBufferSizeMb(): Int? = loadInt(targetBufferSizeMbKey)
+
+    actual fun saveTargetBufferSizeMb(value: Int) = saveInt(targetBufferSizeMbKey, value)
 
     actual fun loadStreamAutoPlayMode(): String? {
         val defaults = NSUserDefaults.standardUserDefaults

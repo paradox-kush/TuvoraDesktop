@@ -55,6 +55,7 @@ actual fun PlatformPlayerSurface(
     initialPositionRequestKey: String?,
     resizeMode: PlayerResizeMode,
     videoZoom: VideoZoom,
+    playbackEngine: com.nuvio.app.features.player.AndroidPlaybackEngine?,
     useNativeController: Boolean,
     playerControlsState: PlayerControlsState,
     onPlayerControlsAction: (PlayerControlsAction) -> Boolean,

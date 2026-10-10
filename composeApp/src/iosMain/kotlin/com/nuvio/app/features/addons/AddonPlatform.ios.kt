@@ -127,7 +127,8 @@ private val addonStreamHttpClient = HttpClient(Darwin) {
  * checks only the DECLARED length rather than reading incrementally, because doing the read by
  * hand would mean re-implementing [bodyAsText]'s charset handling and risking a regression on
  * the panels that answer in something other than UTF-8. Worth noting the declared length can be
- * the compressed size on a gzipped response, so this bounds the obvious cases, not every case.
+ * the compressed size on a gzipped response, so this bounds the obvious cases, not every case;
+ * iOS also has far more headroom than ART's fixed heap ceiling, which is where the crash lived.
  */
 private suspend fun HttpResponse.bodyAsBoundedText(): String {
     val declaredLength = contentLength() ?: -1L
@@ -144,20 +145,33 @@ private suspend fun HttpResponse.bodyAsBoundedText(): String {
 // per-playlist DoH resolver can't be installed on iOS. It's ignored here (the settings form already
 // tells the user "Android only — iOS ignores this setting").
 actual suspend fun httpGetText(url: String, dnsProvider: String?): String =
-    addonHttpClient
-        .get(url) {
-            accept(ContentType.Application.Json)
+    getTextAttempt(url) {
+        accept(ContentType.Application.Json)
+    }
+
+/**
+ * GET [url] as text, split into the two phases a failover race needs (Step 0.3b): the STATUS is checked
+ * and `signalHttpHeaders()` called before the body is read, so a racing attempt that lost never downloads
+ * (or even starts reading) a body. Cancelling the calling coroutine cancels the NSURLSessionTask (Ktor
+ * Darwin: `callContext.job.invokeOnCompletion { task.cancel() }`). Outside a race both calls are no-ops
+ * and this behaves exactly like the plain `get`.
+ *
+ * Note for the race: Ktor Darwin completes its response when the FIRST BODY CHUNK (or the end of the
+ * response) arrives, not at the status line, and has no connect-only timeout (URLSession's timeout is an
+ * idle timer) — so on iOS "headers" means first byte and `connectTimeoutMs` is not applied.
+ */
+private suspend fun getTextAttempt(url: String, extra: io.ktor.client.request.HttpRequestBuilder.() -> Unit): String =
+    addonHttpClient.prepareGet(url) { extra() }.execute { response ->
+        if (!response.status.isSuccess()) {
+            throw HttpStatusException(response.status.value, runBlocking { getString(Res.string.network_request_failed_http, response.status.value) })
         }
-        .let { response ->
-            val payload = response.bodyAsBoundedText()
-            if (!response.status.isSuccess()) {
-                error(runBlocking { getString(Res.string.network_request_failed_http, response.status.value) })
-            }
-            if (payload.isBlank()) {
-                throw EmptyResponseBodyException(runBlocking { getString(Res.string.network_empty_response_body) })
-            }
-            payload
+        signalHttpHeaders()
+        val payload = response.bodyAsBoundedText()
+        if (payload.isBlank()) {
+            throw EmptyResponseBodyException(runBlocking { getString(Res.string.network_empty_response_body) })
         }
+        payload
+    }
 
 actual suspend fun httpPostJson(url: String, body: String): String =
     addonHttpClient
@@ -169,7 +183,7 @@ actual suspend fun httpPostJson(url: String, body: String): String =
         .let { response ->
             val payload = response.bodyAsBoundedText()
             if (!response.status.isSuccess()) {
-                error(runBlocking { getString(Res.string.network_request_failed_http, response.status.value) })
+                throw HttpStatusException(response.status.value, runBlocking { getString(Res.string.network_request_failed_http, response.status.value) })
             }
             if (payload.isBlank()) {
                 throw EmptyResponseBodyException(runBlocking { getString(Res.string.network_empty_response_body) })
@@ -183,23 +197,12 @@ actual suspend fun httpGetTextWithHeaders(
     headers: Map<String, String>,
     dnsProvider: String?,
 ): String =
-    addonHttpClient
-        .get(url) {
-            accept(ContentType.Application.Json)
-            headers.forEach { (key, value) ->
-                header(key, value)
-            }
+    getTextAttempt(url) {
+        accept(ContentType.Application.Json)
+        headers.forEach { (key, value) ->
+            header(key, value)
         }
-        .let { response ->
-            val payload = response.bodyAsBoundedText()
-            if (!response.status.isSuccess()) {
-                error(runBlocking { getString(Res.string.network_request_failed_http, response.status.value) })
-            }
-            if (payload.isBlank()) {
-                throw EmptyResponseBodyException(runBlocking { getString(Res.string.network_empty_response_body) })
-            }
-            payload
-        }
+    }
 
 actual suspend fun httpPostJsonWithHeaders(
     url: String,
@@ -218,7 +221,7 @@ actual suspend fun httpPostJsonWithHeaders(
         .let { response ->
             val payload = response.bodyAsBoundedText()
             if (!response.status.isSuccess()) {
-                error(runBlocking { getString(Res.string.network_request_failed_http, response.status.value) })
+                throw HttpStatusException(response.status.value, runBlocking { getString(Res.string.network_request_failed_http, response.status.value) })
             }
             if (payload.isBlank()) {
                 throw EmptyResponseBodyException(runBlocking { getString(Res.string.network_empty_response_body) })
@@ -232,6 +235,7 @@ actual suspend fun httpStreamLines(
     userAgent: String?,
     dnsProvider: String?,   // Android-only (no-op on iOS — see httpGetText).
     headers: Map<String, String>,
+    maxBytes: Long,
     onLine: (String) -> Unit,
 ) {
     addonStreamHttpClient.prepareGet(url) {
@@ -239,9 +243,11 @@ actual suspend fun httpStreamLines(
         for ((k, v) in headers) header(k, v)
     }.execute { response ->
         if (!response.status.isSuccess()) {
-            error(runBlocking { getString(Res.string.network_request_failed_http, response.status.value) })
+            throw HttpStatusException(response.status.value, runBlocking { getString(Res.string.network_request_failed_http, response.status.value) })
         }
-        streamBoundedLines(response.bodyAsChannel(), onLine)
+        // Step 0.3b: a racing failover attempt reports "answered" here, before any body byte is consumed.
+        signalHttpHeaders()
+        streamBoundedLines(response.bodyAsChannel(), onLine, maxBytes)
     }
 }
 
@@ -257,11 +263,10 @@ private const val MAX_LINE_BYTES = 1 * 1024 * 1024
  *
  * Reads fixed byte chunks, emits whole lines when found, and once the leftover exceeds the cap
  * emits it as its own chunk. Partial multi-byte characters are carried to the next chunk so a
- * glyph is never split. Safe for all three consumers: M3U lines sit far below the cap, the XMLTV
- * tokenizer accepts chunk boundaries falling anywhere, and so does the Xtream catalog splitter —
- * whose JSON is typically minified onto one line, so the cap is the only thing bounding it.
+ * glyph is never split. Safe for both consumers: M3U lines sit far below the cap, and the XMLTV
+ * tokenizer accepts chunk boundaries falling anywhere.
  */
-private suspend fun streamBoundedLines(channel: ByteReadChannel, onLine: (String) -> Unit) {
+private suspend fun streamBoundedLines(channel: ByteReadChannel, onLine: (String) -> Unit, maxBytes: Long = Long.MAX_VALUE) {
     var carry = ByteArray(0)
     streamMaybeGzipChunks(channel, maxBytes) { readBuf, read ->
         val data = if (carry.isEmpty()) readBuf.copyOf(read) else carry + readBuf.copyOf(read)

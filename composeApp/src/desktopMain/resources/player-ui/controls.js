@@ -53,6 +53,8 @@ const openingLogoFillClip = document.getElementById("openingLogoFillClip");
 const openingLogoFill = document.getElementById("openingLogoFill");
 const openingTitle = document.getElementById("openingTitle");
 const openingSpinner = document.getElementById("openingSpinner");
+const openingLoadingIndicator = window.createLoadingIndicator(openingSpinner);
+const bufferingLoadingIndicator = window.createLoadingIndicator(bufferingStatus.querySelector("canvas"));
 const openingStatus = document.getElementById("openingStatus");
 const openingMessage = document.getElementById("openingMessage");
 const openingProgressTrack = document.getElementById("openingProgressTrack");
@@ -378,6 +380,9 @@ let sourceVirtualTotalHeight = 0;
 let sourceVirtualSpacer = null;
 let sourceVirtualRenderRaf = 0;
 let appliedRememberedVolume = false;
+let rememberedEpisodeSeason = null;
+let currentEpisodeStreamItems = [];
+let currentEpisodeItems = [];
 let selectedEpisodeSeason = null;
 let episodeStreamFilterId = "";
 let activeSubtitleLanguageKey = "";
@@ -873,6 +878,11 @@ const applyTheme = () => {
   const gradientColors = Array.isArray(state.themeAccentGradientColors)
     ? state.themeAccentGradientColors.map(color => cssColorOrFallback(color, "")).filter(Boolean)
     : [];
+  const loadingColors = gradientColors.length > 0
+    ? gradientColors
+    : [cssColorOrFallback(state.themeAccentColor, "#2f6fed")];
+  openingLoadingIndicator.setColors(loadingColors);
+  bufferingLoadingIndicator.setColors(loadingColors);
   if (gradientColors.length > 1) {
     style.setProperty("--theme-accent-gradient", `linear-gradient(to right, ${gradientColors.join(", ")})`);
     style.setProperty("--theme-accent-gradient-vertical", `linear-gradient(to bottom, ${gradientColors.join(", ")})`);
@@ -1119,6 +1129,7 @@ const closePlayerModal = (notifyDismiss = false, animated = true) => {
   if (notifyDismiss && closingModal === "p2pConsent") {
     send("cancelP2pForPlayerControls", 0);
   }
+  if (closingModal === "episodes") onEpisodesModalClosed();
   renderChrome();
 };
 
@@ -1149,6 +1160,14 @@ const openPlayerModal = modal => {
     setModalVisibility(modalElement, modalElement === targetModal);
   });
   renderChrome();
+};
+
+const onEpisodesModalClosed = () => {
+  currentEpisodeItems = [];
+  currentEpisodeStreamItems = [];
+  selectedEpisodeSeason = null;
+  episodeStreamFilterId = "";
+  send("backToEpisodes", 0);
 };
 
 const normalizeTracks = tracks =>
@@ -1547,6 +1566,63 @@ const renderSubtitleModal = () => {
   renderSubtitleSelectionRails();
 };
 
+const filterRows = document.querySelectorAll(".filter-row");
+let filterRowPointerId = null;
+let filterRowStartX = null;
+let filterRowStartY = null;
+let filterRowDragging = false;
+
+const resetFilterRowDragHelpers = () => {
+  filterRowPointerId = null;
+  filterRowStartX = null;
+  filterRowStartY = null;
+  filterRowDragging = false;
+};
+
+const releaseFilterRowPointerCaptures = () => {
+  filterRows.forEach(filterRow => {
+    if (filterRow?.hasPointerCapture(filterRowPointerId)) {
+      filterRow.releasePointerCapture(filterRowPointerId);
+      resetFilterRowDragHelpers();
+    }
+  });
+};
+
+filterRows.forEach(filterRow => {
+  const setXYValues = (event) => {
+    filterRowStartX = event.screenX;
+    filterRowStartY = event.screenY;
+  };
+  const prepareDrag = (event) => {
+    resetFilterRowDragHelpers();
+    setXYValues(event);
+  }
+  const shouldDragStart = (event) => {
+    const dx = Math.abs(event.screenX - filterRowStartX);
+    const dy = Math.abs(event.screenY - filterRowStartY);
+    if (dx > 8 || dy > 8) {
+      filterRow.setPointerCapture(event.pointerId);
+      filterRowPointerId = event.pointerId;
+      filterRowDragging = true;
+    }
+  };
+  const clearDrag = (event) => {
+    filterRow.releasePointerCapture(event.pointerId);
+    resetFilterRowDragHelpers();
+  };
+  const drag = (event) => {
+    if (filterRowStartX && !filterRowDragging) shouldDragStart(event);
+    if (filterRow.hasPointerCapture(event.pointerId)) filterRow.scrollLeft -= event.movementX;
+  };
+
+  filterRow.addEventListener("pointerdown", (event) => {
+    if (event.button == 0) prepareDrag(event);
+  });
+  filterRow.addEventListener("pointermove", drag);
+  filterRow.addEventListener("pointerup", clearDrag);
+  filterRow.addEventListener("pointercancel", clearDrag);
+});
+
 const normalizeItems = items =>
   Array.isArray(items) ? items.filter(item => item && typeof item === "object") : [];
 
@@ -1564,7 +1640,10 @@ const appendFilterChip = (container, label, selected, onSelect, isLoading = fals
   chip.appendChild(text);
   chip.addEventListener("click", event => {
     event.stopPropagation();
-    onSelect();
+    if (!selected) {
+      chip.scrollIntoView({ behavior: "smooth", container: "nearest", inline: "start" });
+      onSelect();
+    }
   });
   container.appendChild(chip);
 };
@@ -1829,7 +1908,7 @@ const requestSourceVirtualRender = () => {
   sourceVirtualRenderRaf = window.requestAnimationFrame(renderSourceVirtualRows);
 };
 
-const renderSourceModal = () => {
+const renderSourceModal = (modalOpened = false) => {
   sourcePanelTitle.textContent = state.sourcesPanelTitle || "Sources";
   sourceReloadButton.textContent = state.reloadLabel || "Reload";
   sourceCloseButton.textContent = state.panelCloseLabel || "Close";
@@ -1843,8 +1922,15 @@ const renderSourceModal = () => {
   renderFilterRow(sourceFilterList, filters, sourceFilterId, id => {
     sourceFilterId = id;
     sourceList.scrollTop = 0;
-    renderSourceModal();
+    renderSourceModal(true);
   });
+
+  if (!modalOpened || !sourceVirtualSpacer) {
+    window.requestAnimationFrame(() => {
+      sourceFilterList.querySelector(".filter-chip.selected")
+        ?.scrollIntoView({ behavior: "instant", container: "nearest", inline: "start" });
+    });
+  }
 
   sourceList.textContent = "";
   sourceList.classList.remove("virtualized");
@@ -1933,10 +2019,11 @@ const appendEpisodeRow = (container, item) => {
   container.appendChild(row);
 };
 
-const ensureEpisodeSeason = () => {
+const ensureEpisodeSeason = (modalOpened) => {
   const seasons = normalizeItems(state.episodeSeasons);
   if (seasons.length === 0) {
     selectedEpisodeSeason = null;
+    rememberedEpisodeSeason = null;
     return null;
   }
   if (
@@ -1945,15 +2032,23 @@ const ensureEpisodeSeason = () => {
   ) {
     const preferred = seasons.find(season => Boolean(season.isSelected)) || seasons[0];
     selectedEpisodeSeason = Number(preferred.season) || 0;
+    rememberedEpisodeSeason = selectedEpisodeSeason;
   }
-  return selectedEpisodeSeason;
+  return modalOpened ? selectedEpisodeSeason : rememberedEpisodeSeason;
 };
 
-const renderEpisodeList = () => {
+const compareArrays = (prevArray, currArray) => {
+  if (prevArray === null || currArray === null) return false;
+  if (!Array.isArray(prevArray) || !Array.isArray(currArray)) return false;
+  if (prevArray.length !== currArray.length) return false;
+  return (JSON.stringify(currArray) === JSON.stringify(prevArray));
+};
+
+const renderEpisodeList = (modalOpened = false) => {
   episodesPanelTitle.textContent = state.episodesPanelTitle || "Episodes";
   episodesCloseButton.textContent = state.panelCloseLabel || "Close";
 
-  const selectedSeason = ensureEpisodeSeason();
+  const selectedSeason = ensureEpisodeSeason(modalOpened);
   const seasons = normalizeItems(state.episodeSeasons);
   renderFilterRow(
     seasonFilterList,
@@ -1961,23 +2056,45 @@ const renderEpisodeList = () => {
     selectedSeason == null ? "" : String(selectedSeason),
     id => {
       selectedEpisodeSeason = Number(id);
-      renderEpisodeList();
+      currentEpisodeItems = [];
+      renderEpisodeList(true);
     },
   );
 
-  episodeList.textContent = "";
+  if (!modalOpened) {
+    window.requestAnimationFrame(() => {
+      seasonFilterList.querySelector(".filter-chip.selected")
+        ?.scrollIntoView({ behavior: "instant", container: "nearest", inline: "start" });
+    });
+  }
+
   let items = normalizeItems(state.episodeItems);
   if (selectedSeason != null) {
     items = items.filter(item => Number(item.season) === Number(selectedSeason));
   }
   if (items.length === 0) {
+    episodeList.textContent = "";
     appendEmptyTrackState(episodeList, state.noEpisodesLabel || "No episodes available");
     return;
   }
-  items.forEach(item => appendEpisodeRow(episodeList, item));
+
+  if (!compareArrays(currentEpisodeItems, items)) {
+    episodeList.textContent = "";
+    items.forEach(item => appendEpisodeRow(episodeList, item));
+    currentEpisodeItems = items;
+
+    window.requestAnimationFrame(() => {
+      const selectedEpisode = episodeList.querySelector(".track-row.episode-row.selected");
+      if (selectedEpisode) {
+        selectedEpisode.scrollIntoView({ behavior: "instant", container: "nearest", block: "start" });
+      } else {
+        episodeList.scrollTop = 0;
+      }
+    });
+  }
 };
 
-const renderEpisodeStreams = () => {
+const renderEpisodeStreams = (modalOpened = false) => {
   streamsPanelTitle.textContent = state.streamsPanelTitle || "Streams";
   episodeBackButton.textContent = state.backLabel || "Back";
   episodeReloadButton.textContent = state.reloadLabel || "Reload";
@@ -1991,37 +2108,50 @@ const renderEpisodeStreams = () => {
   }
   renderFilterRow(episodeStreamFilterList, filters, episodeStreamFilterId, id => {
     episodeStreamFilterId = id;
-    renderEpisodeStreams();
+    episodeStreamList.scrollTop = 0;
+    currentEpisodeStreamItems = [];
+    renderEpisodeStreams(true);
   });
 
-  episodeStreamList.textContent = "";
+  if (!modalOpened && currentEpisodeStreamItems?.length === 0) {
+    window.requestAnimationFrame(() => {
+      episodeStreamFilterList.querySelector(".filter-chip.selected")
+        ?.scrollIntoView({ behavior: "instant", container: "nearest", inline: "start" });
+    });
+  }
+
   let items = normalizeItems(state.episodeStreamItems);
   if (episodeStreamFilterId) {
     items = items.filter(item => String(item.filterId || "") === episodeStreamFilterId);
   }
   if (items.length === 0) {
+    episodeStreamList.textContent = "";
     appendEmptyTrackState(
       episodeStreamList,
       state.episodeStreamsIsLoading ? "Loading streams..." : (state.noStreamsLabel || "No streams found"),
     );
     return;
   }
-  items.forEach(item => {
-    episodeStreamList.appendChild(buildSourceRow(item, selected => {
-      send("selectEpisodeStream", Number(selected.index) || 0);
-      window.setTimeout(closePlayerModal, 120);
-    }));
-  });
+  if (!compareArrays(currentEpisodeStreamItems, items)) {
+    episodeStreamList.textContent = "";
+    items.forEach(item => {
+      episodeStreamList.appendChild(buildSourceRow(item, selected => {
+        send("selectEpisodeStream", Number(selected.index) || 0);
+        window.setTimeout(closePlayerModal, 120);
+      }));
+    });
+    currentEpisodeStreamItems = items;
+  };
 };
 
-const renderEpisodesModal = () => {
+const renderEpisodesModal = (modalOpened = false) => {
   const showStreams = Boolean(state.episodeStreamsVisible);
   episodeListView.hidden = showStreams;
   episodeStreamsView.hidden = !showStreams;
   if (showStreams) {
     renderEpisodeStreams();
   } else {
-    renderEpisodeList();
+    renderEpisodeList(modalOpened);
   }
 };
 
@@ -2064,12 +2194,12 @@ const renderP2pConsentModal = () => {
   p2pConsentEnableButton.textContent = state.p2pConsentEnableLabel || "Enable P2P";
 };
 
-const renderActiveModal = () => {
+const renderActiveModal = (modalOpened = false) => {
   if (activeModal === "audio") renderAudioTrackList();
   if (activeModal === "subtitles") renderSubtitleModal();
   if (activeModal === "speed") renderSpeedOptionList();
-  if (activeModal === "sources") renderSourceModal();
-  if (activeModal === "episodes") renderEpisodesModal();
+  if (activeModal === "sources") renderSourceModal(modalOpened);
+  if (activeModal === "episodes") renderEpisodesModal(modalOpened);
   if (activeModal === "submitIntro") renderSubmitIntroModal();
   if (activeModal === "p2pConsent") renderP2pConsentModal();
 };
@@ -2132,6 +2262,7 @@ const renderOpeningOverlay = suppress => {
   openingTitle.textContent = titleText;
   openingTitle.hidden = Boolean(logoUrl || !titleText);
   openingSpinner.hidden = Boolean(logoUrl || titleText);
+  openingLoadingIndicator.setActive(showOpening && !openingSpinner.hidden);
 
   openingMessage.textContent = messageText;
   openingStatus.hidden = !(messageText || showHorizontalProgress);
@@ -2438,6 +2569,7 @@ const renderChrome = () => {
   const showBuffering = Boolean(!showError && state.isLoading && !activeModal && !showOpening);
   bufferingStatus.classList.toggle("visible", showBuffering);
   bufferingStatus.setAttribute("aria-hidden", showBuffering ? "false" : "true");
+  bufferingLoadingIndicator.setActive(showBuffering);
 
   setVisible(submitIntroButton, Boolean(state.showSubmitIntro));
   setVisible(videoSettingsButton, Boolean(state.showVideoSettings));
@@ -2478,10 +2610,10 @@ const renderChrome = () => {
   syncChromeAutoHideTimer(showOpening);
 };
 
-const render = () => {
+const render = (modalOpened = false) => {
   applyTheme();
   renderChrome();
-  renderActiveModal();
+  renderActiveModal(modalOpened);
 };
 
 const focusShortcutRoot = () => {
@@ -2788,6 +2920,7 @@ window.addEventListener("blur", () => {
   clearPressedButton();
   syncChromeAutoHideTimer(isOpeningOverlayActive());
   clearSpeedBoostTimers();
+  releaseFilterRowPointerCaptures();
   if (isHoldSpeedActive || isSpaceBoosting || isSpeedBoosting) {
     suppressNextRootClick = true;
     stopSpeedBoost();
@@ -2977,10 +3110,12 @@ episodeStreamsCloseButton.addEventListener("click", event => {
 episodeBackButton.addEventListener("click", event => {
   event.stopPropagation();
   episodeStreamFilterId = "";
+  currentEpisodeStreamItems = [];
   send("backToEpisodes", 0);
 });
 episodeReloadButton.addEventListener("click", event => {
   event.stopPropagation();
+  currentEpisodeStreamItems = [];
   send("reloadEpisodeStreams", 0);
 });
 
@@ -3246,7 +3381,8 @@ window.playerControls = nextState => {
   ) {
     resetSubtitleSelectionState();
   }
-  render();
+  const preventModalAutoScrolling = activeModal === "sources" || activeModal === "episodes";
+  render(preventModalAutoScrolling);
   if (pendingSettingToastCommand === "resize" && (state.resizeModeLabel || "") !== previousResizeLabel) {
     pendingSettingToastCommand = "";
     showPlayerToast(settingToastLabel("resize"), { icon: "icon-aspect" });

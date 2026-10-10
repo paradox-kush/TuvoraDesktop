@@ -56,6 +56,9 @@ actual fun PlatformPlayerSurface(
     initialPositionMs: Long?,
     initialPositionRequestKey: String?,
     resizeMode: PlayerResizeMode,
+    // Accepted for signature parity: the iOS player has no manual-zoom stage.
+    videoZoom: VideoZoom,
+    playbackEngine: AndroidPlaybackEngine?,
     useNativeController: Boolean,
     playerControlsState: PlayerControlsState,
     onPlayerControlsAction: (PlayerControlsAction) -> Boolean,
@@ -209,6 +212,9 @@ actual fun PlatformPlayerSurface(
             override fun applyAudioLanguagePreferences(languages: List<String>) {
                 bridge.applyAudioLanguagePreferences(languages)
             }
+
+            override suspend fun getMediaInfo(): PlayerMediaInfo =
+                mpvMediaInfo { name -> bridge.getProperty(name).ifBlank { null } }
 
             override fun selectSubtitleTrack(index: Int) {
                 if (index < 0) {

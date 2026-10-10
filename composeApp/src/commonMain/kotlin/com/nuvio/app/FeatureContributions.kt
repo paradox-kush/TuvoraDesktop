@@ -52,7 +52,11 @@ fun registerLogicFeatureContributions() {
     IptvSourceRegistrations.register()
     // Media servers (Jellyfin/Emby, Wave 3): one entry in each plural source port, the Home contributor and the
     // playback-session reporter; their server ENTRIES ride the playlist-sync engine through the sink below.
-    MediaServerFeature.registerLogic(syncSink = PlaylistMediaServerSyncSink)
+    // 13th upstream sync: the user-facing Jellyfin/Emby feature is now upstream's features/servers (wired directly
+    // in the shared spine, synced via sync_pull/push_media_servers). The fork's own features/mediaserver is NOT
+    // registered any more (no source-port entries, no Home contributor, no playlist-sync sink); its code stays
+    // compiled as the reference for the port ledger until a follow-up deletes it.
+    // MediaServerFeature.registerLogic(syncSink = PlaylistMediaServerSyncSink)
     SyncParticipantRegistry.register(XtreamSyncParticipant)
     SyncParticipantRegistry.register(RadarSyncParticipant)
     SyncParticipantRegistry.register(IptvOverlaySyncParticipant)

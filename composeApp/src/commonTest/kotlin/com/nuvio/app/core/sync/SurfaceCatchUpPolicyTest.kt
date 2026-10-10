@@ -52,4 +52,12 @@ class SurfaceCatchUpPolicyTest {
         val seen = SurfaceCatchUpPolicy.seenOf(listOf(v("addons", 7)))
         assertEquals(7, SurfaceCatchUpPolicy.advance(seen, listOf(v("addons", 2)))[SurfaceCatchUpPolicy.key(1, "addons")])
     }
+
+    @Test
+    fun mediaServersIsAKnownPullableSurface() {
+        // 13th sync: the backend emits "media_servers" when sync_push_media_servers lands from another device;
+        // an unknown surface would be ignored by the Realtime handler and by the version-vector catch-up.
+        assertTrue("media_servers" in SyncManager.namedSurfaces)
+        assertTrue("media_servers" in SyncManager.pullableSurfaces())
+    }
 }

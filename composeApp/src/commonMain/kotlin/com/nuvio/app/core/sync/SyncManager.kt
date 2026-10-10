@@ -49,6 +49,7 @@ internal enum class ProfileSyncStep {
     ActiveWatchSource,
     Collections,
     HomeCatalogSettings,
+    MediaServers,
 }
 
 internal data class ProfileSyncOperations(
@@ -60,6 +61,7 @@ internal data class ProfileSyncOperations(
     val refreshActiveWatchSource: suspend (Int) -> Unit,
     val pullCollections: suspend (Int) -> Unit,
     val pullHomeCatalogSettings: suspend (Int) -> Unit,
+    val syncMediaServers: suspend (Int) -> Unit = {},
 )
 
 internal data class ProfileSyncResult(
@@ -190,6 +192,9 @@ internal suspend fun runOrderedProfileSync(
         launch {
             runStep(ProfileSyncStep.HomeCatalogSettings, operations.pullHomeCatalogSettings)
         }
+        launch {
+            runStep(ProfileSyncStep.MediaServers, operations.syncMediaServers)
+        }
     }
     return ProfileSyncResult(
         failedSteps = synchronized(failureLock) { failedSteps.toSet() },
@@ -288,6 +293,7 @@ object SyncManager {
         },
         pullCollections = { profileId -> CollectionSyncService.pullFromServer(profileId) },
         pullHomeCatalogSettings = { profileId -> HomeCatalogSettingsSyncService.pullFromServer(profileId) },
+        syncMediaServers = { profileId -> MediaServerSync.syncFromRemote(profileId) },
     )
 
     fun pullAllForProfile(profileId: Int) {
@@ -574,7 +580,7 @@ object SyncManager {
     /** Surfaces [pullSurface] knows by name (fork surfaces come from their SyncParticipants). */
     internal val namedSurfaces: Set<String> = setOf(
         "addons", "plugins", "library", "watch_progress", "watched_items", "profile_settings",
-        "collections", "home_catalog_settings", "profiles", "provider_credentials",
+        "collections", "home_catalog_settings", "profiles", "provider_credentials", "media_servers",
     )
 
     /** Every surface this client can pull (B03: what a version-vector catch-up may plan). */
@@ -605,6 +611,8 @@ object SyncManager {
             "collections" -> attempt("collections") { CollectionSyncService.pullFromServer(profileId) }
             "home_catalog_settings" -> attempt("home catalog settings") { HomeCatalogSettingsSyncService.pullFromServer(profileId) }
             "profiles" -> attempt("profiles") { ProfileRepository.pullProfiles() }
+            // Backend emits this when sync_push_media_servers lands from another device.
+            "media_servers" -> attempt("media servers") { MediaServerSync.syncFromRemote(profileId) }
             else -> {
                 // Fork surfaces (the IPTV overlay, IPTV playlists, Radar) are routed to the
                 // SyncParticipant that declares them — this file never names a fork feature.

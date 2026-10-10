@@ -50,6 +50,11 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
@@ -61,6 +66,7 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.LocalNavAnimatedContentScope
 import androidx.navigation3.ui.NavDisplay
+import com.nuvio.app.core.ui.PlatformBackDispatcher
 import com.nuvio.app.core.ui.LocalPosterClickAnchor
 import com.nuvio.app.navigation.PosterNavigationState
 import com.nuvio.app.navigation.posterNavigationEntry
@@ -194,6 +200,8 @@ import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import com.nuvio.app.features.servers.ServerMatcher
+import com.nuvio.app.features.servers.ServerRepository
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -436,12 +444,18 @@ internal fun MainAppContent(
         buildAddonCatalogRefreshSignature(addonsUiState.addons)
     }
 
-    LaunchedEffect(appContentGeneration, homeCatalogRefreshKey) {
+    val serversUiState by remember {
+        ServerRepository.ensureLoaded()
+        ServerRepository.uiState
+    }.collectAsStateWithLifecycle()
+
+    LaunchedEffect(appContentGeneration, homeCatalogRefreshKey, serversUiState.revision) {
         if (!ownsAppRuntime) return@LaunchedEffect
         val enabledAddons = addonsUiState.addons.enabledAddons()
         if (enabledAddons.isWaitingForFirstEnabledManifest()) return@LaunchedEffect
         HomeCatalogSettingsRepository.syncCatalogs(enabledAddons)
         HomeRepository.refresh(enabledAddons)
+        ServerMatcher.warm()
     }
 
     fun activateTab(tab: AppScreenTab) {
@@ -1497,6 +1511,16 @@ internal fun MainAppContent(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(MaterialTheme.nuvio.colors.background)
+                    .onKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                            if (!PlatformBackDispatcher.dispatch()) {
+                                navController.popBackStack()
+                            }
+                            true
+                        } else {
+                            false
+                        }
+                    }
                     .pointerInput(Unit) {
                         awaitPointerEventScope {
                             while (true) {
@@ -1505,7 +1529,9 @@ internal fun MainAppContent(
                                     if (!event.changes.any { it.isConsumed }) {
                                         if (event.button == PointerButton.Back) {
                                             event.changes.forEach { it.consume() }
-                                            navController.popBackStack()
+                                            if (!PlatformBackDispatcher.dispatch()) {
+                                                navController.popBackStack()
+                                            }
                                         }
                                     }
                                 }

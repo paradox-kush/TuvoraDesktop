@@ -31,6 +31,8 @@ import com.nuvio.app.features.player.skip.resolveSkipIntervalLookup
 import com.nuvio.app.features.player.skip.shouldAutoSkip
 import com.nuvio.app.features.player.skip.internalSkipAction
 import com.nuvio.app.features.player.skip.intervalsAtSeekPositions
+import com.nuvio.app.features.servers.ServerPlayback
+import com.nuvio.app.features.servers.ServerStreams
 import com.nuvio.app.features.streams.BingeGroupCacheRepository
 import com.nuvio.app.features.streams.StreamLinkCacheRepository
 import com.nuvio.app.features.streams.StreamItem
@@ -308,6 +310,11 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         }
     }
 
+    LaunchedEffect(activeSourceUrl, preferredAudioLanguageTargets) {
+        refreshServerTracks()
+        applyPreferredServerAudioTrack()
+    }
+
     LaunchedEffect(playbackSnapshot.isLoading, playerController, preferredAudioLanguageTargets) {
         if (!playbackSnapshot.isLoading && playerController != null) {
             refreshTracks()
@@ -379,6 +386,11 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
     BindPlayerUiVisibilityEffects()
     BindPlayerMetadataAndSkipEffects()
     BindSessionReportTick()
+
+    DisposableEffect(activeSourceUrl) {
+        val effectSourceUrl = activeSourceUrl
+        onDispose { ServerPlayback.stop(effectSourceUrl) }
+    }
 
     DisposableEffect(playbackSession.videoId, activeSourceUrl, activeSourceAudioUrl) {
         val effectVideoId = playbackSession.videoId
@@ -460,6 +472,13 @@ private fun PlayerScreenRuntime.BindPlayerUiVisibilityEffects() {
         playbackSnapshot.isEnded,
         playbackSnapshot.durationMs,
     ) {
+        ServerPlayback.onPlaybackSnapshot(
+            url = activeSourceUrl,
+            positionMs = playbackSnapshot.positionMs,
+            isPlaying = playbackSnapshot.isPlaying,
+            isLoading = playbackSnapshot.isLoading,
+            isEnded = playbackSnapshot.isEnded,
+        )
         if (playbackSnapshot.isEnded) {
             flushWatchProgress(TrackingScrobbleAction.STOP)
             previousIsPlaying = false
@@ -678,7 +697,14 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
                 autoSkippedIntervals.add(current)
                 scheduleProgressSyncAfterSeek()
                 skipIntervalDismissed = true
-                notification?.let { NuvioToastController.show(it, AUTO_SKIP_NOTIFICATION_DURATION_MS) }
+                notification?.let {
+                    if (isDesktop) {
+                        playerNotificationMessage = it
+                        playerNotificationToken += 1L
+                    } else {
+                        NuvioToastController.show(it, AUTO_SKIP_NOTIFICATION_DURATION_MS)
+                    }
+                }
             }
         }
     }
@@ -854,6 +880,7 @@ internal fun PlayerScreenRuntime.removeFailedStreamFromCache() {
 }
 
 internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message: String?): Boolean {
+    if (ServerStreams.isServerSourceId(activeProviderAddonId)) return retryServerSourceAfterError(message)
     val streamProvider = com.nuvio.app.core.contracts.StreamSourceAccess.current()
     val failedUrl = activeSourceUrl
     // IPTV (xtream/stalker) sources always qualify: a Stalker create_link token is often embedded
@@ -1019,6 +1046,30 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
             // Upstream: always release the sources loader, even when the refresh bails out early.
             PlayerStreamsRepository.stopSourcesLoading()
         }
+    }
+    return true
+}
+
+private fun PlayerScreenRuntime.retryServerSourceAfterError(message: String?): Boolean {
+    if (credentialRefreshJob?.isActive == true) return true
+    val failedUrl = activeSourceUrl
+    // One fallback per source (fork gate is attempt-counted, not URL-keyed: see PlayerCredentialRefreshPolicy).
+    if (credentialRefreshAttempts >= 1) return false
+    credentialRefreshAttempts++
+    val savedPositionMs = playbackSnapshot.positionMs.coerceAtLeast(0L)
+    errorMessage = null
+    credentialRefreshJob = scope.launch {
+        val playback = ServerPlayback.fallback(failedUrl)
+        if (playback == null) {
+            errorMessage = message
+            controlsVisible = !playerControlsLocked
+            return@launch
+        }
+        externalSubtitles = playback.subtitles
+        activeSourceUrl = playback.url
+        activeSourceHeaders = playback.headers
+        activeInitialPositionMs = savedPositionMs
+        activeInitialProgressFraction = null
     }
     return true
 }

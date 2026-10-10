@@ -76,6 +76,8 @@ import kotlinx.coroutines.flow.map
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.action_retry
 import nuvio.composeapp.generated.resources.compose_nav_search
+import nuvio.composeapp.generated.resources.home_empty_no_sources_title
+import nuvio.composeapp.generated.resources.search_empty_no_sources_message
 import nuvio.composeapp.generated.resources.compose_search_clear
 import nuvio.composeapp.generated.resources.compose_search_discover_title
 import nuvio.composeapp.generated.resources.compose_search_empty_failed_message
