@@ -122,6 +122,8 @@ object MediaServerSync {
     }
 
     private fun canSync(profileId: Int): Boolean {
+        // Fork gate (live access token + account), on top of upstream's profile/anonymous checks.
+        if (!SyncSession.canSync()) return false
         val state = AuthRepository.state.value as? AuthState.Authenticated ?: return false
         return !state.isAnonymous && ProfileRepository.activeProfileId == profileId
     }

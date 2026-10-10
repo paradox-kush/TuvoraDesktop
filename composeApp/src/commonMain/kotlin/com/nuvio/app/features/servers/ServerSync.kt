@@ -15,7 +15,8 @@ data class SyncedServer(
     @SerialName("remote_server_id") val remoteServerId: String,
     @SerialName("remote_user_id") val remoteUserId: String,
     @SerialName("user_name") val userName: String,
-    val token: String,
+    /** Always "" on the wire: access tokens are per-device and never sync (see [ServerTokenPolicy]). */
+    val token: String = "",
     val libraries: List<SyncedLibrary> = emptyList(),
     val enabled: Boolean = true,
     @SerialName("use_catalog_metadata") val useCatalogMetadata: Boolean = false,
@@ -63,16 +64,17 @@ internal fun mergeSyncedServers(
 ): List<SyncedServer> {
     val localByKey = local.associateBy { it.key }
     val remoteKeys = remote.mapTo(mutableSetOf()) { it.key }
-    val kept = remote.map { server ->
+    val kept = remote.map { it.copy(token = "") }.map { server ->
         localByKey[server.key]?.let { local ->
-            server.copy(id = local.id, importWatchState = server.importWatchState ?: local.importWatchState)
+            server.copy(id = local.id, token = "", importWatchState = server.importWatchState ?: local.importWatchState)
         } ?: server
     }
     val added = local.filter { it.key !in remoteKeys && (syncedKeys == null || it.key !in syncedKeys) }
     return kept + added
 }
 
-internal fun ServerConnection.toSynced(token: String) = SyncedServer(
+/** The wire form of a connection: everything except the access token, which stays on this device. */
+internal fun ServerConnection.toSynced() = SyncedServer(
     id = id,
     providerId = providerId,
     name = name,
@@ -80,7 +82,7 @@ internal fun ServerConnection.toSynced(token: String) = SyncedServer(
     remoteServerId = remoteServerId,
     remoteUserId = remoteUserId,
     userName = userName,
-    token = token,
+    token = "",
     libraries = libraries.map { SyncedLibrary(it.id, it.name, it.kind.contentType, it.selected) },
     enabled = enabled,
     useCatalogMetadata = useCatalogMetadata,
@@ -105,3 +107,15 @@ internal fun SyncedServer.toConnection(id: String, credentialRef: String) = Serv
     useCatalogMetadata = useCatalogMetadata,
     importWatchState = importWatchState ?: false,
 )
+
+/**
+ * Media-server access tokens are device-local (user decision 2026-10-10): the pushed payload carries an empty token,
+ * and nothing pulled from another device is ever written over, or into, the local credential store. A server that
+ * arrives without a local token is signed out on this device and asks for a sign-in ([needsSignIn]).
+ */
+internal object ServerTokenPolicy {
+    /** The token to hold after a pull: the local one, whatever the remote row carries. */
+    fun afterPull(local: String?, @Suppress("UNUSED_PARAMETER") remote: String?): String? = local?.takeIf { it.isNotBlank() }
+
+    fun needsSignIn(localToken: String?): Boolean = localToken.isNullOrBlank()
+}

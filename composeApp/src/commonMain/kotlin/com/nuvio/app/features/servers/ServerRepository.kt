@@ -222,9 +222,7 @@ object ServerRepository {
         return ServerSyncSnapshot(
             profileId = profileId,
             version = localVersion,
-            servers = _uiState.value.connections.mapNotNull { connection ->
-                token(connection.credentialRef)?.let(connection::toSynced)
-            },
+            servers = _uiState.value.connections.map { it.toSynced() },
             pendingPush = syncState.pendingPush,
             syncedKeys = syncState.syncedKeys?.toSet(),
         )
@@ -235,17 +233,12 @@ object ServerRepository {
         val current = _uiState.value.connections
         val currentByKey = current.associateBy { serverKey(it.providerId, it.remoteServerId, it.remoteUserId) }
         val usedIds = mutableSetOf<String>()
-        var changed = false
         val connections = servers.map { server ->
             val local = currentByKey[server.key]
             val credentialRef = local?.credentialRef ?: newId("k")
             val id = local?.id ?: server.id.takeUnless { id -> current.any { it.id == id } || id in usedIds } ?: newId("c")
             usedIds += id
-            if (token(credentialRef) != server.token) {
-                writeCredential(credentialRef, server.token)
-                local?.let { setFailure(it.id, null) }
-                changed = true
-            }
+            // Tokens never sync: keep whatever this device holds, whatever the remote row says.
             server.toConnection(id, credentialRef)
         }
         current.filter { it.id !in usedIds }.forEach { removed ->
@@ -253,8 +246,9 @@ object ServerRepository {
             setFailure(removed.id, null)
         }
         syncState = ServerSyncState(pendingPush = false, syncedKeys = keys.toList())
-        if (changed || connections != current) saveConnections(connections, invalidate = true, local = false)
+        if (connections != current) saveConnections(connections, invalidate = true, local = false)
         persistSyncState()
+        markUnauthenticated(connections)
         return true
     }
 
@@ -273,10 +267,21 @@ object ServerRepository {
         loadedProfileId = profileId
         syncState = readSyncState(profileId)
         ServerMatcher.clear()
+        val connections = readConnections(profileId)
         _uiState.value = ServersUiState(
-            connections = readConnections(profileId),
+            connections = connections,
+            failures = connections
+                .filter { ServerTokenPolicy.needsSignIn(token(it.credentialRef)) }
+                .associate { it.id to ServerFailure.AUTH_REQUIRED },
             revision = _uiState.value.revision + 1,
         )
+    }
+
+    /** A server that arrived from another device has no token here: show it as "Sign in again" up front. */
+    private fun markUnauthenticated(connections: List<ServerConnection>) {
+        connections
+            .filter { ServerTokenPolicy.needsSignIn(token(it.credentialRef)) }
+            .forEach { setFailure(it.id, ServerFailure.AUTH_REQUIRED) }
     }
 
     private fun updateConnection(connectionId: String, transform: (ServerConnection) -> ServerConnection) {

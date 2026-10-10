@@ -48,7 +48,7 @@ class ServerSyncTest {
         )
 
         assertEquals(listOf("local-a", "remote-b", "local-c"), merged.map { it.id })
-        assertEquals("new", merged.first().token)
+        assertEquals("", merged.first().token, "a remote token is never carried into the merge")
     }
 
     @Test
@@ -74,12 +74,12 @@ class ServerSyncTest {
     }
 
     @Test
-    fun localChangesAreQueuedWithTheirTokens() {
+    fun localChangesAreQueuedWithoutTheirTokens() {
         installFakeServer()
 
         val snapshot = assertNotNull(ServerRepository.syncSnapshot(ProfileRepository.activeProfileId))
         assertTrue(snapshot.pendingPush)
-        assertEquals("token", snapshot.servers.single().token)
+        assertEquals("", snapshot.servers.single().token, "the token stays on this device")
         assertEquals(listOf("10", "20"), snapshot.servers.single().libraries.map { it.id })
 
         ServerRepository.markPushed(snapshot)
@@ -101,7 +101,7 @@ class ServerSyncTest {
         assertTrue(ServerRepository.applySync(snapshot, listOf(remote), setOf(remote.key)))
 
         val updated = assertNotNull(ServerRepository.connection(connection.id))
-        assertEquals("shared", ServerRepository.session(connection.id)?.token)
+        assertEquals("token", ServerRepository.session(connection.id)?.token, "a remote token never replaces the local one")
         assertFalse(updated.libraries.single().selected)
         assertFalse(assertNotNull(ServerRepository.syncSnapshot(snapshot.profileId)).pendingPush)
     }
