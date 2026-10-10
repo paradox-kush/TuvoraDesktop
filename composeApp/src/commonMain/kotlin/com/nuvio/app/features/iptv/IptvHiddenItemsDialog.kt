@@ -32,14 +32,21 @@ internal fun IptvHiddenItemsDialog(
     state: HiddenItemsUiState,
     onUnhide: (HiddenItem) -> Unit,
     onDismiss: () -> Unit,
+    onRetry: () -> Unit = {},
 ) {
+    val status = rememberEffectiveLoadStatus(state.load)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Hidden in $playlistName") },
         text = {
             when {
-                state.loading -> Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.Center) {
+                status is LoadStatus.Loading -> Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.Center) {
                     CircularProgressIndicator()
+                }
+                // A failed load is not "nothing hidden" — that told the viewer their hides were gone.
+                status is LoadStatus.Failed -> Column {
+                    Text("Couldn’t load the hidden list.", color = MaterialTheme.nuvio.colors.textSecondary)
+                    TextButton(onClick = onRetry) { Text("Retry") }
                 }
                 state.items.isEmpty() -> Text(
                     "Nothing is hidden in this playlist. To hide a channel, long-press it in the Live TV guide; " +

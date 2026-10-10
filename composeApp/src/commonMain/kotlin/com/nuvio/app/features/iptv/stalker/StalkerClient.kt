@@ -228,14 +228,24 @@ object StalkerClient : IptvClient {
         }
 
     override suspend fun liveChannels(acc: XtreamAccount, categoryId: String?): Result<List<XtreamChannel>> = runCatching {
-        if (!ensureLineup(acc)) return@runCatching emptyList()
+        if (!ensureLineup(acc)) return@runCatching emptyOrUnavailable(acc)
         IptvContentDb.channelsFor(acc.id, categoryId).map { it.toChannel(acc) }
     }
 
     /** Windowed lineup read for the hub (item 5). Ensures the mirror, then a paged indexed read. */
     suspend fun liveChannelsPage(acc: XtreamAccount, categoryId: String?, offset: Int, limit: Int): List<XtreamChannel> {
-        if (!ensureLineup(acc)) return emptyList()
+        if (!ensureLineup(acc)) return emptyOrUnavailable(acc)
         return IptvContentDb.pageChannels(acc.id, categoryId, offset, limit).map { it.toChannel(acc) }
+    }
+
+    /**
+     * No usable lineup: a stored lineup with zero channels really is empty, but NO stored lineup means the
+     * fetch failed — that must surface as a failure (the IPTV page's Retry), never as "this category is empty"
+     * (CLAUDE.md: a failure is never "empty").
+     */
+    private suspend fun emptyOrUnavailable(acc: XtreamAccount): List<XtreamChannel> {
+        if (IptvContentDb.ingestMeta(acc.id) != null) return emptyList()
+        throw IllegalStateException("Stalker lineup unavailable")
     }
 
     private fun com.nuvio.app.features.iptv.content.IptvStreamRow.toChannel(acc: XtreamAccount) = XtreamChannel(
@@ -276,7 +286,10 @@ object StalkerClient : IptvClient {
             val streamed = runCatching { streamAllChannels(acc) }.getOrNull().orEmpty()
             val mapped = streamed.ifEmpty {
                 // A portal without get_all_channels: bounded paged fetch (rowCache keeps the raw rows).
-                orderedList(acc, "itv", null).mapNotNull { liveRowOf(it) }
+                // Each page is import progress: it keeps the IPTV page's stall deadline open (BoundedLoad).
+                orderedList(acc, "itv", null, onPage = {
+                    com.nuvio.app.features.iptv.IptvImportProgress.tick(acc.id)
+                }).mapNotNull { liveRowOf(it) }
             }
             // The raw rows are dropped after mapping, so the static-vs-mint flags were picked off
             // per row; recorded here, on this coroutine, not on the transport's reader thread.
@@ -288,6 +301,7 @@ object StalkerClient : IptvClient {
                 return@withLock (IptvContentDb.ingestMeta(acc.id)?.liveCount ?: 0) > 0
             }
             IptvContentDb.replaceLiveLineup(acc.id, rows, cats.orEmpty().map { it.id to it.name })
+            com.nuvio.app.features.iptv.IptvImportProgress.finished(acc.id)
             true
         }
     }
@@ -329,6 +343,8 @@ object StalkerClient : IptvClient {
                 onChunk = {
                     delivered = true
                     parser.accept(it)
+                    // Each streamed chunk is import progress (keeps the IPTV page's stall deadline open).
+                    com.nuvio.app.features.iptv.IptvImportProgress.tick(acc.id)
                 },
             )
         }
@@ -1095,6 +1111,7 @@ object StalkerClient : IptvClient {
         search: String? = null,
         maxItems: Int = MAX_ITEMS,
         stopWhen: ((JsonObject) -> Boolean)? = null,
+        onPage: (() -> Unit)? = null,
     ): List<JsonObject> {
         val out = ArrayList<JsonObject>()
         var page = 1
@@ -1109,6 +1126,7 @@ object StalkerClient : IptvClient {
             // Every row carries its `cmd` — keep them so play/detail never re-pages to find one.
             cacheRows(acc.id, type, rows)
             out += rows
+            onPage?.invoke()
             if (stopWhen != null && rows.any(stopWhen)) break   // found the target — stop paging
             page++
         }

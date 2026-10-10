@@ -38,7 +38,9 @@ fun LivePlaybackFreezeReporter.onLiveSnapshot(
     resetVideo: (() -> Boolean)? = null,
 ) {
     val nowMs = TraktPlatformClock.nowEpochMs()
-    val started = snapshot.positionMs > 0L || snapshot.isPlaying
+    // Not the bare isPlaying flag: libmpv echoes an optimistic pause=false before the file loads,
+    // which armed this watcher on a channel that never opened and looped reconnects on it.
+    val started = LivePlaybackStartupPolicy.hasStarted(snapshot)
 
     if (!isArmed && started) {
         onLivePlaybackStarted(

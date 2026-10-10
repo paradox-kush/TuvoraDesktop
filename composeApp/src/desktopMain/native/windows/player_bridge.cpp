@@ -47,7 +47,19 @@ typedef enum mpv_format {
 typedef enum mpv_event_id {
     MPV_EVENT_NONE = 0,
     MPV_EVENT_SHUTDOWN = 1,
+    MPV_EVENT_START_FILE = 6,
+    MPV_EVENT_END_FILE = 7,
 } mpv_event_id;
+
+// Mirrors mpv/client.h (libmpv is loaded dynamically, so its header is not included). Only the
+// leading fields are read; `reason` is the mpv_end_file_reason enum, int-sized.
+typedef struct mpv_event_end_file {
+    int reason;
+    int error;
+    int64_t playlist_entry_id;
+    int64_t playlist_insert_id;
+    int playlist_insert_num_entries;
+} mpv_event_end_file;
 
 typedef struct mpv_event {
     mpv_event_id event_id;
@@ -1216,6 +1228,10 @@ public:
         return flagProperty("eof-reached", false);
     }
 
+    int lastEndFileReason() const {
+        return endFileReason.load();
+    }
+
     std::string audioTracksJson() {
         return tracksJsonForType("audio");
     }
@@ -1454,6 +1470,8 @@ private:
     std::thread eventThread;
     std::atomic<long long> videoFrameTicks_{0};
     std::atomic_bool stopping = false;
+    // mpv_end_file_reason of the last END_FILE since the last START_FILE; -1 = none.
+    std::atomic_int endFileReason{-1};
     std::atomic_bool shuttingDown = false;
     std::atomic_bool hwdecLogged = false;  // one-shot log for hwdec-current
 
@@ -2095,6 +2113,13 @@ private:
             if (!event) continue;
             if (event->event_id == MPV_EVENT_SHUTDOWN) {
                 return;
+            }
+            // A failed open (404, refused, bad URL) leaves mpv idle with eof-reached
+            // unavailable; the Kotlin side reads the reason to fail a live start at once.
+            if (event->event_id == MPV_EVENT_START_FILE) {
+                endFileReason.store(-1);
+            } else if (event->event_id == MPV_EVENT_END_FILE && event->data) {
+                endFileReason.store(static_cast<const mpv_event_end_file *>(event->data)->reason);
             }
         }
     }
@@ -2938,6 +2963,13 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_isEnded(JNIEnv *, jobject, jlong handle) {
     auto player = playerFromHandle(handle);
     return player && player->isEnded() ? JNI_TRUE : JNI_FALSE;
+}
+
+// mpv_end_file_reason of the last END_FILE since the last START_FILE, or -1.
+extern "C" JNIEXPORT jint JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_endFileReason(JNIEnv *, jobject, jlong handle) {
+    auto player = playerFromHandle(handle);
+    return player ? static_cast<jint>(player->lastEndFileReason()) : -1;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

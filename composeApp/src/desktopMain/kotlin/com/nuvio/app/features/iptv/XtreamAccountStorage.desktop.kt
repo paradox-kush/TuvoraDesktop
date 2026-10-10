@@ -3,7 +3,15 @@ package com.nuvio.app.features.iptv
 import com.nuvio.app.core.storage.DesktopStorage
 
 internal actual object XtreamAccountStorage {
-    private val store by lazy { DesktopStorage.store("nuvio_iptv") }
+    private val realStore by lazy { DesktopStorage.store("nuvio_iptv") }
+
+    /**
+     * Test seam: a store on a temp file. Desktop storage is the REAL ~/Library/Application Support/Tuvora,
+     * so a test that drives the hub (which remembers its selection here) must never reach [realStore].
+     */
+    internal var storeOverrideForTests: DesktopStorage.Store? = null
+
+    private val store: DesktopStorage.Store get() = storeOverrideForTests ?: realStore
 
     actual fun loadAccountsJson(profileId: Int): String? = store.getString("xtream_accounts_$profileId")
 

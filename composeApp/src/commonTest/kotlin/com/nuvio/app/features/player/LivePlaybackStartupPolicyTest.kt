@@ -18,7 +18,7 @@ class LivePlaybackStartupPolicyTest {
     }
     @Test fun `healthy radio needs no video frames`() {
         val policy = LivePlaybackStartupPolicy()
-        assertFalse(policy.sample(PlayerPlaybackSnapshot(isPlaying = true), 100))
+        assertFalse(policy.sample(PlayerPlaybackSnapshot(isPlaying = true, positionMs = 500), 100))
         assertFalse(policy.sample(PlayerPlaybackSnapshot(), LivePlaybackStartupPolicy.TIMEOUT_MS))
     }
     @Test fun `playhead progress proves startup even if playing flag is delayed`() {
@@ -34,8 +34,30 @@ class LivePlaybackStartupPolicyTest {
     }
     @Test fun `an end after healthy playback belongs to recovery rather than startup`() {
         val policy = LivePlaybackStartupPolicy()
-        assertFalse(policy.sample(PlayerPlaybackSnapshot(isPlaying = true), 100))
+        assertFalse(policy.sample(PlayerPlaybackSnapshot(isPlaying = true, positionMs = 500), 100))
         assertFalse(policy.sample(PlayerPlaybackSnapshot(isEnded = true), 200))
+    }
+    @Test fun `an optimistic playing flag before the file loads does not prove startup`() {
+        // Android libmpv echoes pause=false into isPlaying before anything has loaded. A channel
+        // that then fails to open must end the attempt (error + Retry), not count as started.
+        val policy = LivePlaybackStartupPolicy()
+        assertFalse(policy.sample(PlayerPlaybackSnapshot(isLoading = false, isPlaying = true), 0))
+        val failedOpen = LivePlaybackStartupPolicy.endFileSnapshot(PlayerPlaybackSnapshot(), "error", true)
+        assertTrue(policy.sample(failedOpen, 0), "a failed open after a phantom playing flag must end the attempt")
+    }
+    @Test fun `a drawn frame proves startup even before the playhead moves`() {
+        val policy = LivePlaybackStartupPolicy()
+        assertFalse(policy.sample(PlayerPlaybackSnapshot(videoProgressTicks = 1), 100))
+        assertFalse(policy.sample(PlayerPlaybackSnapshot(isEnded = true), 200))
+    }
+    @Test fun `a reconnect of a channel that already played belongs to recovery not startup`() {
+        // The freeze watcher reconnects through the same re-resolve as Retry, which starts a new
+        // attempt. With the provider still down that attempt never plays; judged as a first open it
+        // ended the indefinite reconnect after ~14 s and the channel never came back on its own.
+        val reconnect = LivePlaybackStartupPolicy(recoveringPlayedChannel = true)
+        val failedOpen = LivePlaybackStartupPolicy.endFileSnapshot(PlayerPlaybackSnapshot(), "error", true)
+        assertFalse(reconnect.sample(failedOpen, 0))
+        assertFalse(reconnect.sample(PlayerPlaybackSnapshot(), LivePlaybackStartupPolicy.TIMEOUT_MS))
     }
     @Test fun `mpv live end events are terminal even when EOF property was cleared`() {
         for (reason in listOf("eof", "error")) {

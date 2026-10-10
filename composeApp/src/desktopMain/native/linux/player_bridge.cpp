@@ -56,6 +56,8 @@ struct Player {
     std::thread eventThread;
     std::atomic<bool> running{false};
     std::atomic<bool> ended{false};
+    // mpv_end_file_reason of the last END_FILE since the last START_FILE; -1 = none.
+    std::atomic<int> endFileReason{-1};
     jobject eventSink = nullptr;    // global ref, JS control events dispatch here
     jmethodID eventMethod = nullptr; // onPlayerEvent(String, double)
     // Phase 2: WebKitGTK controls overlay, all touched only on the GTK thread
@@ -1471,10 +1473,14 @@ void runEventLoop(Player *player) {
                 if (end && end->reason == MPV_END_FILE_REASON_EOF) {
                     player->ended.store(true);
                 }
+                // A failed open (404, refused, bad URL) ends with reason ERROR and leaves
+                // eof-reached unavailable; the Kotlin side reads this to fail a live start.
+                if (end) player->endFileReason.store(static_cast<int>(end->reason));
                 break;
             }
             case MPV_EVENT_START_FILE:
                 player->ended.store(false);
+                player->endFileReason.store(-1);
                 player->firstFrameShown.store(false);  // re-show loading for the new file
                 break;
             case MPV_EVENT_PLAYBACK_RESTART:
@@ -1845,6 +1851,13 @@ JNIEXPORT jboolean JNICALL NP(isEnded)(JNIEnv *, jobject, jlong handle) {
     // Mirror the macOS bridge (rawIsEnded reads eof-reached) so Nuvio's
     // next-episode / autoplay logic actually triggers at the end of a file.
     return (mpvGetFlag(p->mpv, "eof-reached") || p->ended.load()) ? JNI_TRUE : JNI_FALSE;
+}
+
+// mpv_end_file_reason of the last END_FILE since the last START_FILE, or -1.
+JNIEXPORT jint JNICALL NP(endFileReason)(JNIEnv *, jobject, jlong handle) {
+    Player *p = asPlayer(handle);
+    if (!p) return -1;
+    return static_cast<jint>(p->endFileReason.load());
 }
 
 JNIEXPORT jboolean JNICALL NP(isPaused)(JNIEnv *, jobject, jlong handle) {

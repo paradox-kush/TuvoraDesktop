@@ -74,6 +74,7 @@ actual fun PlatformPlayerSurface(
         NativePlayerSurface(
             sourceUrl = sourceUrl,
             sourceAvailable = sourceAvailable,
+            isLiveStream = LivePlaybackRejoinPolicy.rejoinsLiveEdge(streamType, isCatchUpPlayback),
             sourceHeaders = sourceHeaders,
             modifier = modifier,
             playWhenReady = playWhenReady,
@@ -113,6 +114,7 @@ actual fun PlatformPlayerSurface(
 private fun NativePlayerSurface(
     sourceUrl: String,
     sourceAvailable: Boolean,
+    isLiveStream: Boolean,
     sourceHeaders: Map<String, String>,
     modifier: Modifier,
     playWhenReady: Boolean,
@@ -276,9 +278,11 @@ private fun NativePlayerSurface(
         }
     }
 
+    // A live END_FILE (failed open / dropped stream) reaches the screen as an ended snapshot.
+    val latestIsLiveStream = rememberUpdatedState(isLiveStream)
     LaunchedEffect(controller) {
         while (true) {
-            onSnapshot(controller.snapshot())
+            onSnapshot(controller.liveAwareSnapshot(latestIsLiveStream.value))
             delay(500L)
         }
     }

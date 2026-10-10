@@ -77,6 +77,38 @@ object XtreamHubRepository {
         scope.launch {
             com.nuvio.app.features.iptv.match.PosterEnricher.updates.collect { applyPosterUpdate(it) }
         }
+        // Self-heal, event-driven (never a poll): an import the page gave up waiting on has landed, or a
+        // playlist's catalog index finished building — show it, and ask the failed rows once more.
+        scope.launch { IptvImportProgress.completed.collect { onCatalogLanded(it) } }
+        scope.launch {
+            var building = emptySet<String>()
+            XtreamMatchIndex.buildProgress.collect { progress ->
+                val finished = building - progress.keys
+                building = progress.keys
+                finished.forEach { onCatalogLanded(it) }
+            }
+        }
+    }
+
+    /** [accountId]'s catalog is now readable: end a failed page and re-ask its failed rows, once. */
+    private fun onCatalogLanded(accountId: String) {
+        val st = _uiState.value
+        if (st.selectedAccountId != accountId) return
+        if (st.categoriesLoad is LoadStatus.Failed || (st.categories.isEmpty() && st.categoriesLoad !is LoadStatus.Loading)) {
+            showSection(accountId, st.section)
+            return
+        }
+        val key = accountId to st.section
+        val failedIds = synchronized(categoryLock) {
+            groupFailures.removeAll { it.first == accountId }
+            val current = cache[key] ?: return@synchronized emptyList()
+            val ids = current.filter { it.failed }.map { it.id }
+            cache[key] = current.map { if (it.failed) it.copy(load = LoadStatus.Idle) else it }
+            ids
+        }
+        if (failedIds.isEmpty()) return
+        // One more ask each, now that the catalog is local (bounded by the same row deadline and slots).
+        failedIds.forEach { requestCategory(it, prefetch = false) }
     }
     private var lastPrefetchMark: TimeMark? = null
     private val REFRESH_TTL = 6.hours
@@ -248,17 +280,17 @@ object XtreamHubRepository {
     private fun showSection(accountId: String, section: XtreamHubSection) {
         if (accountFor(accountId)?.typeEnabled(section.contentKey) == false) {
             // Disabled content type: never fetched, nothing shown.
-            _uiState.update { it.copy(categories = emptyList(), loadingCategories = false, loadError = null) }
+            _uiState.update { it.copy(categories = emptyList(), categoriesLoad = LoadStatus.Idle, loadError = null) }
             return
         }
         val cached = cachedCategories(accountId, section)
         if (cached != null) {
             // Serve the cache, but STILL apply the personalization overlay (the cache holds the raw
             // provider list; hiding/reordering a category must show without a re-fetch).
-            _uiState.update { it.copy(categories = applyCategoryOverlay(accountId, section.contentKey, cached), loadingCategories = false, loadError = null) }
+            _uiState.update { it.copy(categories = applyCategoryOverlay(accountId, section.contentKey, cached), categoriesLoad = LoadStatus.Loaded, loadError = null) }
             return
         }
-        _uiState.update { it.copy(categories = emptyList(), loadingCategories = true, loadError = null) }
+        _uiState.update { it.copy(categories = emptyList(), categoriesLoad = BoundedLoad.begin(LoadSurface.HUB_CATEGORIES), loadError = null) }
         scope.launch { fetchCategoryList(accountId, section) }
     }
 
@@ -344,7 +376,15 @@ object XtreamHubRepository {
             if (d.custom) {
                 val rowId = com.nuvio.app.features.iptv.overlay.IptvCustomGroupPolicy.rowId(d.id)
                 val items = groupItems[accountId to rowId]
-                XtreamHubCategory(rowId, d.name, items = items.orEmpty(), loaded = items != null, hasMore = false)
+                val failed = (accountId to rowId) in groupFailures
+                XtreamHubCategory(
+                    rowId, d.name, items = items.orEmpty(), loaded = items != null, hasMore = false,
+                    load = when {
+                        items != null -> if (items.isEmpty()) LoadStatus.Empty else LoadStatus.Loaded
+                        failed -> LoadStatus.Failed(timedOut = false)
+                        else -> LoadStatus.Idle
+                    },
+                )
             } else {
                 byId[d.id]?.copy(name = d.name)
             }
@@ -354,20 +394,33 @@ object XtreamHubRepository {
     /** accountId to group row id -> the group's resolved channels; dropped whenever the overlay changes. */
     private val groupItems = mutableMapOf<Pair<String, String>, List<MetaPreview>>()
     private val groupLoads = mutableSetOf<Pair<String, String>>()
+    private val groupFailures = mutableSetOf<Pair<String, String>>()
     /** The lineup keyed by entity id, rebuilt only when the account's channel list object changes. */
     private var entityIndex: Triple<String, List<XtreamChannel>, Map<String, XtreamChannel>>? = null
 
     /** F02: resolve a custom group's members against the playlist's lineup, then repaint the section. */
-    private fun loadGroupRow(accountId: String, rowId: String) {
+    private fun loadGroupRow(accountId: String, rowId: String, explicit: Boolean = false) {
         val key = accountId to rowId
-        val claimed = synchronized(categoryLock) { key !in groupItems && groupLoads.add(key) }
+        val claimed = synchronized(categoryLock) {
+            // A failed group row waits for its Retry (or a finished import) — never a re-ask per recomposition.
+            if (key in groupFailures && !explicit) false else key !in groupItems && groupLoads.add(key)
+        }
         if (!claimed) return
+        synchronized(categoryLock) { groupFailures.remove(key) }
         scope.launch {
             try {
                 val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == accountId } ?: return@launch
                 val groupId = com.nuvio.app.features.iptv.overlay.IptvCustomGroupPolicy.groupIdOf(rowId) ?: return@launch
                 val group = overlaySnapshot.groups.firstOrNull { it.id == groupId } ?: return@launch
-                val channels = XtreamSearchIndex.liveChannelsFor(account)
+                val lineup = BoundedLoad.run(LoadSurface.HUB_ROW, report = mapOf("source_type" to account.sourceType, "row" to "group")) {
+                    XtreamSearchIndex.liveChannelsFor(account)
+                }
+                val channels = lineup.valueOrNull() ?: run {
+                    synchronized(categoryLock) { groupFailures.add(key) }
+                    val st = _uiState.value
+                    if (st.selectedAccountId == accountId) showSection(accountId, st.section)
+                    return@launch
+                }
                 val index = entityIndex?.takeIf { it.first == accountId && it.second === channels }?.third
                     ?: channels.associateBy {
                         com.nuvio.app.features.iptv.identity.IptvIdentity.entityId(account.id, it.name, it.epgChannelId)
@@ -407,7 +460,13 @@ object XtreamHubRepository {
     }
 
     private suspend fun fetchCategoryList(accountId: String, section: XtreamHubSection) {
-        val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == accountId } ?: return
+        val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == accountId } ?: run {
+            // The playlist went away mid-load: end the skeleton (this return used to leave it up forever).
+            if (isCurrent(accountId, section)) {
+                _uiState.update { it.copy(categoriesLoad = LoadStatus.Failed(timedOut = false), loadError = IptvLoadFailurePolicy.classify(null)) }
+            }
+            return
+        }
         // Xtream reads its section rows from the local catalog once it's built (P7, item 4) —
         // no per-session category fetch. Index absent (first run): fall through to the live
         // API below and kick the build so the NEXT visit is local.
@@ -425,19 +484,34 @@ object XtreamHubRepository {
                 }
                 val shown = applyCategoryOverlay(account.id, section.contentKey, merged)
                 if (isCurrent(accountId, section)) {
-                    _uiState.update { it.copy(categories = shown, loadingCategories = false, loadError = null) }
+                    _uiState.update { it.copy(categories = shown, categoriesLoad = LoadStatus.Loaded, loadError = null) }
                 }
                 return
             }
             XtreamTmdbResolver.warmUp(listOf(account))
         }
         val client = IptvClient.forAccount(account)   // xtream -> XtreamClient, m3u_url -> M3UClient
-        val outcome = when (section) {
-            XtreamHubSection.LIVE -> client.liveCategories(account)
-            XtreamHubSection.MOVIES -> client.vodCategories(account)
-            XtreamHubSection.SERIES -> client.seriesCategories(account)
+        // Bounded (BoundedLoad): a provider that never answers — or trickles bytes so no socket timeout
+        // ever fires — ends as the error card with Retry. For M3U/Stalker this call IS the playlist
+        // import: its progress keeps the deadline open, and if the deadline still passes the import keeps
+        // running and IptvImportProgress.completed brings the page back when it lands.
+        val outcome = BoundedLoad.run(
+            surface = LoadSurface.HUB_CATEGORIES,
+            progress = IptvImportProgress.of(account.id),
+            onProgress = { loading ->
+                if (isCurrent(accountId, section)) _uiState.update { it.copy(categoriesLoad = loading) }
+            },
+            isEmpty = { it.isEmpty() },
+            cancelOnTimeout = account.sourceType == SOURCE_TYPE_XTREAM,
+            report = mapOf("source_type" to account.sourceType, "section" to section.name.lowercase()),
+        ) {
+            when (section) {
+                XtreamHubSection.LIVE -> client.liveCategories(account)
+                XtreamHubSection.MOVIES -> client.vodCategories(account)
+                XtreamHubSection.SERIES -> client.seriesCategories(account)
+            }.getOrThrow()
         }
-        val fresh = outcome.getOrNull() ?: run {
+        val fresh = outcome.valueOrNull() ?: run {
             // Failed fetch: keep any warm cache, but if there's none the section would otherwise spin
             // forever — surface an error so the user knows the portal is unreachable, not just slow.
             // The throwable is CLASSIFIED rather than discarded: a WAF block and a portal that
@@ -445,11 +519,14 @@ object XtreamHubRepository {
             // to debug their provider's uptime instead of the thing that is actually wrong.
             if (isCurrent(accountId, section) && cachedCategories(accountId, section) == null) {
                 val failure = IptvLoadFailurePolicy.classify(
-                    outcome.exceptionOrNull(),
+                    (outcome as? LoadOutcome.Failed)?.error,
                     // The server that actually failed last (Step 0.3b) — with backups that is not always the main one.
                     host = IptvPanelGuard.panelOriginUrlOf(account, PlaylistServerFailover.lastFailedServerUrl(account) ?: account.baseUrl),
                 )
-                _uiState.update { it.copy(loadingCategories = false, loadError = failure) }
+                _uiState.update { it.copy(categoriesLoad = outcome.status, loadError = failure) }
+            } else if (isCurrent(accountId, section)) {
+                // A warm cache is on screen: it stays, and the skeleton (if any) ends.
+                _uiState.update { it.copy(categoriesLoad = LoadStatus.Loaded) }
             }
             return
         }
@@ -465,13 +542,20 @@ object XtreamHubRepository {
         }
         val shown = applyCategoryOverlay(account.id, section.contentKey, merged)
         if (isCurrent(accountId, section)) {
-            _uiState.update { it.copy(categories = shown, loadingCategories = false, loadError = null) }
+            _uiState.update { it.copy(categories = shown, categoriesLoad = outcome.status, loadError = null) }
         }
     }
 
     /** Lazily fetch one category's items (called when its row first composes). */
     fun loadCategory(categoryId: String) {
         requestCategory(categoryId, prefetch = false)
+    }
+
+    /** The failed row's Retry: the one way (besides a finished import) a failed row is asked again. */
+    fun retryCategory(categoryId: String) {
+        val state = _uiState.value
+        state.selectedAccountId?.let { id -> accountFor(id)?.let { IptvPanelGuard.resetForAccount(it) } }
+        requestCategory(categoryId, prefetch = false, explicit = true)
     }
 
     /**
@@ -483,16 +567,19 @@ object XtreamHubRepository {
         requestCategory(categoryId, prefetch = true)
     }
 
-    private fun requestCategory(categoryId: String, prefetch: Boolean) {
+    private fun requestCategory(categoryId: String, prefetch: Boolean, explicit: Boolean = false) {
         val state = _uiState.value
         val accountId = state.selectedAccountId ?: return
         val section = state.section
         if (isCustomGroupRow(categoryId)) {
-            loadGroupRow(accountId, categoryId)
+            loadGroupRow(accountId, categoryId, explicit)
             return
         }
         val category = cachedCategories(accountId, section)?.firstOrNull { it.id == categoryId } ?: return
         if (category.loaded) return
+        // A failed row is re-asked only by its Retry or a finished import — composing it again (a scroll)
+        // must not turn a dead provider into a request loop.
+        if (category.failed && !explicit) return
         val key = CategoryKey(accountId, section, categoryId)
         // Claim the fetch atomically: a visible row always gets one, a prefetch only while the pipe
         // has room.
@@ -504,7 +591,6 @@ object XtreamHubRepository {
             }
         }
         if (!claimed) return
-        updateCategory(accountId, section, categoryId) { it.copy(loading = true) }
         com.nuvio.app.core.diag.HubTrace.log("category", "claimed") { "cat=$categoryId prefetch=$prefetch inFlight=${inFlightCategories.size}" }
         val job = scope.launch {
             var completed = false
@@ -514,25 +600,43 @@ object XtreamHubRepository {
                     com.nuvio.app.core.diag.HubTrace.log("category", "gotPermit") {
                         "cat=$categoryId waited=${com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs() - tClaim}ms"
                     }
+                    // The row's deadline starts with its permit: rows queued behind the 3 slots are
+                    // waiting on us, not on the provider.
+                    updateCategory(accountId, section, categoryId) { it.copy(load = BoundedLoad.begin(LoadSurface.HUB_ROW)) }
                     val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == accountId }
-                    val client = account?.let { IptvClient.forAccount(it) }
-                    val (items, hasMore) = if (account == null || client == null) emptyList<MetaPreview>() to false
-                    else fetchWindow(account, section, categoryId, offset = 0, prefetch = prefetch)
-                    com.nuvio.app.core.diag.HubTrace.log("category", "fetched") {
-                        "cat=$categoryId n=${items.size} total=${com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs() - tClaim}ms"
+                    val outcome = BoundedLoad.run(
+                        surface = LoadSurface.HUB_ROW,
+                        isEmpty = { it.first.isEmpty() },
+                        report = mapOf("source_type" to (account?.sourceType ?: "unknown"), "section" to section.name.lowercase()),
+                    ) {
+                        if (account == null) emptyList<MetaPreview>() to false
+                        else fetchWindow(account, section, categoryId, offset = 0, prefetch = prefetch)
                     }
-                    // Dedup the initial window by id BEFORE it becomes Lazy-list keys: a provider
-                    // can return the same stream_id twice in one page, and a duplicate Compose `key`
-                    // is a hard crash (a message-less SIGABRT on iOS, `Key … already used` on Android).
-                    // Appended pages are already deduped by mergePagedWindow; the initial window was the gap.
-                    updateCategory(accountId, section, categoryId) { it.copy(items = items.distinctBy { it.id }, loaded = true, loading = false, hasMore = hasMore) }
-                    noteLoadedAndEvict(key)
+                    com.nuvio.app.core.diag.HubTrace.log("category", "fetched") {
+                        "cat=$categoryId outcome=${outcome.status} total=${com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs() - tClaim}ms"
+                    }
+                    val window = outcome.valueOrNull()
+                    if (window == null) {
+                        // Failed or timed out: the row stays, with Retry — a failure used to read as an
+                        // empty category and the row vanished for the session.
+                        updateCategory(accountId, section, categoryId) { it.copy(loaded = false, load = outcome.status) }
+                    } else {
+                        val (items, hasMore) = window
+                        // Dedup the initial window by id BEFORE it becomes Lazy-list keys: a provider
+                        // can return the same stream_id twice in one page, and a duplicate Compose `key`
+                        // is a hard crash (a message-less SIGABRT on iOS, `Key … already used` on Android).
+                        // Appended pages are already deduped by mergePagedWindow; the initial window was the gap.
+                        updateCategory(accountId, section, categoryId) {
+                            it.copy(items = items.distinctBy { it.id }, loaded = true, load = outcome.status, hasMore = hasMore)
+                        }
+                        noteLoadedAndEvict(key)
+                    }
                     completed = true
                 }
             } finally {
                 synchronized(categoryLock) { inFlightCategories.remove(key) }
                 // Never strand a row as permanently "loading" if the fetch was cancelled.
-                if (!completed) updateCategory(accountId, section, categoryId) { it.copy(loading = false) }
+                if (!completed) updateCategory(accountId, section, categoryId) { it.copy(load = LoadStatus.Idle) }
             }
         }
         synchronized(categoryLock) { categoryJobs.getOrPut(accountId) { mutableListOf() }.add(job) }
@@ -575,7 +679,9 @@ object XtreamHubRepository {
                 val account = accountFor(accountId) ?: return@launch
                 val offset = cachedCategories(accountId, section)
                     ?.firstOrNull { it.id == categoryId }?.items?.size ?: return@launch
-                val (more, hasMore) = fetchWindow(account, section, categoryId, offset)
+                val (more, hasMore) = BoundedLoad.run(LoadSurface.HUB_ROW) {
+                    fetchWindow(account, section, categoryId, offset)
+                }.valueOrNull() ?: return@launch
                 updateCategory(accountId, section, categoryId) { cat ->
                     val (items, more2) = mergePagedWindow(cat.items, more, hasMore) { it.id }
                     cat.copy(items = items, hasMore = more2)
@@ -649,18 +755,18 @@ object XtreamHubRepository {
                 if (offset > 0) return emptyList<MetaPreview>() to false
                 val client = IptvClient.forAccount(account)
                 return when (section) {
-                    XtreamHubSection.LIVE -> client.liveChannels(account, categoryId).getOrDefault(emptyList()).take(PAGE_SIZE).let { rows ->
+                    XtreamHubSection.LIVE -> client.liveChannels(account, categoryId).getOrThrow().take(PAGE_SIZE).let { rows ->
                         XtreamItemRegistry.registerAll(rows.map { XtreamItemRegistry.resolvedChannel(accountId, it) })
                         val entityIds = rows.map {
                             com.nuvio.app.features.iptv.identity.IptvIdentity.entityId(accountId, it.name, it.epgChannelId)
                         }
                         rawLiveWindow(entityIds, rows.map { it.toMetaPreview(accountId) })
                     }
-                    XtreamHubSection.MOVIES -> client.vodMovies(account, categoryId).getOrDefault(emptyList()).take(PAGE_SIZE).let { rows ->
+                    XtreamHubSection.MOVIES -> client.vodMovies(account, categoryId).getOrThrow().take(PAGE_SIZE).let { rows ->
                         XtreamItemRegistry.registerAll(rows.map { XtreamItemRegistry.resolvedMovie(accountId, it) })
                         rows.map { it.toMetaPreview(accountId) }
                     }
-                    XtreamHubSection.SERIES -> client.series(account, categoryId).getOrDefault(emptyList()).take(PAGE_SIZE).let { rows ->
+                    XtreamHubSection.SERIES -> client.series(account, categoryId).getOrThrow().take(PAGE_SIZE).let { rows ->
                         XtreamItemRegistry.registerAll(rows.map { XtreamItemRegistry.resolvedSeries(accountId, it) })
                         rows.map { it.toMetaPreview(accountId) }
                     }
@@ -680,11 +786,11 @@ object XtreamHubRepository {
                 if (offset > 0) return emptyList<MetaPreview>() to false
                 val client = IptvClient.forAccount(account)
                 return when (section) {
-                    XtreamHubSection.MOVIES -> client.vodMovies(account, categoryId).getOrDefault(emptyList()).let { rows ->
+                    XtreamHubSection.MOVIES -> client.vodMovies(account, categoryId).getOrThrow().let { rows ->
                         XtreamItemRegistry.registerAll(rows.map { XtreamItemRegistry.resolvedMovie(accountId, it) })
                         rows.map { it.toMetaPreview(accountId) }
                     }
-                    else -> client.series(account, categoryId).getOrDefault(emptyList()).let { rows ->
+                    else -> client.series(account, categoryId).getOrThrow().let { rows ->
                         XtreamItemRegistry.registerAll(rows.map { XtreamItemRegistry.resolvedSeries(accountId, it) })
                         rows.map { it.toMetaPreview(accountId) }
                     }
@@ -865,7 +971,7 @@ object XtreamHubRepository {
         }
         for (k in evicted) {
             updateCategory(k.accountId, k.section, k.categoryId) {
-                it.copy(items = emptyList(), loaded = false, loading = false)
+                it.copy(items = emptyList(), loaded = false, load = LoadStatus.Idle)
             }
         }
     }

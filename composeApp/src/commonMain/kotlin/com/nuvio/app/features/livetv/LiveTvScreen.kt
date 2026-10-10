@@ -65,7 +65,9 @@ import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.PlatformBackHandler
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
+import com.nuvio.app.features.iptv.BoundedLoad
 import com.nuvio.app.features.iptv.CatchUpDialectWalk
+import com.nuvio.app.features.iptv.LoadSurface
 import com.nuvio.app.features.iptv.CatchUpPlayback
 import com.nuvio.app.features.iptv.GuideDataRefreshPolicy
 import com.nuvio.app.features.iptv.TileEpgQueue
@@ -273,10 +275,18 @@ fun LiveTvScreen(
         source = null
         resolveError = false
         playbackError = null
-        val resolved = LiveTvData.resolveSource(
-            currentContentId, currentTitle, currentLogo,
-            forceMint = retryTick > 0,
-        )
+        // Bounded (BoundedLoad): a portal that never answers create_link ends as the error pill + Retry,
+        // not a spinner over a black player.
+        val resolved = BoundedLoad.run(
+            surface = LoadSurface.LIVE_RESOLVE,
+            isEmpty = { it == null },
+            report = mapOf("source_type" to LiveTvData.sourceTypeOf(currentContentId)),
+        ) {
+            LiveTvData.resolveSource(
+                currentContentId, currentTitle, currentLogo,
+                forceMint = retryTick > 0,
+            )
+        }.valueOrNull()
         if (resolved == null) resolveError = true else source = resolved
     }
 
@@ -295,9 +305,13 @@ fun LiveTvScreen(
     // fast-fail — the AUTOMATIC one-shot re-resolve below must not reset.
     val onRetry: () -> Unit = {
         LiveTvData.resetPanelGuard(currentContentId)
-        source = null
-        controller = null
-        snapshot = PlayerPlaybackSnapshot()
+        // A fresh attempt: tear the dead surface down so the startup deadline below re-arms. Not
+        // during a replay — the live re-resolve stands down there, so nothing would refill it.
+        if (!isCatchUp) {
+            source = null
+            controller = null
+            snapshot = PlayerPlaybackSnapshot()
+        }
         retryTick++
     }
 
@@ -576,7 +590,10 @@ fun LiveTvScreen(
         val dockedPlayerHeight = maxHeight * DOCKED_PLAYER_HEIGHT_FRACTION
         // One deadline per resolved source attempt, cancelled on switch/Retry/screen exit.
         // Startup failures have their own latch so they never enter the token-refresh loop.
-        val startupPolicy = remember(source, retryTick, isCatchUp) { LivePlaybackStartupPolicy() }
+        val startupPolicy = remember(source, retryTick, isCatchUp) {
+            // Armed = this channel already played; a re-resolve now is the freeze watcher's reconnect.
+            LivePlaybackStartupPolicy(recoveringPlayedChannel = freezeReporter.isArmed)
+        }
         var startupFailed by remember(startupPolicy) { mutableStateOf(false) }
         val lifecycleOwner = LocalLifecycleOwner.current
         LaunchedEffect(startupPolicy, lifecycleOwner, startupFailed) {
@@ -653,6 +670,8 @@ fun LiveTvScreen(
                     ),
             ) {
                 LivePlayerSurface(
+                    // Dropping the source also removes the native video layer, which sits ABOVE
+                    // Compose on desktop — otherwise it would hide the error pill below.
                     source = source.takeUnless { startupFailed },
                     isCatchUpPlayback = isCatchUp,
                     title = catchUp?.programmeTitle ?: currentTitle,
@@ -693,7 +712,7 @@ fun LiveTvScreen(
                         if (session != null && !session.proven) {
                             when {
                                 // The attempt played: pin the winner and stop walking.
-                                it.isPlaying || it.positionMs > 0L -> {
+                                LivePlaybackStartupPolicy.hasStarted(it) -> {
                                     dialectWalk.onSuccess(session.attempt.token)
                                     catchUp = session.copy(proven = true)
                                 }
@@ -703,7 +722,7 @@ fun LiveTvScreen(
                                 it.isEnded -> onCatchUpFailure(playbackError)
                             }
                         }
-                        if (!playbackStartRecorded.value && (it.positionMs > 0L || it.isPlaying)) {
+                        if (!playbackStartRecorded.value && LivePlaybackStartupPolicy.hasStarted(it)) {
                             playbackStartRecorded.value = true
                             Breadcrumbs.playbackStarted(
                                 kind = "live",

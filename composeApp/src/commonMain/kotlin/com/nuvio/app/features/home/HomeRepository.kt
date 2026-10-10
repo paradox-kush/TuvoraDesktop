@@ -1,6 +1,7 @@
 package com.nuvio.app.features.home
 
 import com.nuvio.app.core.contracts.HomeSectionContributorRegistry
+import com.nuvio.app.features.addons.AddonLoadRetryPolicy
 import com.nuvio.app.features.addons.ManagedAddon
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.enabledAddons
@@ -26,6 +27,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -52,6 +55,8 @@ object HomeRepository {
     private var collectionHeroRequestKey: String? = null
     private var lastPublishedCatalogHeroEmpty: Boolean = true
     private var lastErrorMessage: String? = null
+    // Rows whose last fetch failed; fetched again by [AddonLoadRetryPolicy], never the ones that loaded.
+    private var failedCacheKeys: Set<String> = emptySet()
 
     fun refresh(addons: List<ManagedAddon>, force: Boolean = false) {
         val activeAddons = addons.enabledAddons()
@@ -72,6 +77,7 @@ object HomeRepository {
             activeRequestKey = null
             cachedSections = emptyMap()
             lastErrorMessage = null
+            failedCacheKeys = emptySet()
             publishCurrentState(
                 isLoading = false,
                 requestKey = requestKey,
@@ -97,6 +103,7 @@ object HomeRepository {
             }
             var firstErrorMessage: String? = null
             var batchIndex = 0
+            val failedThisLoad = mutableSetOf<String>()
 
             prioritizedRequests.chunked(HOME_CATALOG_FETCH_BATCH_SIZE).forEach { batch ->
                 if (activeRequestKey != requestKey) return@launch
@@ -115,6 +122,10 @@ object HomeRepository {
                 }.forEach { (cacheKey, section) ->
                     loadedSections[cacheKey] = section
                 }
+                results.forEach { (request, result) ->
+                    if (result.isFailure) failedThisLoad += request.cacheKey else failedThisLoad -= request.cacheKey
+                }
+                failedCacheKeys = failedThisLoad.toSet()
                 if (firstErrorMessage == null) {
                     firstErrorMessage = results.firstNotNullOfOrNull { (_, result) ->
                         result.exceptionOrNull()?.message
@@ -146,6 +157,16 @@ object HomeRepository {
                 refreshSources = true,
                 requestKey = requestKey,
             )
+
+            // A row that failed used to stay missing until the app restarted. Fetch only those again on a
+            // short bounded ladder; after it, a Home visit or Retry tries once more (retryFailed).
+            var retries = 0
+            while (failedCacheKeys.isNotEmpty()) {
+                val wait = AddonLoadRetryPolicy.delayBeforeRetry(retries++) ?: break
+                delay(wait)
+                if (currentRequestKey != requestKey) return@launch
+                fetchFailedOnce(requestKey)
+            }
         }
     }
 
@@ -155,6 +176,33 @@ object HomeRepository {
      * visit inside the TTL is free; there is no timer here.
      */
     fun refreshContributed(force: Boolean = false) = refreshContributedSections(force)
+
+    /**
+     * One pass over the rows whose last fetch failed (Home became visible again, or Retry). No request at
+     * all when nothing failed, and never while a load is already running.
+     */
+    fun retryFailed() {
+        if (activeJob?.isActive == true) return
+        val requestKey = currentRequestKey ?: return
+        if (AddonLoadRetryPolicy.catalogsToRetry(currentDefinitions.map { it.cacheKey }, failedCacheKeys).isEmpty()) return
+        activeJob = scope.launch { fetchFailedOnce(requestKey) }
+    }
+
+    private suspend fun fetchFailedOnce(requestKey: String) = coroutineScope {
+        val keys = AddonLoadRetryPolicy.catalogsToRetry(currentDefinitions.map { it.cacheKey }, failedCacheKeys).toSet()
+        if (keys.isEmpty()) return@coroutineScope
+        val results = currentDefinitions
+            .filter { it.cacheKey in keys }
+            .distinctBy { it.cacheKey }
+            .map { definition -> async { definition to runCatching { definition.toSection(forceRefresh = true) } } }
+            .awaitAll()
+        if (currentRequestKey != requestKey) return@coroutineScope
+        val loaded = results.mapNotNull { (definition, result) -> result.getOrNull()?.let { definition.cacheKey to it } }
+        cachedSections = cachedSections + loaded
+        failedCacheKeys = failedCacheKeys - loaded.map { it.first }.toSet()
+        if (failedCacheKeys.isEmpty()) lastErrorMessage = null
+        publishCurrentState(isLoading = false, requestKey = requestKey)
+    }
 
     fun applyCurrentSettings() {
         publishCurrentState(
@@ -185,6 +233,7 @@ object HomeRepository {
         collectionHeroRequestKey = null
         lastPublishedCatalogHeroEmpty = true
         lastErrorMessage = null
+        failedCacheKeys = emptySet()
         _uiState.value = HomeUiState()
         // A profile (re)activation wipes Home after the first refresh already ran: the source-contributed rows (a media
         // server's) have no add-on request key to re-trigger them, so pull them again (a no-op with no contributor, and
@@ -276,6 +325,9 @@ object HomeRepository {
             heroItems = heroItems,
             sections = sections,
             errorMessage = if (sections.isEmpty()) lastErrorMessage else null,
+            failedRowCount = currentDefinitions.count { definition ->
+                definition.cacheKey in failedCacheKeys && preferences[definition.key]?.enabled != false
+            },
         )
         if (_uiState.value != nextState) _uiState.value = nextState
     }

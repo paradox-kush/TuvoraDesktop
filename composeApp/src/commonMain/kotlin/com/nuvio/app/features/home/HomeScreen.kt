@@ -50,6 +50,7 @@ import com.nuvio.app.core.ui.rememberPosterCardStyleUiState
 import com.nuvio.app.core.ui.withDuplicateSafeLazyKeys
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.enabledAddons
+import com.nuvio.app.features.addons.AddonLoadRetryPolicy
 import com.nuvio.app.features.addons.firstEnabledManifestError
 import com.nuvio.app.features.cloud.CloudLibraryContentType
 import com.nuvio.app.features.cloud.CloudLibraryRepository
@@ -179,6 +180,15 @@ fun HomeScreen(
     // TTL gate (HomeRefreshPolicy) makes a quick return a no-op, and a server with no rows enabled costs nothing.
     LaunchedEffect(homeLifecycleOwner) {
         homeLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) { HomeRepository.refreshContributed() }
+    }
+
+    // What failed on an earlier load (an add-on manifest, a catalog row) is fetched again each time Home
+    // becomes RESUMED — only the failures, never a timer, and nothing at all when nothing failed.
+    LaunchedEffect(homeLifecycleOwner) {
+        homeLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            AddonRepository.retryFailedManifests()
+            HomeRepository.retryFailed()
+        }
     }
 
     val addonsUiState by AddonRepository.uiState.collectAsStateWithLifecycle()
@@ -1296,6 +1306,27 @@ fun HomeScreen(
                         onLivePosterLongPress = { liveRecentActionTarget = it.toLiveRecentActionTarget() },
                         disintegrationRequest = continueWatchingDisintegrationRequest,
                     )
+
+                    if (AddonLoadRetryPolicy.showsPartialFailure(
+                            failedRowCount = homeUiState.failedRowCount,
+                            failedManifestCount = AddonLoadRetryPolicy.manifestsToRetry(enabledAddons).size,
+                            isLoading = homeUiState.isLoading || addonManifestsLoading,
+                        )
+                    ) {
+                        item(key = "home_partial_failure", contentType = "empty") {
+                            HomeEmptyStateCard(
+                                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                                title = stringResource(Res.string.home_rows_failed_title),
+                                message = stringResource(Res.string.home_rows_failed_message),
+                                actionLabel = stringResource(Res.string.action_retry),
+                                onActionClick = {
+                                    NetworkStatusRepository.requestRefresh(force = true)
+                                    AddonRepository.retryFailedManifests()
+                                    HomeRepository.retryFailed()
+                                },
+                            )
+                        }
+                    }
 
                     keyedEnabledHomeItems.forEach { keyedSettingsItem ->
                         val settingsItem = keyedSettingsItem.value

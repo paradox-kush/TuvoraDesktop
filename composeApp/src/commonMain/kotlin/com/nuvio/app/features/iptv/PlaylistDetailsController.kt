@@ -18,11 +18,14 @@ import kotlinx.coroutines.launch
 
 internal data class PlaylistDetailsLive(
     val info: XtreamAccountInfo? = null,
-    /** True until the panel answered or gave up (always false for a playlist with no panel). */
-    val loading: Boolean = true,
+    /** The panel's account check. Entered only through [BoundedLoad], so "Checking the account…" always ends. */
+    val load: LoadStatus = LoadStatus.Idle,
     val counts: DetailsCounts = DetailsCounts(),
     val hasPanel: Boolean = true,
-)
+) {
+    /** Still checking: not started yet (the screen opens before load runs) or in flight. */
+    val loading: Boolean get() = load is LoadStatus.Loading || load == LoadStatus.Idle && hasPanel
+}
 
 /**
  * The slow, I/O half of the details screen: the panel's account answer (cached by
@@ -39,16 +42,26 @@ internal class PlaylistDetailsController(
     private var loadedFor: String? = null
 
     fun load(account: XtreamAccount) {
-        if (loadedFor == account.id && job?.isActive != true && !_live.value.loading) return
+        if (loadedFor == account.id && job?.isActive != true && _live.value.load !is LoadStatus.Loading) return
         loadedFor = account.id
         job?.cancel()
         val hasPanel = !account.sourceType.isM3u()
-        _live.value = PlaylistDetailsLive(info = store.cached(account.id), loading = hasPanel, hasPanel = hasPanel)
+        _live.value = PlaylistDetailsLive(
+            info = store.cached(account.id),
+            load = if (hasPanel) BoundedLoad.begin(LoadSurface.SETTINGS) else LoadStatus.Empty,
+            hasPanel = hasPanel,
+        )
         job = scope.launch {
-            val counts = runCatching { localCatalogCounts(account) }.getOrDefault(DetailsCounts())
+            val counts = BoundedLoad.run(LoadSurface.SETTINGS, report = mapOf("row" to "details_counts")) {
+                localCatalogCounts(account)
+            }.valueOrNull() ?: DetailsCounts()
             _live.update { it.copy(counts = counts) }
-            val info = if (hasPanel) store.infoFor(account) else null
-            _live.update { it.copy(info = info ?: it.info, loading = false) }
+            if (!hasPanel) return@launch
+            // Bounded: a panel that never answers ends as "Couldn't reach the provider", not "Checking…" forever.
+            val outcome = BoundedLoad.run(LoadSurface.SETTINGS, isEmpty = { it == null }, report = mapOf("row" to "details_account")) {
+                store.infoFor(account)
+            }
+            _live.update { it.copy(info = outcome.valueOrNull() ?: it.info, load = outcome.status) }
         }
     }
 
