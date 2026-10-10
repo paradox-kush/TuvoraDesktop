@@ -88,7 +88,14 @@ internal object IptvHiddenItems : IptvHiddenItemsSource {
     }
 }
 
-internal data class HiddenItemsUiState(val loading: Boolean = false, val items: List<HiddenItem> = emptyList())
+internal data class HiddenItemsUiState(
+    /** Entered only through [com.nuvio.app.features.iptv.BoundedLoad]: a failed load is Failed (with Retry), never "nothing hidden". */
+    val load: com.nuvio.app.features.iptv.LoadStatus = com.nuvio.app.features.iptv.LoadStatus.Idle,
+    val items: List<HiddenItem> = emptyList(),
+) {
+    val loading: Boolean get() = load is com.nuvio.app.features.iptv.LoadStatus.Loading
+    val failed: Boolean get() = load is com.nuvio.app.features.iptv.LoadStatus.Failed
+}
 
 /** Screen-scoped state holder for the "Hidden channels & groups" list (Rule 4: the dialog only renders it). */
 internal class IptvHiddenItemsController(
@@ -99,10 +106,14 @@ internal class IptvHiddenItemsController(
     val state: StateFlow<HiddenItemsUiState> = mutableState.asStateFlow()
 
     fun open(account: XtreamAccount) {
-        mutableState.value = HiddenItemsUiState(loading = true)
+        mutableState.value = HiddenItemsUiState(load = com.nuvio.app.features.iptv.BoundedLoad.begin(com.nuvio.app.features.iptv.LoadSurface.SETTINGS))
         scope.launch {
-            val items = runCatching { source.load(account) }.getOrDefault(emptyList())
-            mutableState.value = HiddenItemsUiState(loading = false, items = items)
+            val outcome = com.nuvio.app.features.iptv.BoundedLoad.run(
+                com.nuvio.app.features.iptv.LoadSurface.SETTINGS,
+                isEmpty = { it.isEmpty() },
+                report = mapOf("row" to "hidden_items"),
+            ) { source.load(account) }
+            mutableState.value = HiddenItemsUiState(load = outcome.status, items = outcome.valueOrNull().orEmpty())
         }
     }
 

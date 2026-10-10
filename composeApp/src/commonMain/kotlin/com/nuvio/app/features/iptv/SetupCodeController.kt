@@ -21,7 +21,8 @@ internal data class SetupCodeUiState(
     val typed: String = "",
     /** A problem found while checking what was typed (shown under the field). */
     val typedProblem: SetupCodeProblem? = null,
-    val previewLoading: Boolean = false,
+    /** The preview request. Entered only through [BoundedLoad], so a dead backend ends as [SetupCodeOutcome.Network]. */
+    val previewLoad: LoadStatus = LoadStatus.Idle,
     /** The last preview attempt: [SetupCodeOutcome.Ready] or the reason it is not. Null before one ran. */
     val previewOutcome: SetupCodeOutcome? = null,
     /** The chosen "Add to" profile index (defaults to the active one). */
@@ -39,6 +40,8 @@ internal data class SetupCodeUiState(
     val preview: SetupPreview? get() = (previewOutcome as? SetupCodeOutcome.Ready)?.preview
 
     /** Never prints [typed]: a state that reaches a log line must not carry the code. */
+    val previewLoading: Boolean get() = previewLoad is LoadStatus.Loading
+
     override fun toString(): String =
         "SetupCodeUiState(previewLoading=$previewLoading, previewOutcome=${previewOutcome?.analyticsName}, " +
             "redeeming=$redeeming, completed=${completed != null}, holdGeneration=$holdGeneration)"
@@ -214,7 +217,7 @@ internal class SetupCodeController(
                 supersedePreview()
                 _state.update {
                     it.copy(
-                        previewOutcome = null, previewLoading = false, redeemRefusal = null, completed = null,
+                        previewOutcome = null, previewLoad = LoadStatus.Idle, redeemRefusal = null, completed = null,
                         typedProblem = null, holdGeneration = it.holdGeneration + 1,
                     )
                 }
@@ -243,16 +246,19 @@ internal class SetupCodeController(
             // Nothing held: never held, spent, or past the 30 minute bound. The field must not keep showing it,
             // and a dead code's own outcome (expired + its contacts) must not be rewritten to "enter a code".
             _state.update {
-                it.copy(typed = "", previewLoading = false, previewOutcome = it.previewOutcome ?: SetupCodeOutcome.Problem(SetupCodeProblem.EMPTY))
+                it.copy(typed = "", previewLoad = LoadStatus.Idle, previewOutcome = it.previewOutcome ?: SetupCodeOutcome.Problem(SetupCodeProblem.EMPTY))
             }
             return
         }
         if (previewJob?.isActive == true) return
         if (!force && _state.value.previewOutcome is SetupCodeOutcome.Ready && previewedCode == code) return
-        _state.update { it.copy(previewLoading = true, previewOutcome = null, redeemRefusal = null) }
+        _state.update { it.copy(previewLoad = BoundedLoad.begin(LoadSurface.SETTINGS), previewOutcome = null, redeemRefusal = null) }
         val seq = ++previewSeq
         previewJob = scope.launch {
-            val outcome = api().preview(code)
+            // Bounded: a backend that never answers ends as the existing Network outcome (and its Retry).
+            val outcome = BoundedLoad.run(LoadSurface.SETTINGS, report = mapOf("row" to "setup_code_preview")) {
+                api().preview(code)
+            }.valueOrNull() ?: SetupCodeOutcome.Network
             // Superseded while in flight (a different code was held meanwhile): its answer is for a code the
             // person is no longer looking at, and must never be shown beside the code that is held now.
             if (seq != previewSeq || holder.peek() != code) return@launch
@@ -261,7 +267,7 @@ internal class SetupCodeController(
             val dead = outcome is SetupCodeOutcome.Unusable || outcome is SetupCodeOutcome.Expired
             _state.update {
                 it.copy(
-                    previewLoading = false,
+                    previewLoad = LoadStatus.Loaded,
                     previewOutcome = outcome,
                     selectedProfileIndex = it.selectedProfileIndex ?: activeProfileIndex(),
                     // A dead code is not worth holding on to, and is not left in the field either.

@@ -368,6 +368,13 @@ object AddonRepository {
         }
     }
 
+    /** Fetches again only the enabled add-ons whose manifest failed; a no-op (no request) when none did. */
+    fun retryFailedManifests() {
+        AddonLoadRetryPolicy.manifestsToRetry(_uiState.value.addons).forEach { manifestUrl ->
+            refreshAddon(manifestUrl = manifestUrl, forceRefresh = true)
+        }
+    }
+
     fun refreshAll() {
         _uiState.value.addons.filter { it.enabled }.distinctBy { it.manifestUrl }.forEach { addon ->
             refreshAddon(
@@ -388,15 +395,24 @@ object AddonRepository {
         var refreshJob: Job? = null
         refreshJob = scope.launch {
             try {
-                val result = runCatching {
+                suspend fun fetchManifest(force: Boolean) = runCatching {
                     val payload = fetchAddonResponseText(
                         url = manifestUrl,
-                        forceRefresh = forceRefresh,
+                        forceRefresh = force,
                     )
                     AddonManifestParser.parse(
                         manifestUrl = manifestUrl,
                         payload = payload,
                     ).let { AddonSourcePolicy.manifestForBuild(it, AppFeaturePolicy.addonStreamSourcesEnabled) }
+                }
+                // A failed manifest used to stay failed until the app restarted (Home showed only
+                // Continue Watching). Retry on a short bounded ladder while still "refreshing".
+                var result = fetchManifest(forceRefresh)
+                var retries = 0
+                while (result.isFailure) {
+                    val wait = AddonLoadRetryPolicy.delayBeforeRetry(retries++) ?: break
+                    delay(wait)
+                    result = fetchManifest(force = true)
                 }
 
                 _uiState.update { current ->

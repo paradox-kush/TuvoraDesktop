@@ -28,10 +28,12 @@ internal fun LazyListScope.xtreamSettingsContent(
         var regionSummary by remember { mutableStateOf<String?>(null) }
         LaunchedEffect(showRegionPicker) {
             if (!showRegionPicker) {
-                regionSummary = com.nuvio.app.features.epg.epgRegionSummary(
-                    selected = com.nuvio.app.features.epg.EpgMirrorRepository.selectedRegions(),
-                    available = com.nuvio.app.features.epg.EpgMirrorRepository.availableRegions(),
-                )
+                regionSummary = BoundedLoad.run(LoadSurface.SETTINGS, report = mapOf("row" to "epg_regions")) {
+                    com.nuvio.app.features.epg.epgRegionSummary(
+                        selected = com.nuvio.app.features.epg.EpgMirrorRepository.selectedRegions(),
+                        available = com.nuvio.app.features.epg.EpgMirrorRepository.availableRegions(),
+                    )
+                }.valueOrNull() ?: "Unavailable"
             }
         }
         IptvMasterDetail(

@@ -122,6 +122,7 @@ static constexpr double kMaxVolumePercent = 200.0;
 - (long long)voFrameStats;
 - (BOOL)isLoading;
 - (BOOL)isEnded;
+- (int)endFileReason;
 - (NSString *)audioTracksJson;
 - (NSString *)subtitleTracksJson;
 - (NSString *)streamInfoJson;
@@ -1107,6 +1108,8 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     std::atomic_bool _cachedPaused;
     std::atomic_bool _cachedLoading;
     std::atomic_bool _cachedEnded;
+    // mpv_end_file_reason of the last END_FILE since the last START_FILE; -1 = none.
+    std::atomic_int _endFileReason;
     BOOL _hasAppliedSubtitleStyle;
     BOOL _appliedSubtitleUseLibass;
     NSString *_appliedSubtitleTextColor;
@@ -1147,6 +1150,7 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     _cachedPaused.store(!playWhenReady);
     _cachedLoading.store(true);
     _cachedEnded.store(false);
+    _endFileReason.store(-1);
     _mpvEventQueue = dispatch_queue_create("com.nuvio.desktop.mpv-events", DISPATCH_QUEUE_SERIAL);
     _mpvDrainQueue = dispatch_queue_create("com.nuvio.desktop.mpv-drain", DISPATCH_QUEUE_SERIAL);
     _mpvDrainStopped.store(false);
@@ -2050,10 +2054,25 @@ static void nuvioMpvWakeup(void *ctx) {
                 }
                 break;
             }
+            // A failed open (404, refused, bad URL) leaves mpv idle with eof-reached
+            // unavailable, so the polled snapshot never says "ended" — remember why the
+            // file ended so the Kotlin side can fail a live channel's startup at once.
+            case MPV_EVENT_START_FILE:
+                _endFileReason.store(-1);
+                break;
+            case MPV_EVENT_END_FILE: {
+                mpv_event_end_file *end = (mpv_event_end_file *)event->data;
+                if (end) _endFileReason.store((int)end->reason);
+                break;
+            }
             default:
                 break;
         }
     }
+}
+
+- (int)endFileReason {
+    return _endFileReason.load();
 }
 
 - (void)stopMpvEventDrain {
@@ -3483,6 +3502,17 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_isEnded(
     if (handle == 0) return JNI_FALSE;
     MpvWebPlayer *player = (__bridge MpvWebPlayer *)(void *)(intptr_t)handle;
     return [player isEnded] ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_endFileReason(
+    JNIEnv * /* env */,
+    jobject /* bridge */,
+    jlong handle
+) {
+    if (handle == 0) return -1;
+    MpvWebPlayer *player = (__bridge MpvWebPlayer *)(void *)(intptr_t)handle;
+    return (jint)[player endFileReason];
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

@@ -68,6 +68,14 @@ private val desktopHttpClient = OkHttpClient.Builder()
 
 private const val truncationSuffix = "\n...[truncated]"
 
+/**
+ * Whole-call limit for a text request (DNS + connect + headers + the whole body), matching iOS's
+ * `requestTimeoutMillis`. The client's read timeout only fires after 60 s of SILENCE, so a provider that
+ * trickles a byte now and then held a request — and the screen waiting on it — forever. Set per call, never
+ * on the client: streamed downloads (a 190 MB M3U, an XMLTV guide) legitimately run longer.
+ */
+internal var textRequestCallTimeoutMs = 60_000L   // a test shortens it
+
 // dnsProvider (DoH for ISP-blocked IPTV playlists) is not wired on desktop yet — the
 // system resolver is used regardless; port PlaylistDns + okhttp-dnsoverhttps to enable.
 actual suspend fun httpGetText(url: String, dnsProvider: String?): String =
@@ -134,7 +142,7 @@ actual suspend fun httpRequestRaw(
     }
     val request = buildDesktopRequest(method, url, headers, body, bodyBytes)
 
-    client.newCall(request).execute().use { response ->
+    client.newCall(request).apply { timeout().timeout(textRequestCallTimeoutMs, TimeUnit.MILLISECONDS) }.execute().use { response ->
         RawHttpResponse(
             status = response.code,
             statusText = response.message,
@@ -157,6 +165,7 @@ private suspend fun executeTextRequest(
 ): String = withContext(Dispatchers.IO) {
     val request = buildDesktopRequest(method, url, headers, body)
     val call = clientForAttempt().newCall(request)
+    call.timeout().timeout(textRequestCallTimeoutMs, TimeUnit.MILLISECONDS)
     // Step 0.3b: a racing failover attempt that lost must stop NOW — cancel the socket, not just the coroutine.
     val cancelHook = cancelCallWithJob(call)
     try {

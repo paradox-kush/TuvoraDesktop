@@ -96,6 +96,12 @@ object LiveTvData {
      * re-resolve the user just asked for is never met with a fast-fail. The automatic one-shot
      * re-resolve must NOT call this — only a user action means "contact this host now".
      */
+    /** The channel's playlist type for telemetry ("xtream", "m3u_url", …); never a host or login. */
+    fun sourceTypeOf(contentId: String): String {
+        val accountId = XtreamItemRegistry.parseId(contentId)?.accountId ?: return "unknown"
+        return XtreamRepository.uiState.value.accounts.firstOrNull { it.id == accountId }?.sourceType ?: "unknown"
+    }
+
     fun resetPanelGuard(contentId: String) {
         val parsed = XtreamItemRegistry.parseId(contentId) ?: return
         XtreamRepository.uiState.value.accounts.firstOrNull { it.id == parsed.accountId }

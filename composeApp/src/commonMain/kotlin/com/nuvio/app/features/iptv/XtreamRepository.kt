@@ -672,7 +672,11 @@ object XtreamRepository : IptvCatalog {
                     when (target) {
                         // Every source type: Xtream fills the per-playlist EPG tables too (xmltv
                         // store lane + catch-up refills), not just M3U/Stalker catalogs.
-                        PlaylistRemovalTarget.ContentDb -> IptvContentDb.clear(id)
+                        PlaylistRemovalTarget.ContentDb -> {
+                            // An import still running for this playlist would write its rows back.
+                            M3UClient.cancelIngest(id)
+                            IptvContentDb.clear(id)
+                        }
                         PlaylistRemovalTarget.MatchIndex -> XtreamMatchIndex.purge(id)
                         PlaylistRemovalTarget.EpgMirror ->
                             com.nuvio.app.features.epg.EpgMirrorRepository.purgeProvider(id)

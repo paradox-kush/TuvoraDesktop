@@ -114,11 +114,14 @@ internal fun LazyListScope.xtreamContentSettingsContent(
             val client = IptvClient.forAccount(account)   // xtream -> panel, m3u_url -> content DB
             for ((type, _) in TYPE_LABELS) {
                 if (categories[type] != null) continue
-                val fetched = when (type) {
-                    CONTENT_TYPE_LIVE -> client.liveCategories(account)
-                    CONTENT_TYPE_MOVIES -> client.vodCategories(account)
-                    else -> client.seriesCategories(account)
-                }.getOrNull()
+                // Bounded: one stalled type must not hold up the counts for the others.
+                val fetched = BoundedLoad.run(LoadSurface.SETTINGS, report = mapOf("row" to "content_counts")) {
+                    when (type) {
+                        CONTENT_TYPE_LIVE -> client.liveCategories(account)
+                        CONTENT_TYPE_MOVIES -> client.vodCategories(account)
+                        else -> client.seriesCategories(account)
+                    }.getOrThrow()
+                }.valueOrNull()
                 if (fetched != null) categories = categories + (type to fetched)
             }
         }
@@ -484,11 +487,14 @@ internal fun LazyListScope.xtreamCategoryChecklistContent(
         LaunchedEffect(account.id, type, fetchAttempt) {
             failed = false   // back to the spinner while (re)fetching
             val client = IptvClient.forAccount(account)
-            val fetched = when (type) {
-                CONTENT_TYPE_LIVE -> client.liveCategories(account)
-                CONTENT_TYPE_MOVIES -> client.vodCategories(account)
-                else -> client.seriesCategories(account)
-            }.getOrNull()
+            // Bounded: a stalled panel ends on "Not loaded" + Retry instead of an endless spinner.
+            val fetched = BoundedLoad.run(LoadSurface.SETTINGS, report = mapOf("row" to "content_checklist")) {
+                when (type) {
+                    CONTENT_TYPE_LIVE -> client.liveCategories(account)
+                    CONTENT_TYPE_MOVIES -> client.vodCategories(account)
+                    else -> client.seriesCategories(account)
+                }.getOrThrow()
+            }.valueOrNull()
             if (fetched != null) categories = fetched else failed = true
         }
 

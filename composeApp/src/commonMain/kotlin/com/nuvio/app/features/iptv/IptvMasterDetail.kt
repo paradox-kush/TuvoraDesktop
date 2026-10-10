@@ -102,7 +102,10 @@ internal fun IptvMasterDetail(
     val hiddenState by hiddenController.state.collectAsStateWithLifecycle()
 
     val detailsController = remember { PlaylistDetailsController() }
-    val live by detailsController.live.collectAsStateWithLifecycle()
+    val liveState by detailsController.live.collectAsStateWithLifecycle()
+    // The wait ends at the check's own deadline even if the panel never answers (BoundedLoad).
+    val liveStatus = rememberEffectiveLoadStatus(liveState.load)
+    val live = if (liveStatus != liveState.load) liveState.copy(load = liveStatus) else liveState
     LaunchedEffect(selected?.id) { selected?.let { detailsController.load(it) } }
     // "N days left" on managed rows: one panel question per managed playlist per freshness window.
     LaunchedEffect(managed.keys, accounts) {
@@ -276,6 +279,7 @@ internal fun IptvMasterDetail(
             playlistName = PlaylistAddress.displayName(account.name),
             state = hiddenState,
             onUnhide = { hiddenController.unhide(account, it) },
+            onRetry = { hiddenController.open(account) },
             onDismiss = { hiddenFor = null },
         )
     }

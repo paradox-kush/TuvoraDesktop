@@ -580,7 +580,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                         credentialRefreshAttempts = 0
                         credentialRefreshBaselinePositionMs = 0L
                     }
-                    if (!playbackStartRecorded.value && (snapshot.positionMs > 0L || snapshot.isPlaying)) {
+                    if (!playbackStartRecorded.value && LivePlaybackStartupPolicy.hasStarted(snapshot)) {
                         playbackStartRecorded.value = true
                         Breadcrumbs.playbackStarted(
                             kind = if (isLiveStream) "live" else "vod",

@@ -118,6 +118,12 @@ internal object NativePlayerBridge {
     external fun voFrameStats(handle: Long): Long
     external fun isLoading(handle: Long): Boolean
     external fun isEnded(handle: Long): Boolean
+    /**
+     * The `mpv_end_file_reason` of the last END_FILE since the last START_FILE, or -1
+     * ([MpvEndFileReason.NONE]). A failed open leaves mpv idle with `eof-reached` unavailable, so
+     * [isEnded] alone never reports it.
+     */
+    external fun endFileReason(handle: Long): Int
     external fun isPaused(handle: Long): Boolean
     external fun speed(handle: Long): Float
     external fun audioTracksJson(handle: Long): String

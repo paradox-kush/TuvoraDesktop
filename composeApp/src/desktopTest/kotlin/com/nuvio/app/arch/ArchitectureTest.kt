@@ -20,16 +20,12 @@ import kotlin.test.assertTrue
 class ArchitectureTest {
 
     // Only THIS checkout's sources. Nested worktrees (wt/…) hold their own copy of composeApp/src and
-    // must not be scanned twice — but the old `"/wt/" !in path` filter also dropped EVERY file when the
-    // checkout itself lives under wt/, so the whole test passed vacuously in any worktree. Keep the
-    // files whose checkout prefix is the shortest one seen (the project's own).
-    private val files: List<Pair<String, String>> = run {
-        val sources = Konsist.scopeFromProject().files
-            .map { it.path to it.text }
-            .filter { (p, _) -> "/composeApp/src/" in p }
-        val checkout = sources.map { (p, _) -> p.substringBefore("/composeApp/src/") }.minByOrNull { it.length }
-        sources.filter { (p, _) -> p.substringBefore("/composeApp/src/") == checkout }
-    }
+    // must not be scanned. scopeFromProject/Module/SourceSet parse EVERY .kt under the project root
+    // before filtering (Konsist 0.17 KoFileDeclarationProvider), so 60+ nested worktrees (~140k files)
+    // ran the test out of heap and wedged it. scopeFromDirectory walks only the given directory,
+    // relative to the nearest project root — this checkout's, also when the checkout itself is a wt/.
+    private val files: List<Pair<String, String>> =
+        Konsist.scopeFromDirectory("composeApp/src").files.map { it.path to it.text }
 
     // --- fork-side definition (upstream absence, not directory naming) ---
     private val forkPaths = listOf(
@@ -114,6 +110,38 @@ class ArchitectureTest {
         assertTrue(
             violations.isEmpty(),
             "cross-feature internal access — go through the feature's api package:\n" +
+                violations.joinToString("\n"),
+        )
+    }
+
+    /**
+     * R7 — every IPTV / Live TV loading state has a deadline and a terminal outcome (repo-root CLAUDE.md).
+     * "Live TV spins forever" was fixed path by path three times and came back each time, because any code
+     * could switch a loading flag on with nothing guaranteeing it ever switched off. So a loading state is
+     * entered only through BoundedLoad (deadline + Loaded/Empty/Failed, failure never "empty"): this forbids
+     * a raw Boolean loading flag set to true (or declared defaulting to true), a `loading by remember { mutableStateOf(true) }`, and building
+     * a LoadStatus.Loading anywhere but BoundedLoad.kt. Main sources only; tests may build any state.
+     * No baseline — there were no violations left when the rule landed, so there is nothing to grandfather.
+     */
+    @Test
+    fun `IPTV and Live TV loading states are entered only through BoundedLoad (R7)`() {
+        val rawFlagOn = Regex("""\b\w*[lL]oading\w*\s*=\s*true\b""")
+        val rememberedOn = Regex("""\b\w*[lL]oading\w*\s+by\s+remember[^\n]*mutableStateOf\(\s*true\s*\)""")
+        val builtLoading = Regex("""\bLoadStatus\.Loading\s*\(""")
+        // A loading Boolean that STARTS true (`val loading: Boolean = true`) is the same switch, set at birth.
+        val declaredOn = Regex("""\b\w*[lL]oading\w*\s*:\s*Boolean\s*=\s*true\b""")
+        val mainSourceSet = Regex("""/composeApp/src/[A-Za-z]*Main/""")
+        val violations = files
+            .filter { (p, _) -> ("/features/iptv/" in p || "/features/livetv/" in p) && mainSourceSet.containsMatchIn(p) }
+            .filterNot { (p, _) -> p.endsWith("/features/iptv/BoundedLoad.kt") }
+            .flatMap { (p, text) ->
+                stripComments(text).lines().withIndex()
+                    .filter { (_, line) -> rawFlagOn.containsMatchIn(line) || rememberedOn.containsMatchIn(line) || builtLoading.containsMatchIn(line) || declaredOn.containsMatchIn(line) }
+                    .map { (i, line) -> "${rel(p)}:${i + 1}: ${line.trim()}" }
+            }
+        assertTrue(
+            violations.isEmpty(),
+            "IPTV/Live TV loading state entered outside BoundedLoad — use BoundedLoad.begin/run so it always ends:\n" +
                 violations.joinToString("\n"),
         )
     }

@@ -11,6 +11,7 @@ import com.nuvio.app.features.iptv.content.IptvSeriesRow
 import com.nuvio.app.features.iptv.content.IptvStreamRow
 import com.nuvio.app.features.iptv.identity.M3uIdentity
 import com.nuvio.app.features.trakt.TraktPlatformClock
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -28,9 +29,17 @@ object M3UClient : IptvClient {
 
     private val log = Logger.withTag("M3UClient")
 
-    // One ingest per playlist at a time (an add + a first-browse can race). Keyed by playlist id.
+    // One ingest per playlist, owned HERE rather than by whoever asked first (an add + a first browse
+    // race). A second caller awaits the same import instead of reading a half-built catalog as "this
+    // playlist has no categories", and a caller that stops waiting (the IPTV page's stall deadline, a
+    // screen exit) never cancels an import the page will pick up when it lands (BoundedLoad).
     private val ingestLock = Mutex()
-    private val ingesting = mutableSetOf<String>()
+    private val ingestJobs = mutableMapOf<String, Pair<Any, kotlinx.coroutines.Deferred<Boolean>>>()
+    private val ingestScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default,
+    )
+    /** A progress tick per this many parsed lines (restarts the page's stall deadline; cheap). */
+    private const val PROGRESS_EVERY_LINES = 2_000
 
     private const val CHUNK = 5_000
     private const val M3U_PROBE_BYTES = 1024
@@ -48,24 +57,43 @@ object M3UClient : IptvClient {
         // B64: a catalog built under the pre-B64 ids rebuilds once (and the saved refs follow, below).
         val oldIds = meta != null && meta.idScheme < M3U_ID_SCHEME
         if (!force && meta != null && !isStale(meta) && !oldIds) return true
-        val shouldRun = ingestLock.withLock {
-            if (acc.id in ingesting) false else { ingesting.add(acc.id); true }
-        }
-        if (!shouldRun) {
-            // Another ingest is in flight — report on whatever catalog currently exists.
-            return IptvContentDb.ingestMeta(acc.id) != null
-        }
-        return try {
-            if (oldIds) evictIdKeyedCaches(acc)
-            ingest(acc).isSuccess.also { ok ->
-                // B64: move this profile's saved refs onto the ids the catalog now carries. Off the
-                // browse path; idempotent, so a second run (next ingest) finds nothing to move.
-                if (ok) rekeyScope.launch { M3uIdRekeyRunner.runAfterIngest(acc) }
-            }
-        } finally {
-            ingestLock.withLock { ingesting.remove(acc.id) }
-        }
+        val job = sharedIngest(acc, oldIds)
+        // Stale (older than the refresh TTL) but usable: serve the stored copy NOW and refresh behind it.
+        // The served generation stays readable until the new one commits (IptvContentDb.beginIngest), and
+        // IptvImportProgress.finished tells the IPTV page to re-read. Waiting on the whole re-download was
+        // the 12-hour variant of "the IPTV page never finishes loading".
+        if (!force && meta != null && !oldIds) return true
+        return job.await()
     }
+
+    /** Stops [accountId]'s import (the playlist was removed) so it cannot write rows for a deleted playlist. */
+    suspend fun cancelIngest(accountId: String) {
+        ingestLock.withLock { ingestJobs.remove(accountId) }?.second?.cancel()
+    }
+
+    private suspend fun sharedIngest(acc: XtreamAccount, oldIds: Boolean): kotlinx.coroutines.Deferred<Boolean> =
+        ingestLock.withLock {
+            ingestJobs[acc.id]?.second?.takeIf { it.isActive }?.let { return@withLock it }
+            val token = Any()
+            val job = ingestScope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                try {
+                    if (oldIds) evictIdKeyedCaches(acc)
+                    ingest(acc).isSuccess.also { ok ->
+                        // B64: move this profile's saved refs onto the ids the catalog now carries. Off the
+                        // browse path; idempotent, so a second run (next ingest) finds nothing to move.
+                        if (ok) {
+                            rekeyScope.launch { M3uIdRekeyRunner.runAfterIngest(acc) }
+                            IptvImportProgress.finished(acc.id)
+                        }
+                    }
+                } finally {
+                    ingestLock.withLock { if (ingestJobs[acc.id]?.first === token) ingestJobs.remove(acc.id) }
+                }
+            }
+            ingestJobs[acc.id] = token to job
+            job.start()
+            job
+        }
 
     /**
      * Full ingest: wipe prior rows, stream the URL, parse+classify each entry, chunk-insert every
@@ -90,6 +118,7 @@ object M3UClient : IptvClient {
         streamLines(acc, url) { line ->
             parser.onLine(line)
             lineCount++
+            if (lineCount % PROGRESS_EVERY_LINES == 0) IptvImportProgress.tick(acc.id)
         }
         collector.finish()
 

@@ -782,6 +782,19 @@ internal class NativePlayerController(
         }.getOrDefault(PlayerPlaybackSnapshot(isLoading = true))
     }
 
+    /**
+     * [snapshot] with the native END_FILE folded in for a live channel (see [MpvEndFileReason]).
+     * Read separately so a bridge library built before `endFileReason` existed still polls.
+     */
+    fun liveAwareSnapshot(isLiveStream: Boolean): PlayerPlaybackSnapshot {
+        val raw = snapshot()
+        if (!isLiveStream) return raw
+        val current = handle
+        if (current == 0L) return raw
+        val reason = runCatching { NativePlayerBridge.endFileReason(current) }.getOrDefault(MpvEndFileReason.NONE)
+        return MpvEndFileReason.applyTo(raw, reason, isLiveStream)
+    }
+
     fun releaseBeforeNavigation(onReleased: () -> Unit) {
         releaseBeforeNavigation(onReleased, onReleaseFailed = {})
     }

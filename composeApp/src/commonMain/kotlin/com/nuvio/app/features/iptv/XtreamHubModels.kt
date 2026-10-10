@@ -16,12 +16,15 @@ data class XtreamHubUiState(
     val selectedAccountId: String? = null,
     val section: XtreamHubSection = XtreamHubSection.LIVE,
     val categories: List<XtreamHubCategory> = emptyList(),
-    val loadingCategories: Boolean = false,
+    /** The category-list load. Entered only through [BoundedLoad], so it always ends (see that file). */
+    val categoriesLoad: LoadStatus = LoadStatus.Idle,
     // Non-null when the category-list fetch failed and there was no cache to fall back on — the UI
     // shows this instead of spinning forever (dead portal / Cloudflare block / timeout). Carries
     // WHICH of those it was, so the card can stop telling every viewer the portal is down.
     val loadError: IptvLoadFailurePolicy.Failure? = null,
-)
+) {
+    val loadingCategories: Boolean get() = categoriesLoad is LoadStatus.Loading
+}
 
 enum class XtreamHubSection { LIVE, MOVIES, SERIES }
 
@@ -40,11 +43,16 @@ data class XtreamHubCategory(
     val id: String,
     val name: String,
     val items: List<MetaPreview> = emptyList(),
+    /** Fetched (Loaded or Empty): never fetched again until evicted. A failed row is NOT loaded. */
     val loaded: Boolean = false,
-    val loading: Boolean = false,
+    /** This row's load. Entered only through [BoundedLoad]; [LoadStatus.Failed] shows the row's Retry. */
+    val load: LoadStatus = LoadStatus.Idle,
     /** More rows exist past [items] (item 5): the row's end-trigger calls loadMore. */
     val hasMore: Boolean = false,
-)
+) {
+    val loading: Boolean get() = load is LoadStatus.Loading
+    val failed: Boolean get() = load is LoadStatus.Failed
+}
 
 fun XtreamMovie.toMetaPreview(accountId: String): MetaPreview = MetaPreview(
     id = XtreamItemRegistry.vodId(accountId, streamId),

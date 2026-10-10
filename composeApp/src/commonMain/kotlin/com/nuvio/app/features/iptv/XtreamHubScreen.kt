@@ -82,6 +82,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.iptv_group_hidden_toast
 import nuvio.composeapp.generated.resources.action_retry
+import nuvio.composeapp.generated.resources.compose_iptv_hub_row_failed
 import nuvio.composeapp.generated.resources.provider_hub_contact_label
 import nuvio.composeapp.generated.resources.provider_setup_have_code
 import nuvio.composeapp.generated.resources.compose_iptv_hub_add_provider
@@ -290,9 +291,12 @@ fun XtreamHubScreen(
                 onAddProvider = onAddProvider,
             )
 
+            // The wait ends at the load's own deadline even if the work never returns (BoundedLoad).
+            val categoriesStatus = rememberEffectiveLoadStatus(state.categoriesLoad)
             val failure = state.loadError
+                ?: (categoriesStatus as? LoadStatus.Failed)?.let { IptvLoadFailurePolicy.classify(IptvLoadTimeoutException(LoadSurface.HUB_CATEGORIES, BoundedLoad.stallMs(LoadSurface.HUB_CATEGORIES))) }
             when {
-                state.loadingCategories -> XtreamHubSkeleton(
+                categoriesStatus is LoadStatus.Loading -> XtreamHubSkeleton(
                     live = isLive,
                     sectionPadding = sectionPadding,
                 )
@@ -556,7 +560,20 @@ private fun XtreamHubCategoryRow(
 ) {
     val guideDataGeneration by XtreamHubRepository.guideDataGeneration.collectAsStateWithLifecycle()
     val title = category.name.ifBlank { stringResource(Res.string.library_other) }
-    if (category.items.isEmpty()) {
+    val rowStatus = rememberEffectiveLoadStatus(category.load)
+    if (category.items.isEmpty() && rowStatus is LoadStatus.Failed) {
+        // The row stays, with Retry: a failure used to read as "empty" and the row vanished.
+        NuvioShelfSection(
+            title = title,
+            entries = remember { listOf(0) },
+            headerHorizontalPadding = sectionPadding,
+            rowContentPadding = PaddingValues(horizontal = sectionPadding),
+            viewAllPillSize = NuvioViewAllPillSize.Compact,
+            key = { it },
+        ) {
+            XtreamHubRowRetryCard(live = live, onClick = { XtreamHubRepository.retryCategory(category.id) })
+        }
+    } else if (category.items.isEmpty()) {
         // Loading or not-yet-loaded: real title, shimmer tiles with the resolved tiles'
         // exact silhouette so nothing jumps when the row lands.
         val brush = rememberHomeSkeletonBrush()
@@ -615,6 +632,19 @@ private fun XtreamHubCategoryRow(
             }
         }
     }
+}
+
+/** A failed row's single tile: the same card as View All, saying it couldn't load and offering Retry. */
+@Composable
+private fun XtreamHubRowRetryCard(live: Boolean, onClick: () -> Unit) {
+    val style = rememberPosterCardStyleUiState()
+    NuvioPosterCard(
+        title = stringResource(Res.string.compose_iptv_hub_row_failed),
+        imageUrl = null,
+        shape = if (live || style.catalogLandscapeModeEnabled) NuvioPosterShape.Landscape else NuvioPosterShape.Poster,
+        showTitleBelow = false,
+        onClick = onClick,
+    )
 }
 
 @Composable

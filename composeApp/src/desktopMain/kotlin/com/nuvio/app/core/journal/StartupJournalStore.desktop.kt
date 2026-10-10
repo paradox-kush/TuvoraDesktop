@@ -15,7 +15,12 @@ import java.nio.file.StandardOpenOption
  */
 internal actual object StartupJournalStore {
     private const val FILE = "startup-journal.json"
-    private val path get() = DesktopStorage.rootDir.resolve(FILE)
+
+    /** Test seam: a temp directory, so a test whose code path opens a journal attempt (an index build)
+     *  never writes the REAL app's journal in ~/Library/Application Support/Tuvora. */
+    internal var dirOverrideForTests: java.nio.file.Path? = null
+    private val dir get() = dirOverrideForTests ?: DesktopStorage.rootDir
+    private val path get() = dir.resolve(FILE)
 
     actual fun read(): String? = runCatching {
         if (!Files.exists(path)) return@runCatching null
@@ -27,7 +32,7 @@ internal actual object StartupJournalStore {
 
     actual fun writeVerified(content: String): Boolean = runCatching {
         Files.createDirectories(path.parent)
-        val tmp = DesktopStorage.rootDir.resolve("$FILE.tmp")
+        val tmp = dir.resolve("$FILE.tmp")
         FileChannel.open(
             tmp,
             StandardOpenOption.CREATE,

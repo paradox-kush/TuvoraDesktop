@@ -56,6 +56,8 @@ data class HomeUiState(
     val heroItems: List<MetaPreview> = emptyList(),
     val sections: List<HomeCatalogSection> = emptyList(),
     val errorMessage: String? = null,
+    /** Rows on Home whose last fetch failed (see [com.nuvio.app.features.addons.AddonLoadRetryPolicy]). */
+    val failedRowCount: Int = 0,
 )
 
 internal fun shouldShowInitialHomeLoading(
