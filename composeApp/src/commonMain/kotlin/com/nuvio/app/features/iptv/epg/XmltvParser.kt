@@ -27,10 +27,9 @@ class XmltvStreamingParser(
      */
     private val onChannelNames: ((id: String, names: List<String>) -> Unit)? = null,
     /**
-     * Fired ONCE, when the first `<programme>` opens. The XMLTV DTD orders every `<channel>` before
-     * any `<programme>` (`<!ELEMENT tv (channel*, programme*)>`), so this is the moment the whole
-     * channel list is known: the ingest matches the lineup here and fills [keepChannelIds] (a
-     * mutable set it owns) before the first programme is filtered — one download, one pass.
+     * Legacy boundary fired once before the first programme (or at finish for channel-only feeds).
+     * This is a complete census only for channel-first feeds. Interleaved ingest uses
+     * [XmltvGuideReplay] to collect channels through EOF before matching/filtering programmes.
      */
     private val onChannelsDone: (() -> Unit)? = null,
     private val onProgramme: (XmltvProgramme) -> Unit,

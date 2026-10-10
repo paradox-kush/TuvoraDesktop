@@ -84,4 +84,16 @@ class GuideChannelMatcherTest {
         assertEquals(emptyList(), GuideChannelMatcher.match(lineup, g).assignments)
         assertEquals(Tier.FUZZY, GuideChannelMatcher.match(lineup, g, allowFuzzy = true).assignments.single().tier)
     }
+
+    @Test
+    fun unicodeNamesKeepTheirIdentity() {
+        assertEquals("itv +1", EpgNorm.baseNorm("ITV +1"))
+        val names = listOf("Суспільне Спорт", "Футбол 1", "Інтер", "ΕΡΤ", "日本テレビ")
+        val lineup = names.mapIndexed { i, n -> GuideChannelMatcher.LineupChannel(i, "$n HD", null) }
+        val guide = names.mapIndexed { i, n -> GuideChannelMatcher.GuideChannel("guide-$i", listOf(n)) }
+        val result = GuideChannelMatcher.match(lineup, guide)
+        assertEquals(names.size, result.assignments.size)
+        names.indices.forEach { i -> assertEquals("guide-$i", result.assignments.single { it.streamId == i }.guideId) }
+        assertEquals("інтер", EpgNorm.coreNorm("Інтер HD"))
+    }
 }

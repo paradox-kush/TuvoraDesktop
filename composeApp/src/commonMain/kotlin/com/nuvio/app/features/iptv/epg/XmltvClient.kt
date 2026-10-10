@@ -101,12 +101,9 @@ object XmltvClient {
     private val lineupNotReadyMs = mutableMapOf<String, Long>()
     private const val LINEUP_RETRY_MS = 2L * 60 * 1000
 
-    /** Guide `<channel>` entries harvested per source; a bigger guide is still parsed, just not all offered. */
-    private const val MAX_GUIDE_CHANNELS = 100_000
-
     /**
      * Streams every source in priority order ([EpgSourcePlan]), matches the lineup onto each source's
-     * `<channel>` list at the moment its channel list is complete ([GuideChannelMatcher], B10), keeps
+     * `<channel>` list after a complete streaming census ([GuideChannelMatcher], B10), keeps
      * only the matched (and manually picked) channels' programmes, and writes programmes + channel map
      * + census in ONE swap. Memory stays flat: one parsed chunk + the parser's open element + the
      * guide's channel list (ids and names, no programmes).
@@ -204,7 +201,7 @@ object XmltvClient {
         )
     }
 
-    /** One source: stream it, match at the end of its channel list, keep the matched programmes. */
+    /** One source: harvest the full census, match once, replay only selected programmes locally. */
     private suspend fun ingestSource(
         acc: XtreamAccount,
         index: Int,
@@ -215,59 +212,33 @@ object XmltvClient {
         collector: EpgCollector,
         guideRows: MutableList<EpgGuideChannelRow>,
     ): GuideChannelMatcher.Result {
-        val allow = HashSet<String>()
-        val guide = ArrayList<GuideChannelMatcher.GuideChannel>()
-        var result: GuideChannelMatcher.Result? = null
-        // Bounded on the way IN ([XmltvIngestWindow]), not cleaned up afterwards: a feed carrying a
-        // week of schedule for thousands of channels must never reach the disk in the first place
-        // on a 1 GB box. The parse is streaming, so a refused row costs nothing beyond the parse
-        // it already did.
-        val nowMs = TraktPlatformClock.nowEpochMs()
-        val parser = XmltvStreamingParser(
-            keepChannelIds = allow,
-            onChannelNames = { id, names ->
-                if (guide.size < MAX_GUIDE_CHANNELS) guide.add(GuideChannelMatcher.GuideChannel(id, names))
-            },
-            // The DTD puts every <channel> before the first <programme>: match here, once, and
-            // open the allow-set before a single programme is filtered.
-            onChannelsDone = {
-                val r = GuideChannelMatcher.match(lineup, guide, rules)
-                result = r
-                for (a in r.assignments) allow.add(a.guideId)
-                if (picked.isNotEmpty()) for (g in guide) normalizeChannelId(g.id).let { if (it in picked) allow.add(it) }
-            },
-            onProgramme = { p ->
-                if (XmltvIngestWindow.keeps(p.startMs, p.endMs, nowMs)) {
-                    collector.add(p, EpgSourcePlan.storedKey(index, normalizeChannelId(p.channelId)))
+        val replay = XmltvGuideReplay(lineup, picked, rules, TraktPlatformClock.nowEpochMs())
+        fun feedLine(line: String) { replay.feed(line); replay.feed("\n") }
+        try {
+            if (source.kind == EpgSourceKind.XTREAM_DERIVED) {
+                var delivered = false
+                com.nuvio.app.features.iptv.PlaylistServerFailover.run(acc, canRetry = { !delivered }, probe = { a -> com.nuvio.app.features.iptv.XtreamClient.failoverProbe(a) }) { a ->
+                    val derived = derivedXmltvUrl(a) ?: source.url
+                    streamGuideLines(EpgSource(derived, source.kind), acc.userAgent(), acc.dnsProvider) { line ->
+                        delivered = true
+                        feedLine(line)
+                    }
                 }
-            },
-        )
-        if (source.kind == EpgSourceKind.XTREAM_DERIVED) {
-            // The panel's own xmltv.php is an EPG catalog call: it fails over with the playlist's
-            // servers (Step 0.3) — until the first line reached the parser, never mid-guide.
-            var delivered = false
-            com.nuvio.app.features.iptv.PlaylistServerFailover.run(acc, canRetry = { !delivered }, probe = { a -> com.nuvio.app.features.iptv.XtreamClient.failoverProbe(a) }) { a ->
-                val derived = derivedXmltvUrl(a) ?: source.url
-                streamGuideLines(EpgSource(derived, source.kind), acc.userAgent(), acc.dnsProvider) { line ->
-                    delivered = true
-                    parser.feed(line)
-                    parser.feed("\n")
-                }
+            } else {
+                streamGuideLines(source, acc.userAgent(), acc.dnsProvider, ::feedLine)
             }
-        } else {
-            // A custom EPG URL or the playlist's url-tvg lives on its own host — nothing to fail over to.
-            streamGuideLines(source, acc.userAgent(), acc.dnsProvider) { line ->
-                parser.feed(line)
-                parser.feed("\n")
+            val result = replay.finish { p ->
+                collector.add(p, EpgSourcePlan.storedKey(index, normalizeChannelId(p.channelId)))
             }
+            for (g in replay.guide) {
+                val id = normalizeChannelId(g.id)
+                if (id.isEmpty()) continue
+                guideRows.add(EpgGuideChannelRow(EpgSourcePlan.storedKey(index, id), id, g.names.firstOrNull() ?: g.id, index))
+            }
+            return result
+        } finally {
+            replay.dispose()
         }
-        parser.finish()
-        for (g in guide) {
-            val id = normalizeChannelId(g.id)
-            if (id.isEmpty()) continue
-            guideRows.add(EpgGuideChannelRow(EpgSourcePlan.storedKey(index, id), id, g.names.firstOrNull() ?: g.id, index))
-        }
-        return result ?: GuideChannelMatcher.Result(emptyList(), GuideChannelMatcher.Census(lineup.size, 0, 0, 0, 0))
     }
 
     /**
