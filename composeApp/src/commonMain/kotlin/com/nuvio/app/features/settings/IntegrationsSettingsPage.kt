@@ -7,8 +7,8 @@ import nuvio.composeapp.generated.resources.compose_settings_page_iptv
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.compose_settings_page_mdblist_ratings
 import nuvio.composeapp.generated.resources.compose_settings_page_tmdb_enrichment
-import nuvio.composeapp.generated.resources.ms_settings_integrations_description
-import nuvio.composeapp.generated.resources.ms_settings_page_servers
+import nuvio.composeapp.generated.resources.settings_content_discovery_media_servers_description
+import nuvio.composeapp.generated.resources.compose_settings_page_media_servers
 import nuvio.composeapp.generated.resources.settings_integrations_mdblist_description
 import nuvio.composeapp.generated.resources.settings_integrations_debrid_description
 import nuvio.composeapp.generated.resources.settings_integrations_section_title
@@ -65,8 +65,8 @@ internal fun LazyListScope.integrationsContent(
                 if (onMediaServersClick != null) {
                     SettingsGroupDivider(isTablet = isTablet)
                     SettingsNavigationRow(
-                        title = stringResource(Res.string.ms_settings_page_servers),
-                        description = stringResource(Res.string.ms_settings_integrations_description),
+                        title = stringResource(Res.string.compose_settings_page_media_servers),
+                        description = stringResource(Res.string.settings_content_discovery_media_servers_description),
                         isTablet = isTablet,
                         onClick = onMediaServersClick,
                     )
