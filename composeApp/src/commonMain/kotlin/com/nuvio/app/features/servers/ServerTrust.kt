@@ -92,7 +92,7 @@ internal fun serverAuthority(url: String): String? {
     val parsed = runCatching { Url(url) }.getOrNull() ?: return null
     if (parsed.protocol != URLProtocol.HTTP && parsed.protocol != URLProtocol.HTTPS) return null
     if (parsed.host.isBlank()) return null
-    return "${parsed.host}:${parsed.port}"
+    return "${parsed.host.lowercase()}:${parsed.port}"
 }
 
 /**

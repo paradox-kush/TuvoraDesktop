@@ -36,7 +36,10 @@ class PinnedMediaRelayTest {
                 val (status, headers, body) = handler(request)
                 respond(body, status, io.ktor.http.Headers.build { headers.forEach { (k, v) -> v.forEach { append(k, it) } } })
             },
-        ) { install(HttpTimeout) }
+        ) {
+            followRedirects = false
+            install(HttpTimeout)
+        }
 
         override fun clientFor(url: String) = client
     }
@@ -130,13 +133,83 @@ class PinnedMediaRelayTest {
     }
 
     @Test
-    fun `a redirect off the authority is refused`() = runTest {
-        val upstream = Upstream { Triple(HttpStatusCode.Found, mapOf("Location" to listOf("https://evil.example/x")), ByteArray(0)) }
+    fun `a redirect to a private address is refused`() = runTest {
+        val upstream = Upstream { Triple(HttpStatusCode.Found, mapOf("Location" to listOf("https://192.168.1.1/x")), ByteArray(0)) }
         val session = PinnedMediaRelay(upstream).open(authority)
         try {
             val response = exchange(session.port, get(session, "/Videos/1/stream"))
             assertTrue(response.head.startsWith("HTTP/1.1 502"), "bad gateway")
-            assertTrue(!response.head.contains("evil.example"), "no foreign location leaked")
+            assertTrue(!response.head.contains("192.168"), "no private location leaked")
+        } finally {
+            session.dispose()
+        }
+    }
+
+    @Test
+    fun `a redirect to a public cdn is passed to the player without our headers`() = runTest {
+        val upstream = Upstream {
+            Triple(HttpStatusCode.Found, mapOf("Location" to listOf("https://cdn.debrid.example/dl/abc?t=1"), "Set-Cookie" to listOf("s=1"), "X-Server" to listOf("jf")), ByteArray(0))
+        }
+        val session = PinnedMediaRelay(upstream).open(authority)
+        try {
+            val response = exchange(session.port, get(session, "/Videos/1/stream", "Range: bytes=0-9\r\n"))
+            assertTrue(response.head.startsWith("HTTP/1.1 302"), "redirect passed")
+            assertTrue(response.head.contains("Location: https://cdn.debrid.example/dl/abc?t=1"), "cdn location")
+            assertTrue(!response.head.contains("Set-Cookie") && !response.head.contains("X-Server"), "nothing else of the server's")
+            assertEquals(0, response.body.size, "no body")
+        } finally {
+            session.dispose()
+        }
+    }
+
+    @Test
+    fun `a redirect back to the pinned server is served through the relay`() = runTest {
+        val upstream = Upstream { Triple(HttpStatusCode.TemporaryRedirect, mapOf("Location" to listOf("https://$authority/Videos/1/real")), ByteArray(0)) }
+        val session = PinnedMediaRelay(upstream).open(authority)
+        try {
+            val response = exchange(session.port, get(session, "/Videos/1/stream"))
+            assertTrue(response.head.startsWith("HTTP/1.1 307"), "redirect")
+            assertTrue(response.head.contains("Location: /${session.token}/Videos/1/real"), "rewritten through the relay session")
+        } finally {
+            session.dispose()
+        }
+    }
+
+    @Test
+    fun `not modified is passed through and is not a redirect`() = runTest {
+        val upstream = Upstream { Triple(HttpStatusCode.NotModified, mapOf("ETag" to listOf("\"x\"")), ByteArray(0)) }
+        val session = PinnedMediaRelay(upstream).open(authority)
+        try {
+            val response = exchange(session.port, get(session, "/Videos/1/stream", "If-None-Match: \"x\"\r\n"))
+            assertTrue(response.head.startsWith("HTTP/1.1 304"), "304 stays 304: ${response.head.lineSequence().first()}")
+        } finally {
+            session.dispose()
+        }
+    }
+
+    @Test
+    fun `hls playlists get their pinned references rewritten`() = runTest {
+        val playlist = "#EXTM3U\n#EXTINF:6,\nhttps://$authority/hls/0.ts\n/hls/1.ts\n#EXT-X-ENDLIST\n"
+        val upstream = Upstream { Triple(HttpStatusCode.OK, mapOf("Content-Type" to listOf("application/vnd.apple.mpegurl"), "Content-Length" to listOf(playlist.length.toString())), playlist.encodeToByteArray()) }
+        val session = PinnedMediaRelay(upstream).open(authority)
+        try {
+            val response = exchange(session.port, get(session, "/Videos/1/main.m3u8"))
+            val base = "http://127.0.0.1:${session.port}/${session.token}"
+            assertEquals("#EXTM3U\n#EXTINF:6,\n$base/hls/0.ts\n$base/hls/1.ts\n#EXT-X-ENDLIST\n", response.body.decodeToString(), "rewritten playlist")
+            assertTrue(response.head.contains("Content-Length: ${response.body.size}"), "length matches the rewritten body")
+        } finally {
+            session.dispose()
+        }
+    }
+
+    @Test
+    fun `an oversize playlist is refused rather than streamed unrewritten`() = runTest {
+        val big = ByteArray(HlsPlaylistRewriter.MAX_PLAYLIST_BYTES + 10) { 'a'.code.toByte() }
+        val upstream = Upstream { Triple(HttpStatusCode.OK, mapOf("Content-Type" to listOf("application/x-mpegURL")), big) }
+        val session = PinnedMediaRelay(upstream).open(authority)
+        try {
+            val response = exchange(session.port, get(session, "/Videos/1/main.m3u8"))
+            assertTrue(response.head.startsWith("HTTP/1.1 502"), "refused")
         } finally {
             session.dispose()
         }

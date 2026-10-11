@@ -17,6 +17,7 @@ import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.readUTF8Line
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
@@ -30,6 +31,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.io.readByteArray
 
 /**
  * A loopback relay that lets a player which cannot take a certificate pin (libmpv/ffmpeg on Android and iOS) read from a
@@ -148,17 +150,50 @@ internal class PinnedMediaRelay(
             }.execute { response ->
                 var status = response.status.value
                 var location: String? = null
-                if (status in 300..399) {
-                    location = RelayRequestPolicy.sameAuthorityLocation(response.headers["Location"], session.authority)
-                    if (location == null) status = 502
+                if (RelayRedirectPolicy.isRedirect(status)) {
+                    // Back to the pinned server -> through this relay; to a public https host -> the player follows it itself,
+                    // validating that host normally; anything else -> refused.
+                    when (val decision = RelayRedirectPolicy.decide(status, response.headers["Location"], session.authority)) {
+                        is RelayRedirectPolicy.Decision.ViaRelay -> location = "/" + session.token + decision.path
+                        is RelayRedirectPolicy.Decision.PassThrough -> location = decision.location
+                        RelayRedirectPolicy.Decision.Refuse -> status = 502
+                    }
                 }
-                val head = StringBuilder("HTTP/1.1 $status ${HttpStatusCode.fromValue(status).description}\r\n")
+                val isRedirectAnswer = location != null || status == 502
                 val upstream = response.headers.entries().associate { (name, values) -> name to values }
+                val head = StringBuilder("HTTP/1.1 $status ${HttpStatusCode.fromValue(status).description}\r\n")
+                if (isRedirectAnswer) {
+                    // A bare redirect: Location and nothing else of ours or the server's.
+                    location?.let { head.append("Location: ").append(it).append("\r\n") }
+                    head.append("Content-Length: 0\r\nConnection: close\r\n\r\n")
+                    output.writeStringUtf8(head.toString())
+                    output.flush()
+                    return@execute
+                }
+                val contentType = response.headers["Content-Type"]
+                if (request.method == "GET" && status == 200 && HlsPlaylistRewriter.isPlaylist(contentType, request.path)) {
+                    // Playlists only, size-capped: absolute references to the pinned server go back through the relay.
+                    val bytes = response.bodyAsChannel().readRemaining(HlsPlaylistRewriter.MAX_PLAYLIST_BYTES + 1L).readByteArray()
+                    if (bytes.size > HlsPlaylistRewriter.MAX_PLAYLIST_BYTES) {
+                        respond(output, 502)
+                        return@execute
+                    }
+                    val rewritten = HlsPlaylistRewriter
+                        .rewrite(bytes.decodeToString(), session.authority, "http://127.0.0.1:${session.port}/${session.token}")
+                        .encodeToByteArray()
+                    RelayRequestPolicy.responseHeaders(upstream)
+                        .filterNot { it.first == "Content-Length" || it.first == "Content-Range" }
+                        .forEach { (name, value) -> head.append(name).append(": ").append(value).append("\r\n") }
+                    head.append("Content-Length: ").append(rewritten.size).append("\r\nConnection: close\r\n\r\n")
+                    output.writeStringUtf8(head.toString())
+                    output.writeFully(rewritten, 0, rewritten.size)
+                    output.flush()
+                    return@execute
+                }
                 RelayRequestPolicy.responseHeaders(upstream).forEach { (name, value) -> head.append(name).append(": ").append(value).append("\r\n") }
-                location?.let { head.append("Location: /").append(session.token).append(it).append("\r\n") }
                 head.append("Connection: close\r\n\r\n")
                 output.writeStringUtf8(head.toString())
-                if (request.method == "GET" && status != 502) {
+                if (request.method == "GET") {
                     val body = response.bodyAsChannel()
                     val buffer = ByteArray(COPY_CHUNK_BYTES)
                     while (true) {
