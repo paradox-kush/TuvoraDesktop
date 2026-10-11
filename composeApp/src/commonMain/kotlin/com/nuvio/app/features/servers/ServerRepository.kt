@@ -68,6 +68,7 @@ object ServerRepository {
         loadedProfileId = null
         syncState = ServerSyncState()
         runCatching { ServerStorage.clear() }.onFailure { log.w(it) { "Unable to clear server storage" } }
+        runCatching { PlatformLegacyMediaServerSource.eraseAll() }
         _uiState.value = ServersUiState(revision = _uiState.value.revision + 1)
         ServerMatcher.clear()
         runCatching { ServerTrust.shared.clearAll() }
@@ -270,7 +271,19 @@ object ServerRepository {
         persistSyncState()
     }
 
+    /** The released fork stack's saved servers move into this store once, before anything reads it (see LegacyMediaServerImport). */
+    private fun importLegacyOnce() {
+        if (legacyImportDone || !PlatformLegacyMediaServerSource.isAvailable()) return
+        legacyImportDone = true
+        runCatching { LegacyMediaServerImport(PlatformLegacyMediaServerSource, PlatformServerKeyValueStore).runOnce() }
+            .onFailure { log.w(it) { "legacy media-server import failed" } }
+    }
+
+    @Volatile
+    private var legacyImportDone = false
+
     private fun load(profileId: Int) {
+        importLegacyOnce()
         generation++
         synchronized(lock) { tokens.clear() }
         loadedProfileId = profileId

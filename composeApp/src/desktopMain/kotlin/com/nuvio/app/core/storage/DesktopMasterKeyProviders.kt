@@ -186,6 +186,8 @@ internal class MasterKeyVault(private val providers: List<MasterKeyProvider>) {
     }
 
     companion object {
+        const val FILE_KEY_ONLY_PROPERTY = "tuvora.vault.fileKeyOnly"
+
         /**
          * [namespace] keeps each consumer's key apart (its own keychain item / DPAPI blob / key file), so wiping one
          * store can never take another store's master key with it (the media-server credentials use "servers").
@@ -193,8 +195,11 @@ internal class MasterKeyVault(private val providers: List<MasterKeyProvider>) {
         fun forThisMachine(dataDir: Path, namespace: String): MasterKeyVault {
             val os = System.getProperty("os.name").orEmpty().lowercase(Locale.ROOT)
             val service = "com.nuvio.media.$namespace"
+            // Developer/headless switch: keep the master key in the 0600 key file only and never ask the OS secret store
+            // (upgrade proofs and CI must not read or create items in a real keychain).
+            val fileOnly = System.getProperty(FILE_KEY_ONLY_PROPERTY) == "true"
             val providers = buildList<MasterKeyProvider> {
-                when {
+                if (!fileOnly) when {
                     os.contains("mac") -> add(MacOsKeychainProvider(service = service))
                     os.contains("win") -> add(WindowsDpapiProvider(dataDir.resolve("$namespace-master-key.dpapi")))
                     else -> add(LinuxSecretToolProvider(service = service))

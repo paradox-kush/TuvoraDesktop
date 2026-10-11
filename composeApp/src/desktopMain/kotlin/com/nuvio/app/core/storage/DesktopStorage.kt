@@ -84,6 +84,12 @@ internal object DesktopStorage {
             properties.containsKey(key)
         }
 
+        /** Every key currently stored (the legacy media-server import lists its per-profile entries with it). */
+        fun keys(): Set<String> = synchronized(lock) {
+            ensureLoaded()
+            properties.stringPropertyNames().toSet()
+        }
+
         fun getString(key: String): String? = synchronized(lock) {
             ensureLoaded()
             properties.getProperty(key)
