@@ -18,5 +18,4 @@
     <string name="servers_failure_cert_untrusted">This server's certificate is not trusted. Sign in again to review it.</string>
     <string name="servers_failure_cert_changed">This server's certificate changed. Sign in again to review it.</string>
     <string name="servers_status_cert_changed">Certificate changed</string>
-    <string name="servers_pinned_playback_unsupported">Playback is not supported for this server on this device: its certificate is trusted only on this device and the secure local connection could not be started.</string>
 </resources>

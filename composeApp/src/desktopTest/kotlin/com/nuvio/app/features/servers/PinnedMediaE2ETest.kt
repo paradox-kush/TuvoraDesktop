@@ -53,6 +53,7 @@ class PinnedMediaE2ETest {
     private lateinit var relay: PinnedMediaRelay
     private val upstreamHeaders = mutableMapOf<String, List<String>>()
     private val slowGate = CountDownLatch(1)
+    private val subtitle = "1\n00:00:01,000 --> 00:00:02,000\nHello\n".encodeToByteArray()
     @Volatile private var realMp4: ByteArray? = null
 
     private class Disk { var json: String? = null }
@@ -162,6 +163,68 @@ class PinnedMediaE2ETest {
             val mapped = assertNotNull(session.rewrite(source("/subs/1.srt?x=y")))
             assertTrue(mapped.startsWith(url.substringBefore("/video.mp4")) && mapped.endsWith("/subs/1.srt?x=y"))
             assertNull(session.rewrite("https://other.example.com/subs/1.srt"))
+        } finally {
+            session.dispose()
+        }
+    }
+
+    @Test
+    fun `an external subtitle file of a pinned server is read through the relay`() {
+        pin()
+        val (session, url) = open("/video.mp4")
+        try {
+            val playback = PinnedPlayback(url, session)
+            val rewritten = playback.rewriteSubtitles(
+                listOf(com.nuvio.app.features.streams.StreamSubtitle(url = source("/sub.srt?api_key=k"), language = "eng")),
+            ).single()
+            assertTrue(rewritten.url.startsWith("http://127.0.0.1:"), "the engine gets the loopback twin")
+            val response = get(rewritten.url)
+            assertEquals(200, response.statusCode())
+            assertContentEquals(subtitle, response.body(), "subtitle text over the pinned TLS")
+            assertEquals("https://elsewhere.example/a.srt", playback.rewrite("https://elsewhere.example/a.srt"), "a foreign url is left alone")
+        } finally {
+            session.dispose()
+        }
+    }
+
+    @Test
+    fun `redirects back to the pinned server stay on the relay, public hosts pass through, private ones are refused`() {
+        pin()
+        val (session, url) = open("/redir-self")
+        try {
+            val noFollow = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build()
+            fun send(path: String) = noFollow.send(
+                HttpRequest.newBuilder(URI.create(url.replace("/redir-self", path))).GET().build(),
+                HttpResponse.BodyHandlers.discarding(),
+            )
+            val self = send("/redir-self")
+            assertEquals(302, self.statusCode())
+            val location = self.headers().firstValue("Location").orElse("")
+            val resolved = URI.create(url).resolve(location).toString()
+            assertTrue(resolved.startsWith(url.substringBefore("/redir-self")) && !resolved.contains(authority), "back on the relay: $location")
+            assertEquals(200, get(resolved, "Range" to "bytes=0-9").statusCode().let { if (it == 206) 200 else it }, "following it works")
+
+            val away = send("/redir-other")
+            assertEquals(302, away.statusCode())
+            assertEquals("https://cdn.example.com/f.mkv?t=1", away.headers().firstValue("Location").orElse(null), "a public host is validated by the player itself")
+            assertTrue(away.headers().firstValue("Set-Cookie").isEmpty, "nothing else is passed along")
+
+            assertEquals(502, send("/redir-private").statusCode(), "a redirect into the local network is refused")
+        } finally {
+            session.dispose()
+        }
+    }
+
+    @Test
+    fun `an hls playlist of a pinned server is rewritten so its own segments come back through the relay`() {
+        pin()
+        val (session, url) = open("/pl.m3u8")
+        try {
+            val body = get(url).body().decodeToString()
+            assertFalse(body.contains(authority), "no segment names the pinned server directly: $body")
+            assertTrue(body.contains("http://127.0.0.1:"), "absolute and root-relative segments are on the relay")
+            assertTrue(body.contains("seg-relative.ts"), "plain relative references stay relative")
+            assertTrue(body.contains("https://cdn.example.com/other.ts"), "other hosts are untouched")
         } finally {
             session.dispose()
         }
@@ -353,7 +416,23 @@ class PinnedMediaE2ETest {
             ex.responseHeaders.add("Location", "https://127.0.0.1:$boundPort/video.mp4")
             ex.sendResponseHeaders(302, -1)
         }
+        server.createContext("/sub.srt") { ex ->
+            ex.responseHeaders.add("Content-Type", "application/x-subrip")
+            ex.sendResponseHeaders(200, subtitle.size.toLong())
+            ex.responseBody.use { it.write(subtitle) }
+        }
+        server.createContext("/pl.m3u8") { ex ->
+            val playlist = "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\nhttps://127.0.0.1:$boundPort/seg-abs.ts\n#EXTINF:4,\n/seg-root.ts\n#EXTINF:4,\nseg-relative.ts\n#EXTINF:4,\nhttps://cdn.example.com/other.ts\n#EXT-X-ENDLIST\n"
+            ex.responseHeaders.add("Content-Type", "application/vnd.apple.mpegurl")
+            ex.sendResponseHeaders(200, playlist.length.toLong())
+            ex.responseBody.use { it.write(playlist.encodeToByteArray()) }
+        }
+        server.createContext("/redir-private") { ex ->
+            ex.responseHeaders.add("Location", "https://192.168.1.10/x")
+            ex.sendResponseHeaders(302, -1)
+        }
         server.createContext("/redir-other") { ex ->
+            ex.responseHeaders.add("Set-Cookie", "s=1")
             ex.responseHeaders.add("Location", "https://cdn.example.com/f.mkv?t=1")
             ex.sendResponseHeaders(302, -1)
         }

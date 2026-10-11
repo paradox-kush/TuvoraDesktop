@@ -38,6 +38,7 @@ import com.nuvio.app.features.servers.ServerPlayback
 import com.nuvio.app.features.servers.serverPlaybackMessage
 import com.nuvio.app.features.streams.StreamBehaviorHints
 import com.nuvio.app.features.streams.StreamItem
+import com.nuvio.app.features.streams.ExternalPlayerAvailability
 import com.nuvio.app.features.streams.StreamLaunchStore
 import com.nuvio.app.features.streams.StreamLinkCacheRepository
 import com.nuvio.app.features.streams.StreamsRepository
@@ -540,7 +541,7 @@ internal fun StreamDestination(
             initialProgressFraction = launch.resumeProgressFraction.takeIf { serverResumeMs == null },
             contentLanguage = resolveLaunchContentLanguage(),
         )
-        if (externalPlaybackReady && stream.serverTarget == null) {
+        if (ExternalPlayerAvailability.routeExternally(stream, externalPlaybackReady)) {
             openExternalPlayback(playerLaunch)
             StreamsRepository.consumeAutoPlay()
             StreamsRepository.cancelLoading()
@@ -753,7 +754,7 @@ internal fun StreamDestination(
             contentLanguage = resolveLaunchContentLanguage(),
         )
 
-        if (!forceInternal && externalPlayerSupported && (forceExternal || externalPlaybackReady)) {
+        if (externalPlayerSupported && ExternalPlayerAvailability.routeExternally(stream, externalPlaybackReady, forceExternal, forceInternal)) {
             streamRouteScope.launch {
                 openExternalPlayback(playerLaunch)
                 StreamsRepository.cancelLoading()

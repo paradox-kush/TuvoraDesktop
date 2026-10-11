@@ -45,6 +45,7 @@ import com.nuvio.app.features.watching.application.WatchingState
 import com.nuvio.app.isDesktop
 import com.nuvio.app.features.player.skip.internalSkipAction
 import com.nuvio.app.features.servers.ServerStreams
+import com.nuvio.app.features.streams.ExternalPlayerAvailability
 import com.nuvio.app.features.streams.streamAddonInstanceId
 import com.nuvio.app.isIos
 import kotlinx.coroutines.launch
@@ -770,7 +771,7 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
                 null
             },
             onOpenInExternalPlayer = args.onOpenInExternalPlayer
-                ?.takeUnless { ServerStreams.isServerSourceId(activeProviderAddonId) }
+                ?.takeIf { ExternalPlayerAvailability.canHandOffProvider(activeProviderAddonId) }
                 ?.let { openExternal ->
                 {
                     val loadedSubtitles = addonSubtitles

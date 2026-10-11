@@ -1160,19 +1160,11 @@ internal class NativePlayerController(
         applyPendingSubtitleSettings()
     }
 
-    /**
-     * Maps a media URL onto the player's route for it: a subtitle on the pinned self-signed media server of the current
-     * source is reachable only through that source's loopback relay (null/identity for everything else).
-     */
-    @Volatile
-    var mediaUrlMapper: ((String) -> String?)? = null
-
     override fun setSubtitleUri(url: String) {
         log.d { "setSubtitleUri ${url.toPlaybackLogKey()} handle=$handle" }
-        val playable = mediaUrlMapper?.invoke(url) ?: url
         handle.takeIf { it != 0L }?.let { current ->
             NativePlayerBridge.clearExternalSubtitles(current)
-            NativePlayerBridge.addSubtitleUrl(current, playable)
+            NativePlayerBridge.addSubtitleUrl(current, url)
         }
     }
 

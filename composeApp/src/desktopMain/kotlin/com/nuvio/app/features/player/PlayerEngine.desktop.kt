@@ -40,8 +40,8 @@ import com.nuvio.app.features.servers.rememberPinnedPlayback
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.Res
-import nuvio.composeapp.generated.resources.servers_pinned_playback_unsupported
-import org.jetbrains.compose.resources.getString
+import nuvio.composeapp.generated.resources.servers_playback_failed
+import org.jetbrains.compose.resources.stringResource
 import kotlinx.coroutines.flow.drop
 
 @Composable
@@ -73,6 +73,18 @@ actual fun PlatformPlayerSurface(
     onError: (String?) -> Unit,
     sourceAvailable: Boolean,
 ) {
+    // A source on a pinned (self-signed) media server reaches libmpv through a verified loopback relay owned by this
+    // composition; its subtitle files map onto the same session. Every other source (IPTV, CA-signed servers) is returned
+    // untouched. Null = the relay is still opening: render nothing yet, never hand libmpv the raw https url.
+    val relayFailedMessage = stringResource(Res.string.servers_playback_failed)
+    val pinned = rememberPinnedPlayback(sourceUrl) { onError(relayFailedMessage) } ?: return
+    val engineOnControllerReady = remember(onControllerReady, pinned) {
+        if (!pinned.isRelayed) onControllerReady else { controller: PlayerEngineController ->
+            onControllerReady(RelayedSubtitleController(controller, pinned::rewrite))
+        }
+    }
+    val sourceUrl = pinned.url
+    val onControllerReady = engineOnControllerReady
     if (DesktopHostOs.current == DesktopHostOs.MACOS ||
         DesktopHostOs.current == DesktopHostOs.WINDOWS ||
         DesktopHostOs.current == DesktopHostOs.LINUX
@@ -151,16 +163,6 @@ private fun NativePlayerSurface(
     val latestOnPlayerControlsScrubFinished = rememberUpdatedState(onPlayerControlsScrubFinished)
     val latestOnInitialPositionHandled = rememberUpdatedState(onInitialPositionHandled)
     val latestOnError = rememberUpdatedState(onError)
-    val pinnedScope = androidx.compose.runtime.rememberCoroutineScope()
-    // A pinned self-signed media server's stream (and subtitles) reach libmpv through a loopback relay that verifies the pin;
-    // the session is owned by this composition. Every other source - IPTV, CA-signed servers - is returned untouched.
-    val pinnedPlayback = rememberPinnedPlayback(sourceUrl) { _ ->
-        pinnedScope.launch { latestOnError.value(getString(Res.string.servers_pinned_playback_unsupported)) }
-    }
-    val playbackUrl = pinnedPlayback.url
-    LaunchedEffect(controller, playbackUrl) {
-        controller.mediaUrlMapper = { url -> pinnedPlayback.rewrite(url) }
-    }
     val latestPlayerControlsState = rememberUpdatedState(playerControlsState)
     val playerSettings by PlayerSettingsRepository.uiState.collectAsState()
     val decoderPriority = playerSettings.decoderPriority
@@ -223,7 +225,6 @@ private fun NativePlayerSurface(
         controller,
         sourceAvailable,
         sourceUrl,
-        playbackUrl,
         playbackHeaders,
         decoderPriority,
         nvidiaRtxSuperResolutionEnabled,
@@ -234,11 +235,9 @@ private fun NativePlayerSurface(
         if (!sourceAvailable || !hostFirstFullSizePaintComplete.value) {
             return@LaunchedEffect
         }
-        // null = the relay for a pinned server is still opening (or failed and was reported): never attach the raw https url.
-        if (playbackUrl == null) return@LaunchedEffect
         delay(16L)
         controller.attach(
-            sourceUrl = playbackUrl,
+            sourceUrl = sourceUrl,
             sourceHeaders = playbackHeaders,
             playWhenReady = playWhenReady,
             initialPositionMs = initialPositionMs,

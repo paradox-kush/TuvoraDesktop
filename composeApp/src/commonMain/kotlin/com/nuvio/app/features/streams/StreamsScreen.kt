@@ -1224,7 +1224,7 @@ private fun DesktopStreamActionsMenu(
                 onClick = { onCopyLink(stream) },
             ),
         )
-        if (externalPlayerSupported) {
+        if (externalPlayerSupported && ExternalPlayerAvailability.canHandOff(stream)) {
             add(
                 DesktopStreamAction(
                     icon = Icons.AutoMirrored.Rounded.OpenInNew,
@@ -1445,7 +1445,7 @@ private fun StreamActionsSheet(
                     }
                 },
             )
-            if (externalPlayerSupported) {
+            if (externalPlayerSupported && ExternalPlayerAvailability.canHandOff(stream)) {
                 NuvioBottomSheetActionRow(
                     icon = Icons.AutoMirrored.Rounded.OpenInNew,
                     title = stringResource(
