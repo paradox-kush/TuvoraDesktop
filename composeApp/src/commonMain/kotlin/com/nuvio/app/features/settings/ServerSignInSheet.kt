@@ -179,6 +179,10 @@ internal fun ServerSignInSheet(
             delay(1_000L)
         }
     }
+    // A Quick Connect request that stopped on an untrusted certificate asks the same trust decision as a password sign-in.
+    LaunchedEffect(qcState) {
+        driver?.certificateToPrompt()?.let { certificate = it }
+    }
     LaunchedEffect(qcState) {
         if (driver != null && qcState == QuickConnectState.Authorised) {
             try {
@@ -217,7 +221,12 @@ internal fun ServerSignInSheet(
                 CertificatePrompt(
                     prompt = prompt,
                     onTrust = { trustCertificate(prompt) },
-                    onCancel = { certificate = null },
+                    onCancel = {
+                        certificate = null
+                        // Declining ends the Quick Connect attempt too: back to the form, nothing saved or pinned.
+                        quickConnect?.cancel()
+                        quickConnect = null
+                    },
                 )
             } else if (driver != null && qcState != null) {
                 QuickConnectPanel(

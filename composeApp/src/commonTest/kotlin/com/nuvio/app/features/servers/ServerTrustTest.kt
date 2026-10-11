@@ -47,6 +47,44 @@ class ServerTrustTest {
     }
 
     @Test
+    fun `every request that failed on the same refused handshake sees the refusal`() {
+        // Home loads the Movies and Shows libraries at the same time: both die on one handshake. Reading the refusal used to
+        // consume it, so one request reported "certificate changed" and the other "server unavailable" (found on a real
+        // Jellyfin after its certificate was rotated).
+        val trust = trust()
+        trust.pin("nas.local:8920", "AA")
+        assertFalse(trust.check("nas.local:8920", false, FailureKind.SELF_SIGNED, "BB"), "changed is refused")
+        assertNotNull(trust.certificateException("nas.local:8920"), "first request")
+        assertNotNull(trust.certificateException("nas.local:8920"), "second request on the same refusal")
+    }
+
+    @Test
+    fun `a refusal is forgotten once the host is accepted or its new certificate pinned`() {
+        val trust = trust()
+        trust.pin("nas.local:8920", "AA")
+        trust.check("nas.local:8920", false, FailureKind.SELF_SIGNED, "BB")
+        trust.pin("nas.local:8920", "BB")
+        assertNull(trust.certificateException("nas.local:8920"), "pinning the new certificate settles it")
+
+        trust.check("nas.local:8920", false, FailureKind.SELF_SIGNED, "CC")
+        assertTrue(trust.check("nas.local:8920", true, null, "BB"), "the system now trusts the host")
+        assertNull(trust.certificateException("nas.local:8920"), "an accepted handshake clears the refusal")
+    }
+
+    @Test
+    fun `a stale refusal never labels a later outage as a certificate problem`() {
+        var now = 1_000L
+        val disk = Disk()
+        val trust = ServerTrust(ServerPinStore({ disk.json }, { disk.json = it }, { disk.json = null }), nowMs = { now })
+        trust.pin("nas.local:8920", "AA")
+        trust.check("nas.local:8920", false, FailureKind.SELF_SIGNED, "BB")
+        now += ServerTrust.REFUSAL_WINDOW_MS - 1
+        assertNotNull(trust.certificateException("nas.local:8920"), "still the same burst of requests")
+        now += 2
+        assertNull(trust.certificateException("nas.local:8920"), "too old: the server may simply be down now")
+    }
+
+    @Test
     fun `an expired certificate is never offered for trust`() {
         val trust = trust()
         assertFalse(trust.check("nas.local:8920", false, FailureKind.EXPIRED, "AA"), "refused")

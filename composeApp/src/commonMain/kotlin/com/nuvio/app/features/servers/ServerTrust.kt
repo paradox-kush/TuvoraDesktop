@@ -115,6 +115,7 @@ internal data class TlsFailure(
     val kind: ServerCertTrustPolicy.FailureKind,
     val fingerprint: String,
     val pinned: String?,
+    val atMs: Long = 0L,
 )
 
 /**
@@ -160,7 +161,10 @@ internal class ServerPinStore(
  * request can surface it; the UI shows the fingerprint and may [pin] it. Scoped by authority: a pin for one host:port
  * never applies to another.
  */
-internal class ServerTrust(private val pins: ServerPinStore) {
+internal class ServerTrust(
+    private val pins: ServerPinStore,
+    private val nowMs: () -> Long = { kotlin.time.Clock.System.now().toEpochMilliseconds() },
+) {
     private val lock = SynchronizedObject()
     private val failures = mutableMapOf<String, TlsFailure>()
 
@@ -174,18 +178,26 @@ internal class ServerTrust(private val pins: ServerPinStore) {
         val host = authority.substringBeforeLast(':')
         val pinned = pins.pinned(authority)
         val verdict = ServerCertTrustPolicy.decide(systemTrusted, failure, fingerprint, pinned, host)
-        if (verdict is ServerCertTrustPolicy.Verdict.Accept) return true
+        if (verdict is ServerCertTrustPolicy.Verdict.Accept) {
+            synchronized(lock) { failures.remove(authority.lowercase()) }
+            return true
+        }
         val kind = when (verdict) {
             is ServerCertTrustPolicy.Verdict.Reject -> verdict.failure
             else -> failure ?: ServerCertTrustPolicy.FailureKind.OTHER
         }
-        synchronized(lock) { failures[authority.lowercase()] = TlsFailure(authority, kind, fingerprint, pinned) }
+        synchronized(lock) { failures[authority.lowercase()] = TlsFailure(authority, kind, fingerprint, pinned, nowMs()) }
         return false
     }
 
-    /** The refused handshake for [authority] as the exception the UI branches on - only when trust may be offered for it (cleared by reading). */
+    /**
+     * The refused handshake for [authority] as the exception the UI branches on - only when trust may be offered for it. Not
+     * consumed by reading: parallel requests (Home loads several libraries at once) all die on the same handshake and must all
+     * report it. It ends when the host is accepted again, when the user pins, or after [REFUSAL_WINDOW_MS].
+     */
     fun certificateException(authority: String): ServerCertificateException? {
-        val f = synchronized(lock) { failures.remove(authority.lowercase()) } ?: return null
+        val f = synchronized(lock) { failures[authority.lowercase()] } ?: return null
+        if (nowMs() - f.atMs > REFUSAL_WINDOW_MS) return null
         if (!ServerCertTrustPolicy.canOfferTrust(f.kind, authority.substringBeforeLast(':'))) return null
         return ServerCertificateException(f.authority, f.kind.name, f.fingerprint, changed = f.pinned != null && f.pinned != f.fingerprint)
     }
@@ -193,14 +205,24 @@ internal class ServerTrust(private val pins: ServerPinStore) {
     fun pinnedFingerprint(authority: String): String? = pins.pinned(authority)
 
     /** The user accepted this certificate. */
-    fun pin(authority: String, fingerprint: String) = pins.pin(authority, fingerprint)
+    fun pin(authority: String, fingerprint: String) {
+        pins.pin(authority, fingerprint)
+        forgetRefusal(authority)
+    }
 
-    fun unpin(authority: String) = pins.unpin(authority)
+    fun unpin(authority: String) {
+        pins.unpin(authority)
+        forgetRefusal(authority)
+    }
+
+    private fun forgetRefusal(authority: String) = synchronized(lock) { failures.remove(authority.lowercase()) }
 
     /** Account wipe: every pin (they name the user's servers). */
     fun clearAll() = pins.clearAll()
 
     companion object {
+        /** How long a refused handshake is still "the reason" for a failing request: one burst of parallel requests, not an hour. */
+        const val REFUSAL_WINDOW_MS = 30_000L
         private const val PINS_KEY = "trust.pins"
 
         /** The device-wide instance, persisted in the device-local server storage (never synced). */

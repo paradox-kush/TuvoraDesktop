@@ -173,6 +173,10 @@ internal class QuickConnectDriver(
 
     private var challenge: QuickConnectChallenge? = null
 
+    /** The certificate decision the screen must put to the user now (the request stopped on it), else null. */
+    fun certificateToPrompt(): ServerCertificateException? =
+        if ((mutable.value as? QuickConnectState.Failed)?.reason == QuickConnectFailure.CERTIFICATE) certificate else null
+
     private fun send(event: QuickConnectEvent) = mutable.update { QuickConnectMachine.reduce(it, event) }
 
     /** Start, or Retry. A no-op while a request is already running. */
