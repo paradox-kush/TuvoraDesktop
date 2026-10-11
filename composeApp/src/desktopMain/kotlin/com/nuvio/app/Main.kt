@@ -225,13 +225,15 @@ fun main(args: Array<String>) {
             } else {
                 // The player surface reads LocalNuvioPlatformDensity, which only
                 // NuvioTheme provides — the bare smoke harness must supply it too.
+                val smokeController = remember { arrayOfNulls<com.nuvio.app.features.player.PlayerEngineController>(1) }
+                remember { DesktopSmokeHarness.prepare() }
                 NuvioTheme {
                     PlatformPlayerSurface(
                         sourceUrl = smokePlayerUrl,
                         modifier = Modifier.fillMaxSize(),
-                        onControllerReady = {},
-                        onSnapshot = {},
-                        onError = {},
+                        onControllerReady = { smokeController[0] = it },
+                        onSnapshot = { DesktopSmokeHarness.onSnapshot(it, smokeController[0]) },
+                        onError = DesktopSmokeHarness::onError,
                     )
                 }
             }

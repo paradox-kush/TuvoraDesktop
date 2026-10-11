@@ -1413,6 +1413,10 @@ compose.desktop {
             "--add-opens=java.desktop/sun.awt.X11=ALL-UNNAMED",
             smokePlayerUrl?.takeIf { it.isNotBlank() }?.let { "-Dnuvio.desktop.smokePlayerUrl=$it" },
         )
+        // Dev runs against a throwaway profile: -Pnuvio.desktop.extraJvmArgs="-Duser.home=/tmp/x -Dtuvora.servers.inMemoryStorage=true"
+        // keeps the owner's real app data and Keychain untouched (DesktopStorage resolves from user.home).
+        providers.gradleProperty("nuvio.desktop.extraJvmArgs").orNull
+            ?.split(" ")?.filter { it.isNotBlank() }?.let { jvmArgs += it }
 
         nativeDistributions {
             // AppImage only where it can be built: the plugin registers a notarizeAppImage task for it
