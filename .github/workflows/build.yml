@@ -30,6 +30,11 @@ jobs:
         with:
           lfs: false
 
+      # The vendored ComposeMediaPlayer builds its GStreamer natives (composeMediaPlayer:buildNativeLinux) as part of the
+      # desktop compile; a bare runner has no GStreamer dev packages ("Package 'gstreamer-1.0' ... not found").
+      - name: Install Linux build dependencies
+        run: bash ./scripts/linux/install-desktop-build-dependencies.sh
+
       - name: Set up Java
         uses: actions/setup-java@v5
         with:
@@ -151,7 +156,6 @@ jobs:
           ./gradlew :composeApp:buildLinuxPlayerBridge --no-daemon --stacktrace
           bridge="$(find composeApp/build -name 'libplayer_bridge*.so' | head -1)"
           test -n "${bridge}" || { echo "libplayer_bridge.so was not produced" >&2; exit 1; }
-          nm -D --defined-only "${bridge}" | grep -c "NativePlayerBridge_" 
           nm -D --defined-only "${bridge}" | grep "NativePlayerBridge_setTlsVerifyForNextCreate" \
             || { echo "setTlsVerifyForNextCreate is not exported" >&2; exit 1; }
 
@@ -203,5 +207,7 @@ jobs:
           $dll = Get-ChildItem -Recurse -Path composeApp\build -Filter "player_bridge*.dll" | Select-Object -First 1
           if (-not $dll) { throw "the Windows player bridge DLL was not produced" }
           Write-Host "built $($dll.FullName) ($($dll.Length) bytes)"
-          $exports = & dumpbin /exports $dll.FullName 2>$null
-          if (-not ($exports -match "setTlsVerifyForNextCreate")) { Write-Warning "dumpbin not on PATH or export not listed; check manually" }
+          # JNI exports live in the export table as plain ASCII names; no dumpbin needed on the runner PATH.
+          $text = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($dll.FullName))
+          if ($text -notmatch "Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setTlsVerifyForNextCreate") { throw "setTlsVerifyForNextCreate is not exported by the Windows bridge" }
+          Write-Host "setTlsVerifyForNextCreate is exported"
