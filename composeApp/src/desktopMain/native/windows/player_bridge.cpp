@@ -1811,6 +1811,13 @@ private:
             // read, and let ffmpeg re-open the URL itself — that heals a transient drop before
             // the app-level reconnect (LivePlaybackFreezeTracking) has to tear playback down
             // and rebuild it.
+            // TODO(tls-verify, security): libmpv's own default is tls-verify=no (proved on the bundled macOS libmpv: a self-signed https
+            // stream loads unverified). The macOS bridge now sets tls-verify=yes by default and exposes
+            // NativePlayerBridge.setTlsVerifyForNextCreate (Kotlin: PlaybackTlsPolicy decides; only IPTV panel sources ask for "no").
+            // Port here: a static std::atomic<bool> gNextCreateTlsVerify{true}, the JNI setter, and
+            // <set option>("tls-verify", gNextCreateTlsVerify.exchange(true) ? "yes" : "no") next to the other pre-init options.
+            // Until then this platform keeps libmpv's default (unverified) for every https stream except media-server hosts, which the
+            // Kotlin side already reads through the verifying loopback relay. UNVERIFIED on this OS: no build or run was possible.
             setMpvOptionStringLocked("network-timeout", "15");
             setMpvOptionStringLocked(
                 "stream-lavf-o",

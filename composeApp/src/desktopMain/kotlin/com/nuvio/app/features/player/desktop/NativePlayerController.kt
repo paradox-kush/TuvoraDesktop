@@ -55,27 +55,29 @@ internal typealias NativePlayerCreate = (
     NativePlayerEventSink,
 ) -> Long
 
+internal val defaultNativePlayerCreate: NativePlayerCreate = { target, source, headers, playWhenReady, positionMs,
+                                                 controlsPageUrl, decoderPriority, rtxVsr, sink ->
+    NativePlayerBridge.create(
+        hostViewPtr = target.viewPtr,
+        hostX = target.x,
+        hostY = target.y,
+        hostWidth = target.width,
+        hostHeight = target.height,
+        needsBoundedChild = target.needsBoundedChild,
+        sourceUrl = source,
+        headerLines = headers,
+        playWhenReady = playWhenReady,
+        initialPositionMs = positionMs,
+        controlsPageUrl = controlsPageUrl,
+        decoderPriority = decoderPriority,
+        nvidiaRtxSuperResolutionEnabled = rtxVsr,
+        eventSink = sink,
+    )
+}
+
 internal class NativePlayerController(
     private val host: NativePlayerHost,
-    private val nativeCreate: NativePlayerCreate = { target, source, headers, playWhenReady, positionMs,
-                                                     controlsPageUrl, decoderPriority, rtxVsr, sink ->
-        NativePlayerBridge.create(
-            hostViewPtr = target.viewPtr,
-            hostX = target.x,
-            hostY = target.y,
-            hostWidth = target.width,
-            hostHeight = target.height,
-            needsBoundedChild = target.needsBoundedChild,
-            sourceUrl = source,
-            headerLines = headers,
-            playWhenReady = playWhenReady,
-            initialPositionMs = positionMs,
-            controlsPageUrl = controlsPageUrl,
-            decoderPriority = decoderPriority,
-            nvidiaRtxSuperResolutionEnabled = rtxVsr,
-            eventSink = sink,
-        )
-    },
+    private val nativeCreate: NativePlayerCreate = defaultNativePlayerCreate,
     // Lambdas, not bound references: `NativePlayerBridge::seekTo` evaluates the object and runs its
     // static init (loads libplayer_bridge) at CONSTRUCTION, so a controller built with injected fakes
     // still needed the native library — all 23 teardown tests failed after upstream added nativeSeekTo.
@@ -84,6 +86,9 @@ internal class NativePlayerController(
     // Read at create time. A direct `NativePlayerBridge.controlsPageUrl` initialises the bridge (native
     // library load) inside the create worker, so injected-fake tests never reached nativeCreate.
     private val controlsPageUrl: () -> String = { NativePlayerBridge.controlsPageUrl },
+    // Lambda, not a bound reference (see nativeSeekTo): a test controller must not load the native library.
+    private val applyTlsVerify: (Boolean) -> Unit =
+        if (nativeCreate === defaultNativePlayerCreate) { verify -> NativePlayerBridge.setTlsVerifyForNextCreateSafely(verify) } else { _ -> },
     private val isHostDisplayable: () -> Boolean = { host.isDisplayable },
     private val resolveHostView: () -> NativePlayerHostTarget = { AwtNativeViewResolver.resolveNativePlayerHost(host) },
     private val createWaitTimeoutMs: Long = 5_000L,
@@ -165,6 +170,8 @@ internal class NativePlayerController(
         initialPositionMs: Long,
         decoderPriority: Int,
         nvidiaRtxSuperResolutionEnabled: Boolean,
+        // false = an IPTV panel source (PlaybackTlsPolicy.PermissivePanel): its certificate is not verified, as before.
+        tlsVerify: Boolean = true,
         onError: (String?) -> Unit,
     ) {
         val pending = PendingSource(
@@ -174,6 +181,7 @@ internal class NativePlayerController(
             initialPositionMs = initialPositionMs.coerceAtLeast(0L),
             decoderPriority = decoderPriority,
             nvidiaRtxSuperResolutionEnabled = nvidiaRtxSuperResolutionEnabled,
+            tlsVerify = tlsVerify,
             onError = onError,
         )
         var terminalFailure: String? = null
@@ -339,6 +347,7 @@ internal class NativePlayerController(
         val createWorker = Thread({
             try {
                 runCatching {
+                    applyTlsVerify(pending.tlsVerify)
                     nativeCreate(
                         hostTarget,
                         resolvedSource,
@@ -1327,6 +1336,7 @@ private data class PendingSource(
     val initialPositionMs: Long,
     val decoderPriority: Int,
     val nvidiaRtxSuperResolutionEnabled: Boolean,
+    val tlsVerify: Boolean,
     val onError: (String?) -> Unit,
 )
 

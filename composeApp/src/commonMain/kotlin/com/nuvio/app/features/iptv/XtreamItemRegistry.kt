@@ -64,12 +64,14 @@ object XtreamItemRegistry {
     }
 
     fun register(item: XtreamResolvedItem) {
+        IptvPanelHosts.note(item.streamUrl)
         synchronized(itemsLock) { items[item.contentId] = item }
     }
 
     /** Registers a whole category in one lock acquisition — the browse path's hot loop. */
     fun registerAll(batch: List<XtreamResolvedItem>) {
         if (batch.isEmpty()) return
+        for (item in batch) IptvPanelHosts.note(item.streamUrl)
         synchronized(itemsLock) { for (item in batch) items[item.contentId] = item }
     }
 
@@ -183,7 +185,10 @@ object XtreamItemRegistry {
      * [forceMint] rides the 401-refresh ladder into Stalker's resolver: a static-cmd verdict would
      * rebuild the very URL that just died, so the refresh demands a fresh create_link.
      */
-    suspend fun liveStreamUrlForAsync(contentId: String, forceMint: Boolean = false): String? {
+    suspend fun liveStreamUrlForAsync(contentId: String, forceMint: Boolean = false): String? =
+        resolveLiveStreamUrl(contentId, forceMint).also { IptvPanelHosts.note(it) }
+
+    private suspend fun resolveLiveStreamUrl(contentId: String, forceMint: Boolean): String? {
         val parsed = parseId(contentId) ?: return null
         if (parsed.kind != XtreamKind.LIVE) return null
         val streamId = parsed.id.toIntOrNull() ?: return null
@@ -277,6 +282,7 @@ fun XtreamResolvedItem.toStreamItem(accountName: String, userAgent: String? = nu
     // Blank == a Stalker placeholder (create_link not yet resolved) -> treat as "no direct item" so the
     // streams flow rebuilds it fresh via ensureXtreamStreamRegistered. A real URL is never blank.
     val url = streamUrl?.takeIf { it.isNotBlank() } ?: return null
+    IptvPanelHosts.note(url)
     // A per-playlist stream UA rides the Stremio proxyHeaders the player already honors, so an
     // honest IPTV-client UA can get past a provider WAF that 456s the spoofed-browser default.
     val behaviorHints = userAgent

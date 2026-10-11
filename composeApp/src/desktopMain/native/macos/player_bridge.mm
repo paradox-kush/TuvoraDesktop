@@ -45,6 +45,10 @@
 
 static constexpr double kMaxVolumePercent = 200.0;
 
+// Whether the NEXT player create makes libmpv verify TLS certificates. Set by NativePlayerBridge.setTlsVerifyForNextCreate on
+// the thread that then calls create; consumed (reset to "verify") by that create. Panels with bad certs are the only "no".
+static std::atomic<bool> gNextCreateTlsVerify{true};
+
 @class PlayerMetalView;
 @class MpvWebPlayer;
 @class NuvioPlayerOpenGLLayer;
@@ -1813,6 +1817,9 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     setMpvOptionString(_mpv, "demuxer-max-bytes", "150MiB");
     setMpvOptionString(_mpv, "cache-secs", "120");
     setMpvOptionString(_mpv, "hr-seek", "no");
+    // TLS: libmpv's own default is tls-verify=no (proved with the bundled libmpv: a self-signed https stream loads). Verify
+    // by default; the Kotlin side asks for "no" only for an IPTV panel source (PlaybackTlsPolicy), see setTlsVerifyForNextCreate.
+    setMpvOptionString(_mpv, "tls-verify", gNextCreateTlsVerify.exchange(true) ? "yes" : "no");
 
     if (headerLines.count > 0) {
         NSMutableArray *escaped = [NSMutableArray arrayWithCapacity:headerLines.count];
@@ -3350,6 +3357,15 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setMacosWindowFull
             [window toggleFullScreen:nil];
         }
     });
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setTlsVerifyForNextCreate(
+    JNIEnv * /* env */,
+    jobject /* bridge */,
+    jboolean verify
+) {
+    gNextCreateTlsVerify.store(verify == JNI_TRUE);
 }
 
 extern "C" JNIEXPORT jlong JNICALL

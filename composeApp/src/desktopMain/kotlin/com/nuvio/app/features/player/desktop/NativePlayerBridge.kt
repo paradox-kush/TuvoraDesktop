@@ -83,6 +83,19 @@ internal object NativePlayerBridge {
      */
     external fun setStringProperties(handle: Long, names: Array<String>, values: Array<String>)
 
+    /**
+     * macOS native only (so far): whether the NEXT [create] makes libmpv verify TLS certificates (`tls-verify`). The bundled
+     * libmpv defaults to "no" - proved by playing a self-signed https stream - so the bridge now defaults to "yes" and only an
+     * IPTV panel source (see PlaybackTlsPolicy) asks for "no". Consumed by the next create, then back to "yes".
+     * Use [setTlsVerifyForNextCreateSafely]: a native library without this symbol (Windows/Linux builds until their bridges
+     * get the same option) must degrade to libmpv's own default, not crash.
+     */
+    private external fun setTlsVerifyForNextCreate(verify: Boolean)
+
+    /** True when the native library took the setting. */
+    fun setTlsVerifyForNextCreateSafely(verify: Boolean): Boolean =
+        runCatching { setTlsVerifyForNextCreate(verify) }.isSuccess
+
     fun setStringPropertiesSafely(handle: Long, properties: List<Pair<String, String>>) {
         if (handle == 0L || properties.isEmpty()) return
         runCatching {

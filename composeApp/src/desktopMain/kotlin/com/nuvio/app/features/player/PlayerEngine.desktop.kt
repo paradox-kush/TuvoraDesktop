@@ -36,7 +36,10 @@ import com.nuvio.app.features.player.desktop.DesktopPlayerPictureInPicture
 import com.nuvio.app.features.player.desktop.NativePlayerController
 import com.nuvio.app.features.player.desktop.NativePlayerHost
 import com.nuvio.app.features.player.desktop.desktopFullscreenChanges
+import com.nuvio.app.core.contracts.PlaybackTrustHosts
 import com.nuvio.app.features.servers.ServerRepository
+import com.nuvio.app.features.streams.PlaybackTlsClass
+import com.nuvio.app.features.streams.PlaybackTlsPolicy
 import com.nuvio.app.features.servers.rememberPinnedPlayback
 import com.nuvio.app.features.servers.serverAuthority
 import kotlinx.coroutines.delay
@@ -90,6 +93,9 @@ actual fun PlatformPlayerSurface(
         }
     }
     val sourceUrl = pinned.url
+    // The bundled libmpv does not verify TLS unless told to (macOS bridge: now yes by default). Only a source on one of the
+    // user's IPTV panels (PlaybackTlsPolicy.PermissivePanel) keeps the old unverified behaviour; everything else is verified.
+    val tlsVerify = remember(sourceUrl) { playbackTlsClassOf(sourceUrl) == PlaybackTlsClass.Strict }
     val onControllerReady = engineOnControllerReady
     if (DesktopHostOs.current == DesktopHostOs.MACOS ||
         DesktopHostOs.current == DesktopHostOs.WINDOWS ||
@@ -97,6 +103,7 @@ actual fun PlatformPlayerSurface(
     ) {
         NativePlayerSurface(
             sourceUrl = sourceUrl,
+            tlsVerify = tlsVerify,
             sourceAvailable = sourceAvailable,
             isLiveStream = LivePlaybackRejoinPolicy.rejoinsLiveEdge(streamType, isCatchUpPlayback),
             sourceHeaders = sourceHeaders,
@@ -137,6 +144,7 @@ actual fun PlatformPlayerSurface(
 @Composable
 private fun NativePlayerSurface(
     sourceUrl: String,
+    tlsVerify: Boolean,
     sourceAvailable: Boolean,
     isLiveStream: Boolean,
     sourceHeaders: Map<String, String>,
@@ -249,6 +257,7 @@ private fun NativePlayerSurface(
             initialPositionMs = initialPositionMs,
             decoderPriority = decoderPriority,
             nvidiaRtxSuperResolutionEnabled = nvidiaRtxSuperResolutionEnabled,
+            tlsVerify = tlsVerify,
             onError = { message -> latestOnError.value(message) },
         )
         initialPositionRequestKey?.let { key ->
@@ -418,4 +427,21 @@ private class DesktopStubPlayerController : PlayerEngineController {
     override fun setSubtitleUri(url: String) = Unit
     override fun clearExternalSubtitle() = Unit
     override fun clearExternalSubtitleAndSelect(trackIndex: Int) = Unit
+}
+
+/**
+ * How strictly libmpv validates TLS for [sourceUrl] (pure policy + the two live host sources): IPTV panel hosts may stay
+ * unverified, a configured media-server host never, everything else (add-ons, debrid CDNs, unknown hosts) is verified.
+ */
+private fun playbackTlsClassOf(sourceUrl: String): PlaybackTlsClass {
+    val host = runCatching { io.ktor.http.Url(sourceUrl).host }.getOrNull()
+    return PlaybackTlsPolicy.classify(
+        host = host,
+        isPanelHost = PlaybackTrustHosts::isPanelHost,
+        isMediaServerHost = { h ->
+            ServerRepository.uiState.value.connections.any { c ->
+                PlaybackTlsPolicy.normalize(runCatching { io.ktor.http.Url(c.address).host }.getOrNull()) == h
+            }
+        },
+    )
 }

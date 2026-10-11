@@ -70,5 +70,5 @@ internal object XtreamStreamSourceProvider : StreamSourceProvider {
     override fun isDeferredUrl(url: String?): Boolean = XtreamStreamSource.isDeferred(url)
 
     override suspend fun resolveDeferredUrl(url: String, forceMint: Boolean): String? =
-        XtreamStreamSource.resolveDeferredUrl(url, forceMint = forceMint)
+        XtreamStreamSource.resolveDeferredUrl(url, forceMint = forceMint).also { IptvPanelHosts.note(it) }
 }

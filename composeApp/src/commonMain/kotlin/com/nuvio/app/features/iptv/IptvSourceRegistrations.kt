@@ -34,5 +34,7 @@ internal object IptvSourceRegistrations {
         SearchProviderRegistry.register(NAME, XtreamSearchProvider)
         OwnSourcePolicy.registerContentIdPredicate(NAME, XtreamOwnSource::isOwnContentId)
         OwnSourcePolicy.registerProviderIdPredicate(NAME, XtreamOwnSource::isOwnProviderId)
+        // The player may retry a failed TLS handshake without verification ONLY for these hosts (PlaybackTlsPolicy).
+        com.nuvio.app.core.contracts.PlaybackTrustHosts.registerPanelHostPredicate(NAME, IptvPanelHosts::isPanelHost)
     }
 }
