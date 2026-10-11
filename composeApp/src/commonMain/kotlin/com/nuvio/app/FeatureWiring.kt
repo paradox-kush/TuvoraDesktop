@@ -56,7 +56,6 @@ fun registerFeatureContributions() {
     // UI slots: Compose content the fork contributes to shared screens (not compiled on Apple TV).
     HomeRecAccess.register(HomeRecBinderImpl)
     IptvSettingsSectionAccess.register(IptvSettingsSectionImpl)
-    // 13th sync: the fork media-server settings section was retired in favour of upstream SettingsPage.MediaServers.
     HomeSportsSectionAccess.register(RadarHomeSportsSection)
     IptvHubContentAccess.register(XtreamHubContent)
     SetupCodeEntryAccess.register(SetupCodeEntryImpl)

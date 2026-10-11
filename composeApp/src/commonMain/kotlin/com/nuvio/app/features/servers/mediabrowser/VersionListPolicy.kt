@@ -1,7 +1,7 @@
 package com.nuvio.app.features.servers.mediabrowser
 
 /**
- * Fork policy (ported from features/mediaserver VersionPickPolicy/MediaServerVersions): decides whether an item
+ * Fork policy (ported from the retired fork features/mediaserver VersionPickPolicy/MediaServerVersions): decides whether an item
  * page's MediaSources are only on-demand stand-ins, so the real version list has to be asked for.
  */
 internal object VersionListPolicy {

@@ -188,9 +188,9 @@ internal class MasterKeyVault(private val providers: List<MasterKeyProvider>) {
     companion object {
         /**
          * [namespace] keeps each consumer's key apart (its own keychain item / DPAPI blob / key file), so wiping one
-         * store can never take another store's master key with it. "mediaserver" is the fork feature's original name.
+         * store can never take another store's master key with it (the media-server credentials use "servers").
          */
-        fun forThisMachine(dataDir: Path, namespace: String = "mediaserver"): MasterKeyVault {
+        fun forThisMachine(dataDir: Path, namespace: String): MasterKeyVault {
             val os = System.getProperty("os.name").orEmpty().lowercase(Locale.ROOT)
             val service = "com.nuvio.media.$namespace"
             val providers = buildList<MasterKeyProvider> {

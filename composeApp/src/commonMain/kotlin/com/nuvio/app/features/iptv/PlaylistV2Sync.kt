@@ -1,10 +1,5 @@
 package com.nuvio.app.features.iptv
 
-import com.nuvio.app.features.mediaserver.api.MediaServerEntry
-import com.nuvio.app.features.mediaserver.api.MediaServerPendingOp
-import com.nuvio.app.features.mediaserver.api.MediaServerPendingOps
-import com.nuvio.app.features.mediaserver.api.MediaServerSyncBinding
-import com.nuvio.app.features.mediaserver.api.MediaServerSyncCodec
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -58,12 +53,6 @@ internal data class PlaylistSyncState(
      *  backend on a profile deletion; when a pull reports a newer generation, the pending ops belong to
      *  a now-dead profile lifetime and are discarded rather than replayed onto the recreated profile. */
     val generation: Long = 0,
-    /**
-     * Wave 3: the pending intent on this profile's Jellyfin/Emby SERVER ENTRIES. They ride the SAME engine and
-     * revision counter as the playlists (a second sync loop would conflict with this one on every push).
-     * Additive: state written by an older build decodes with an empty list.
-     */
-    val mediaServerPending: List<MediaServerPendingOp> = emptyList(),
 )
 
 private fun PendingOpDto.toOp(): PendingPlaylistOp? = when (kind) {
@@ -145,12 +134,8 @@ internal fun List<PendingOpDto>.recordDelete(id: String): List<PendingOpDto> {
  * most one redundant revision, never a lost update.
  */
 internal object PlaylistMutationIdPolicy {
-    fun fingerprint(accounts: List<XtreamAccount>, deleteAll: Boolean, mediaServers: List<MediaServerEntry> = emptyList()): String =
-        fnv1a64Hex(
-            playlistPushPayload(accounts).toString() + "|" + deleteAll +
-                // unchanged for a profile without server entries, so an in-flight id minted before this build still matches
-                if (mediaServers.isEmpty()) "" else "|ms:" + mediaServers.mapIndexed { i, e -> MediaServerSyncCodec.syncedFingerprint(e, i) }.joinToString(","),
-        )
+    fun fingerprint(accounts: List<XtreamAccount>, deleteAll: Boolean): String =
+        fnv1a64Hex(playlistPushPayload(accounts).toString() + "|" + deleteAll)
 
     fun idFor(storedId: String?, storedFingerprint: String?, fingerprint: String, mint: () -> String): String =
         if (storedId != null && storedFingerprint == fingerprint) storedId else mint()
@@ -178,21 +163,6 @@ internal interface PlaylistSyncTransport {
         mutationId: String,
         expectedGeneration: Long?,
     ): PlaylistPushResponse
-
-    /**
-     * Wave 3: the push that also carries the profile's media-server rows (the full replace is scoped to the
-     * union of the source types this client understands). A transport that knows nothing of server entries
-     * keeps the default - exactly the playlist push - so every playlist-only transport and test is unchanged.
-     */
-    suspend fun pushWithMediaServers(
-        profileId: Int,
-        expectedRevision: Long?,
-        accounts: List<XtreamAccount>,
-        mediaServers: List<MediaServerEntry>,
-        deleteAll: Boolean,
-        mutationId: String,
-        expectedGeneration: Long?,
-    ): PlaylistPushResponse = push(profileId, expectedRevision, accounts, deleteAll, mutationId, expectedGeneration)
 }
 
 internal data class PlaylistPullResponse(
@@ -201,8 +171,6 @@ internal data class PlaylistPullResponse(
     val generation: Long = 0,
     /** Step 0: ids of [accounts] that are the server's stored `playlist_key` (not a local derivation). */
     val keyedIds: Set<String> = emptySet(),
-    /** Wave 3: the pulled rows of type jellyfin/emby, mapped by the second row mapper (the first drops them). */
-    val mediaServers: List<MediaServerEntry> = emptyList(),
 )
 
 internal sealed interface PlaylistPushResponse {
@@ -212,7 +180,6 @@ internal sealed interface PlaylistPushResponse {
         val currentRows: List<XtreamAccount>,
         /** Step 0: ids of [currentRows] that are the server's stored `playlist_key`. */
         val currentKeyedIds: Set<String> = emptySet(),
-        val currentMediaServers: List<MediaServerEntry> = emptyList(),
     ) : PlaylistPushResponse
     /** Rejected by the server for a reason that is NOT a revision conflict (e.g. empty-without-delete-all,
      *  mutation-id reuse) — surfaced, never retried blindly, never downgraded to v1. */
@@ -257,11 +224,6 @@ internal class PlaylistV2SyncEngine(
      */
     private val adoptKeys: (profileId: Int, pulled: List<XtreamAccount>, keyedIds: Set<String>) -> PlaylistKeyAdoption.Result =
         { _, pulled, _ -> PlaylistKeyAdoption.Result(pulled, emptyList()) },
-    /**
-     * Wave 3 — the media-server half (design 5.3): the profile's Jellyfin/Emby entries ride this same engine.
-     * Null (the default) = playlists only, behaviour identical to before.
-     */
-    private val mediaServers: MediaServerSyncBinding? = null,
 ) {
     /**
      * One full sync for [profileId]: pull authoritative rows+revision, reconcile pending intent onto
@@ -281,46 +243,38 @@ internal class PlaylistV2SyncEngine(
         // DISCARD them — replaying them would silently populate the recreated profile. We then adopt the
         // new generation so any genuinely new local edit is anchored correctly. Persisted immediately so
         // the discard survives a crash before the push.
-        if (pull.generation > state.generation && (state.pending.isNotEmpty() || state.mediaServerPending.isNotEmpty())) {
-            state = state.copy(pending = emptyList(), mediaServerPending = emptyList(), deleteAllIntent = false)
+        if (pull.generation > state.generation && state.pending.isNotEmpty()) {
+            state = state.copy(pending = emptyList(), deleteAllIntent = false)
         }
         if (state.generation != pull.generation) {
             state = state.copy(generation = pull.generation)
             saveState(profileId, state)
         }
         val recorded = state.pending.toOps()
-        val recordedMedia = if (mediaServers != null) state.mediaServerPending else emptyList()
         // The exact pending entries this sync will push. On commit we remove ONLY these, so an edit
         // recorded DURING the push (a newer pending entry) is preserved, never acknowledged with the
         // request that did not carry it (B24 §3).
         var ackedPending: List<PendingOpDto> = state.pending
-        var ackedMedia: List<MediaServerPendingOp> = recordedMedia
 
         // 2. Decide the ops to replay and the starting expected revision.
         var pending: List<PendingPlaylistOp>
-        var pendingMedia: List<MediaServerPendingOp> = recordedMedia
         var expected: Long?
-        val localMedia = mediaServers?.currentEntries().orEmpty()
-        // Without the binding the engine is playlists-only: whatever server rows the pull carried are none of its business.
-        val remoteMedia = if (mediaServers != null) pull.mediaServers else emptyList()
         when {
-            recorded.isNotEmpty() || recordedMedia.isNotEmpty() -> {
+            recorded.isNotEmpty() -> {
                 pending = recorded
                 expected = pull.revision
             }
-            sameSyncedSet(currentAccounts(), pull.accounts, syncedKey) && sameMediaSet(localMedia, remoteMedia) -> {
+            sameSyncedSet(currentAccounts(), pull.accounts, syncedKey) -> {
                 // In sync — ids AND every synced field match (B60: an id-only comparison left a field
                 // changed on another device, e.g. a UA or refresh interval, never applied here).
                 // Adopt the server revision, clear any stale mutation id.
                 saveState(profileId, state.copy(revision = pull.revision, mutationId = null, mutationFingerprint = null))
                 return PlaylistSyncOutcome.UP_TO_DATE
             }
-            pull.accounts.isEmpty() && remoteMedia.isEmpty() && pull.revision == 0L &&
-                ((canPush() && currentAccounts().isNotEmpty()) || (mediaServers?.canPushFullReplace?.invoke() == true && localMedia.isNotEmpty())) -> {
+            pull.accounts.isEmpty() && pull.revision == 0L && canPush() && currentAccounts().isNotEmpty() -> {
                 // Migration / first-ever v2 write: the server has no collection and the local set is a
                 // genuine authored set. Push it up as an initial creation (expected = null).
-                pending = if (canPush()) currentAccounts().map { PendingPlaylistOp.Add(it) } else emptyList()
-                pendingMedia = if (mediaServers?.canPushFullReplace?.invoke() == true) localMedia.map { MediaServerPendingOp("add", it.key, it) } else emptyList()
+                pending = currentAccounts().map { PendingPlaylistOp.Add(it) }
                 expected = null
             }
             else -> {
@@ -328,8 +282,7 @@ internal class PlaylistV2SyncEngine(
                 // local store, or another device's change — including a field-only change): the server
                 // is authoritative — adopt it, never push local over it.
                 applyLocal(profileId, pull.accounts)
-                mediaServers?.applyFromRemote?.invoke(profileId, remoteMedia)
-                saveState(profileId, state.copy(revision = pull.revision, pending = emptyList(), mediaServerPending = emptyList(), mutationId = null, mutationFingerprint = null, deleteAllIntent = false))
+                saveState(profileId, state.copy(revision = pull.revision, pending = emptyList(), mutationId = null, mutationFingerprint = null, deleteAllIntent = false))
                 return if (canPush()) PlaylistSyncOutcome.UP_TO_DATE else PlaylistSyncOutcome.WITHHELD
             }
         }
@@ -338,7 +291,6 @@ internal class PlaylistV2SyncEngine(
         //    reused (across retries AND restarts, since it is persisted) only for the identical payload
         //    it was minted for — see [PlaylistMutationIdPolicy].
         var baseRows = pull.accounts
-        var mediaBaseline = remoteMedia
         var baselineRevision = pull.revision
 
         var retries = 0
@@ -346,12 +298,8 @@ internal class PlaylistV2SyncEngine(
             if (!stillActive(profileId)) return PlaylistSyncOutcome.PULL_FAILED
             val reconciled = reconcilePendingOntoBaseline(baseRows, pending)
             applyLocal(profileId, reconciled.accounts)
-            // The server entries: a damaged/absent local store carries no intent of its own, so the server's rows go
-            // back unchanged (never a truncated push that would delete them); otherwise the intent replays onto them.
-            val reconciledMedia = if (mediaServers == null) emptyList() else MediaServerPendingOps.reconcile(mediaBaseline, pendingMedia)
-            if (mediaServers != null) mediaServers.applyFromRemote(profileId, reconciledMedia)
-            val deleteAll = reconciled.accounts.isEmpty() && reconciledMedia.isEmpty()
-            val fingerprint = PlaylistMutationIdPolicy.fingerprint(reconciled.accounts, deleteAll, reconciledMedia)
+            val deleteAll = reconciled.accounts.isEmpty()
+            val fingerprint = PlaylistMutationIdPolicy.fingerprint(reconciled.accounts, deleteAll)
             val mutationId = PlaylistMutationIdPolicy.idFor(state.mutationId, state.mutationFingerprint, fingerprint, newMutationId)
             // Persist the mutation id + its payload + baseline BEFORE the network write, but re-read
             // first so a pending entry recorded since [loadState] is not clobbered by this write.
@@ -361,8 +309,7 @@ internal class PlaylistV2SyncEngine(
                 // Anchor the write to the generation we observed on pull; the server rejects it as
                 // stale_generation if the profile was deleted since, so a reconcile-retry cannot
                 // resurrect a deleted-then-recreated profile even if this client did not discard.
-                if (mediaServers == null) transport.push(profileId, expected, reconciled.accounts, deleteAll, mutationId, pull.generation)
-                else transport.pushWithMediaServers(profileId, expected, reconciled.accounts, reconciledMedia, deleteAll, mutationId, pull.generation)
+                transport.push(profileId, expected, reconciled.accounts, deleteAll, mutationId, pull.generation)
             }.getOrElse { return PlaylistSyncOutcome.PUSH_FAILED } // keep pending + mutationId; retry later
 
             when (resp) {
@@ -374,7 +321,6 @@ internal class PlaylistV2SyncEngine(
                     saveState(profileId, fresh.copy(
                         revision = resp.revision,
                         pending = fresh.pending.filterNot { it in ackedPending },
-                        mediaServerPending = fresh.mediaServerPending.filterNot { it in ackedMedia },
                         mutationId = null,
                         mutationFingerprint = null,
                         deleteAllIntent = false,
@@ -389,7 +335,6 @@ internal class PlaylistV2SyncEngine(
                     }
                     val adopted = adoptKeys(profileId, resp.currentRows, resp.currentKeyedIds)
                     baseRows = adopted.accounts
-                    mediaBaseline = if (mediaServers != null) resp.currentMediaServers else emptyList()
                     // A re-key here also rewrote the durable pending log; replay (and later ack) the
                     // same rewritten entries, or an edit recorded under the old id would be dropped.
                     if (adopted.rekeys.isNotEmpty()) {
@@ -415,11 +360,6 @@ internal class PlaylistV2SyncEngine(
  *  positional, not content). The id rides the wire as `playlist_key` (Step 0). */
 private fun sameSyncedSet(a: List<XtreamAccount>, b: List<XtreamAccount>, key: (XtreamAccount) -> Any): Boolean =
     a.size == b.size && a.groupingBy(key).eachCount() == b.groupingBy(key).eachCount()
-
-/** Order-independent comparison of what the server stores for each media-server row (sort order is positional). */
-private fun sameMediaSet(local: List<MediaServerEntry>, remote: List<MediaServerEntry>): Boolean =
-    local.size == remote.size &&
-        local.map { MediaServerSyncCodec.syncedFingerprint(it, 0) }.sorted() == remote.map { MediaServerSyncCodec.syncedFingerprint(it, 0) }.sorted()
 
 /** Everything the server stores for [account] — its push row with the positional sort order fixed. */
 internal fun playlistSyncKey(account: XtreamAccount): Any = playlistPushPayload(listOf(account)).single()

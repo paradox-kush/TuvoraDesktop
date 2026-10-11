@@ -1,13 +1,5 @@
-package com.nuvio.app.features.mediaserver.internal.store
+package com.nuvio.app.core.storage
 
-import com.nuvio.app.core.storage.DesktopSecretCipher
-import com.nuvio.app.core.storage.FileKeyProvider
-import com.nuvio.app.core.storage.LinuxSecretToolProvider
-import com.nuvio.app.core.storage.MacOsKeychainProvider
-import com.nuvio.app.core.storage.MasterKeyProvider
-import com.nuvio.app.core.storage.MasterKeyVault
-import com.nuvio.app.core.storage.ProcessRunner
-import com.nuvio.app.core.storage.WindowsDpapiProvider
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermission
@@ -21,7 +13,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-class DesktopSecureTokenStoreTest {
+class DesktopSecretStorageTest {
     private val dir: Path = Files.createTempDirectory("tuvora-ms-test")
 
     @AfterTest
@@ -39,7 +31,7 @@ class DesktopSecureTokenStoreTest {
         override fun delete() { key = null; deleted = true }
     }
 
-    private fun store(provider: MasterKeyProvider = MemoryProvider()) = DesktopSecureTokenStore(dir.resolve("tokens.json"), MasterKeyVault(listOf(provider)))
+    private fun store(provider: MasterKeyProvider = MemoryProvider()) = SealedFileStore(dir.resolve("tokens.json"), MasterKeyVault(listOf(provider)), aadNamespace = "com.nuvio.test")
 
     // --- cipher ---
 

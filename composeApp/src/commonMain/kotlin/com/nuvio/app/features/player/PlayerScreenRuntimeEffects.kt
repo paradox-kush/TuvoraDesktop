@@ -1115,7 +1115,7 @@ private const val CREDENTIAL_REFRESH_POLL_INTERVAL_MS = 500L
  * The clock of a source's own playback reports (a media server's "Now playing"): a paused player emits no events and
  * the 60 s watch-progress save is far slower than the references' ~15 s, so without a tick of its own the server
  * would hear nothing while paused and the session would lapse. The tick is local and cheap - the reporter's pure
- * policy ([com.nuvio.app.features.mediaserver] ProgressReportPolicy: playing every ~15 s, paused every ~60 s) decides
+ * policy ([com.nuvio.app.features.servers.ServerPlayback.onPlaybackSnapshot], upstream's session reporter) decides
  * whether anything is sent - and it lives only while the player screen is on screen and STARTED (never in the
  * background, never stacked: one loop per player composition).
  */
