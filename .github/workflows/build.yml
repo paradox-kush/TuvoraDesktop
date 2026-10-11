@@ -53,6 +53,7 @@ jobs:
           TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
           SIMKL_CLIENT_ID: ${{ secrets.SIMKL_CLIENT_ID }}
           SIMKL_CLIENT_SECRET: ${{ secrets.SIMKL_CLIENT_SECRET }}
+          MDBLIST_CLIENT_ID: ${{ secrets.MDBLIST_CLIENT_ID }}
           DONATIONS_DONATE_URL: ${{ secrets.DONATIONS_DONATE_URL }}
         run: |
           {
@@ -63,6 +64,7 @@ jobs:
             echo "TRAKT_CLIENT_SECRET=${TRAKT_CLIENT_SECRET}"
             echo "SIMKL_CLIENT_ID=${SIMKL_CLIENT_ID}"
             echo "SIMKL_CLIENT_SECRET=${SIMKL_CLIENT_SECRET}"
+            echo "MDBLIST_CLIENT_ID=${MDBLIST_CLIENT_ID}"
             echo "DONATIONS_DONATE_URL=${DONATIONS_DONATE_URL}"
           } > local.properties
 
@@ -100,6 +102,7 @@ jobs:
           TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
           SIMKL_CLIENT_ID: ${{ secrets.SIMKL_CLIENT_ID }}
           SIMKL_CLIENT_SECRET: ${{ secrets.SIMKL_CLIENT_SECRET }}
+          MDBLIST_CLIENT_ID: ${{ secrets.MDBLIST_CLIENT_ID }}
           DONATIONS_DONATE_URL: ${{ secrets.DONATIONS_DONATE_URL }}
         run: |
           {
@@ -110,6 +113,7 @@ jobs:
             echo "TRAKT_CLIENT_SECRET=${TRAKT_CLIENT_SECRET}"
             echo "SIMKL_CLIENT_ID=${SIMKL_CLIENT_ID}"
             echo "SIMKL_CLIENT_SECRET=${SIMKL_CLIENT_SECRET}"
+            echo "MDBLIST_CLIENT_ID=${MDBLIST_CLIENT_ID}"
             echo "DONATIONS_DONATE_URL=${DONATIONS_DONATE_URL}"
           } > local.properties
 

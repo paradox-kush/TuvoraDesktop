@@ -83,6 +83,7 @@ jobs:
           TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
           SIMKL_CLIENT_ID: ${{ secrets.SIMKL_CLIENT_ID }}
           SIMKL_CLIENT_SECRET: ${{ secrets.SIMKL_CLIENT_SECRET }}
+          MDBLIST_CLIENT_ID: ${{ secrets.MDBLIST_CLIENT_ID }}
           DONATIONS_DONATE_URL: ${{ secrets.DONATIONS_DONATE_URL }}
         run: |
           if [[ -z "${SUPABASE_URL}" || -z "${SUPABASE_ANON_KEY}" ]]; then
@@ -97,11 +98,12 @@ jobs:
             echo "TRAKT_CLIENT_SECRET=${TRAKT_CLIENT_SECRET}"
             echo "SIMKL_CLIENT_ID=${SIMKL_CLIENT_ID}"
             echo "SIMKL_CLIENT_SECRET=${SIMKL_CLIENT_SECRET}"
+            echo "MDBLIST_CLIENT_ID=${MDBLIST_CLIENT_ID}"
             echo "DONATIONS_DONATE_URL=${DONATIONS_DONATE_URL}"
           } > local.properties
           echo "keys written to local.properties:"
           sed -n 's/^\([A-Za-z0-9_]*\)=.*/  \1/p' local.properties | sort
-          for k in SIMKL_CLIENT_ID SIMKL_CLIENT_SECRET TRAKT_CLIENT_ID DONATIONS_DONATE_URL; do
+          for k in SIMKL_CLIENT_ID SIMKL_CLIENT_SECRET TRAKT_CLIENT_ID MDBLIST_CLIENT_ID DONATIONS_DONATE_URL; do
             v=$(sed -n "s/^$k=//p" local.properties | head -1); echo "  $k length=${#v}"
           done
 
@@ -178,6 +180,7 @@ jobs:
           TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
           SIMKL_CLIENT_ID: ${{ secrets.SIMKL_CLIENT_ID }}
           SIMKL_CLIENT_SECRET: ${{ secrets.SIMKL_CLIENT_SECRET }}
+          MDBLIST_CLIENT_ID: ${{ secrets.MDBLIST_CLIENT_ID }}
           DONATIONS_DONATE_URL: ${{ secrets.DONATIONS_DONATE_URL }}
         run: |
           test -n "$SUPABASE_URL" && test -n "$SUPABASE_ANON_KEY" || {
@@ -192,6 +195,7 @@ jobs:
             echo "TRAKT_CLIENT_SECRET=${TRAKT_CLIENT_SECRET}"
             echo "SIMKL_CLIENT_ID=${SIMKL_CLIENT_ID}"
             echo "SIMKL_CLIENT_SECRET=${SIMKL_CLIENT_SECRET}"
+            echo "MDBLIST_CLIENT_ID=${MDBLIST_CLIENT_ID}"
             echo "DONATIONS_DONATE_URL=${DONATIONS_DONATE_URL}"
           } > local.properties
 
@@ -254,6 +258,7 @@ jobs:
           TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
           SIMKL_CLIENT_ID: ${{ secrets.SIMKL_CLIENT_ID }}
           SIMKL_CLIENT_SECRET: ${{ secrets.SIMKL_CLIENT_SECRET }}
+          MDBLIST_CLIENT_ID: ${{ secrets.MDBLIST_CLIENT_ID }}
           DONATIONS_DONATE_URL: ${{ secrets.DONATIONS_DONATE_URL }}
         run: |
           if [[ -z "${SUPABASE_URL}" || -z "${SUPABASE_ANON_KEY}" ]]; then
@@ -268,11 +273,12 @@ jobs:
             echo "TRAKT_CLIENT_SECRET=${TRAKT_CLIENT_SECRET}"
             echo "SIMKL_CLIENT_ID=${SIMKL_CLIENT_ID}"
             echo "SIMKL_CLIENT_SECRET=${SIMKL_CLIENT_SECRET}"
+            echo "MDBLIST_CLIENT_ID=${MDBLIST_CLIENT_ID}"
             echo "DONATIONS_DONATE_URL=${DONATIONS_DONATE_URL}"
           } > local.properties
           echo "keys written to local.properties:"
           sed -n 's/^\([A-Za-z0-9_]*\)=.*/  \1/p' local.properties | sort
-          for k in SIMKL_CLIENT_ID SIMKL_CLIENT_SECRET TRAKT_CLIENT_ID DONATIONS_DONATE_URL; do
+          for k in SIMKL_CLIENT_ID SIMKL_CLIENT_SECRET TRAKT_CLIENT_ID MDBLIST_CLIENT_ID DONATIONS_DONATE_URL; do
             v=$(sed -n "s/^$k=//p" local.properties | head -1); echo "  $k length=${#v}"
           done
 
