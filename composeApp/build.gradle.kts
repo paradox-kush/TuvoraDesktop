@@ -1355,6 +1355,8 @@ kotlin {
             implementation(libs.supabase.functions)
             implementation(libs.supabase.storage)
             implementation(libs.reorderable)
+            // Loopback relay for pinned (self-signed) media servers: players that cannot take a pin read through it.
+            implementation("io.ktor:ktor-network:${libs.versions.ktor.get()}")
             // TMDB->Xtream match index db API. The DRIVER is per-target: sqlite-framework on
             // Android/iOS (system sqlite, no bundled binary), sqlite-bundled on desktop JVM.
             implementation(libs.androidx.sqlite)

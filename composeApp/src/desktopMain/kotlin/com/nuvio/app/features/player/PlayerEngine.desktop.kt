@@ -36,7 +36,12 @@ import com.nuvio.app.features.player.desktop.DesktopPlayerPictureInPicture
 import com.nuvio.app.features.player.desktop.NativePlayerController
 import com.nuvio.app.features.player.desktop.NativePlayerHost
 import com.nuvio.app.features.player.desktop.desktopFullscreenChanges
+import com.nuvio.app.features.servers.rememberPinnedPlayback
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.servers_pinned_playback_unsupported
+import org.jetbrains.compose.resources.getString
 import kotlinx.coroutines.flow.drop
 
 @Composable
@@ -146,6 +151,16 @@ private fun NativePlayerSurface(
     val latestOnPlayerControlsScrubFinished = rememberUpdatedState(onPlayerControlsScrubFinished)
     val latestOnInitialPositionHandled = rememberUpdatedState(onInitialPositionHandled)
     val latestOnError = rememberUpdatedState(onError)
+    val pinnedScope = androidx.compose.runtime.rememberCoroutineScope()
+    // A pinned self-signed media server's stream (and subtitles) reach libmpv through a loopback relay that verifies the pin;
+    // the session is owned by this composition. Every other source - IPTV, CA-signed servers - is returned untouched.
+    val pinnedPlayback = rememberPinnedPlayback(sourceUrl) { _ ->
+        pinnedScope.launch { latestOnError.value(getString(Res.string.servers_pinned_playback_unsupported)) }
+    }
+    val playbackUrl = pinnedPlayback.url
+    LaunchedEffect(controller, playbackUrl) {
+        controller.mediaUrlMapper = { url -> pinnedPlayback.rewrite(url) }
+    }
     val latestPlayerControlsState = rememberUpdatedState(playerControlsState)
     val playerSettings by PlayerSettingsRepository.uiState.collectAsState()
     val decoderPriority = playerSettings.decoderPriority
@@ -208,6 +223,7 @@ private fun NativePlayerSurface(
         controller,
         sourceAvailable,
         sourceUrl,
+        playbackUrl,
         playbackHeaders,
         decoderPriority,
         nvidiaRtxSuperResolutionEnabled,
@@ -218,9 +234,11 @@ private fun NativePlayerSurface(
         if (!sourceAvailable || !hostFirstFullSizePaintComplete.value) {
             return@LaunchedEffect
         }
+        // null = the relay for a pinned server is still opening (or failed and was reported): never attach the raw https url.
+        if (playbackUrl == null) return@LaunchedEffect
         delay(16L)
         controller.attach(
-            sourceUrl = sourceUrl,
+            sourceUrl = playbackUrl,
             sourceHeaders = playbackHeaders,
             playWhenReady = playWhenReady,
             initialPositionMs = initialPositionMs,
