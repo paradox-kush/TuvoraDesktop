@@ -46,6 +46,10 @@ static bool nuvioDebug() {
 #define NUVIO_ERR(...) do { fprintf(stderr, "[nuvio-bridge %8ld] ", (long)(g_get_monotonic_time() / 1000)); fprintf(stderr, __VA_ARGS__); fputc('\n', stderr); fflush(stderr); } while (0)
 #define NUVIO_LOG(...) do { if (nuvioDebug()) { NUVIO_ERR(__VA_ARGS__); } } while (0)
 
+// Whether the NEXT player create makes libmpv verify TLS certificates. Set by NativePlayerBridge.setTlsVerifyForNextCreate on
+// the thread that then calls create (creates are serialized); consumed by that create. Panels with bad certs are the only "no".
+static std::atomic<bool> gNextCreateTlsVerify{true};
+
 namespace {
 
 JavaVM *gVm = nullptr;
@@ -1530,6 +1534,10 @@ JNIEXPORT jboolean JNICALL NP(initGtkEarly)(JNIEnv *, jobject) {
     return JNI_TRUE;
 }
 
+JNIEXPORT void JNICALL NP(setTlsVerifyForNextCreate)(JNIEnv *, jobject, jboolean verify) {
+    gNextCreateTlsVerify.store(verify == JNI_TRUE);
+}
+
 JNIEXPORT jlong JNICALL NP(create)(
     JNIEnv *env, jobject /*thiz*/, jlong hostViewPtr,
     // Fork: host bounds for the macOS bounded-child host. Linux embeds into the Canvas window
@@ -1641,13 +1649,10 @@ JNIEXPORT jlong JNICALL NP(create)(
         mpv_set_option_string(m, "target-colorspace-hint", "yes");
         mpv_set_option_string(m, "target-colorspace-hint-mode", "source");
 
-        // TODO(tls-verify, security): libmpv's own default is tls-verify=no (proved on the bundled macOS libmpv: a self-signed https
-        // stream loads unverified). The macOS bridge now sets tls-verify=yes by default and exposes
-        // NativePlayerBridge.setTlsVerifyForNextCreate (Kotlin: PlaybackTlsPolicy decides; only IPTV panel sources ask for "no").
-        // Port here: a static std::atomic<bool> gNextCreateTlsVerify{true}, the JNI setter, and
-        // <set option>("tls-verify", gNextCreateTlsVerify.exchange(true) ? "yes" : "no") next to the other pre-init options.
-        // Until then this platform keeps libmpv's default (unverified) for every https stream except media-server hosts, which the
-        // Kotlin side already reads through the verifying loopback relay. UNVERIFIED on this OS: no build or run was possible.
+        // TLS: libmpv's own default is tls-verify=no (proved on the bundled libmpv: a self-signed https stream loads unverified).
+        // Verify by default; the Kotlin side asks for "no" only for an IPTV panel source (PlaybackTlsPolicy) through
+        // NativePlayerBridge.setTlsVerifyForNextCreate, consumed (reset to "verify") by the next create. Same as the macOS bridge.
+        mpv_set_option_string(m, "tls-verify", gNextCreateTlsVerify.exchange(true) ? "yes" : "no");
         if (!headerFields.empty()) {
             mpv_set_option_string(m, "http-header-fields", headerFields.c_str());
         }

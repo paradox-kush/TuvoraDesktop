@@ -29,6 +29,10 @@
 #include <unordered_map>
 #include <vector>
 
+// Whether the NEXT player create makes libmpv verify TLS certificates. Set by NativePlayerBridge.setTlsVerifyForNextCreate on
+// the thread that then calls create (creates are serialized); consumed by that create. Panels with bad certs are the only "no".
+static std::atomic<bool> gNextCreateTlsVerify{true};
+
 using Microsoft::WRL::Callback;
 using Microsoft::WRL::ComPtr;
 
@@ -1805,19 +1809,16 @@ private:
             setMpvOptionStringLocked("input-default-bindings", "yes");
             setMpvOptionStringLocked("input-vo-keyboard", "no");
             setMpvOptionStringLocked("keep-open", "yes");
+            // TLS: libmpv's own default is tls-verify=no (proved on the bundled libmpv: a self-signed https stream loads unverified).
+            // Verify by default; the Kotlin side asks for "no" only for an IPTV panel source (PlaybackTlsPolicy) through
+            // NativePlayerBridge.setTlsVerifyForNextCreate, consumed (reset to "verify") by the next create. Same as the macOS bridge.
+            setMpvOptionStringLocked("tls-verify", gNextCreateTlsVerify.exchange(true) ? "yes" : "no");
             // keep-open parks the core on the last frame at EOF, which is right for a file and
             // wrong for a live channel: an IPTV panel closing the socket mid-stream reads as a
             // clean EOF, so the picture freezes with nothing to time it out. Bound the blocking
             // read, and let ffmpeg re-open the URL itself — that heals a transient drop before
             // the app-level reconnect (LivePlaybackFreezeTracking) has to tear playback down
             // and rebuild it.
-            // TODO(tls-verify, security): libmpv's own default is tls-verify=no (proved on the bundled macOS libmpv: a self-signed https
-            // stream loads unverified). The macOS bridge now sets tls-verify=yes by default and exposes
-            // NativePlayerBridge.setTlsVerifyForNextCreate (Kotlin: PlaybackTlsPolicy decides; only IPTV panel sources ask for "no").
-            // Port here: a static std::atomic<bool> gNextCreateTlsVerify{true}, the JNI setter, and
-            // <set option>("tls-verify", gNextCreateTlsVerify.exchange(true) ? "yes" : "no") next to the other pre-init options.
-            // Until then this platform keeps libmpv's default (unverified) for every https stream except media-server hosts, which the
-            // Kotlin side already reads through the verifying loopback relay. UNVERIFIED on this OS: no build or run was possible.
             setMpvOptionStringLocked("network-timeout", "15");
             setMpvOptionStringLocked(
                 "stream-lavf-o",
@@ -2479,6 +2480,11 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         DisableThreadLibraryCalls(module);
     }
     return TRUE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setTlsVerifyForNextCreate(JNIEnv *, jobject, jboolean verify) {
+    gNextCreateTlsVerify.store(verify == JNI_TRUE);
 }
 
 extern "C" JNIEXPORT jlong JNICALL
