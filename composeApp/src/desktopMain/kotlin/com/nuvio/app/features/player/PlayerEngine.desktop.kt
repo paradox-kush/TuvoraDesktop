@@ -45,6 +45,7 @@ import com.nuvio.app.features.servers.serverAuthority
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.player_error_unable_to_play_stream
 import nuvio.composeapp.generated.resources.servers_playback_failed
 import org.jetbrains.compose.resources.stringResource
 import kotlinx.coroutines.flow.drop
@@ -313,9 +314,18 @@ private fun NativePlayerSurface(
 
     // A live END_FILE (failed open / dropped stream) reaches the screen as an ended snapshot.
     val latestIsLiveStream = rememberUpdatedState(isLiveStream)
+    val latestOnErrorForOpen = rememberUpdatedState(onError)
+    val openFailedMessage = stringResource(Res.string.player_error_unable_to_play_stream)
     LaunchedEffect(controller) {
+        var openFailureReported = false
         while (true) {
-            onSnapshot(controller.liveAwareSnapshot(latestIsLiveStream.value))
+            val snapshot = controller.liveAwareSnapshot(latestIsLiveStream.value)
+            onSnapshot(snapshot)
+            // A film whose open failed (refused certificate, 404, unreachable host) never leaves "loading" in the native
+            // snapshot: say so once instead of spinning forever.
+            val failed = controller.vodOpenFailed(snapshot, latestIsLiveStream.value)
+            if (failed && !openFailureReported) latestOnErrorForOpen.value(openFailedMessage)
+            openFailureReported = failed
             delay(500L)
         }
     }

@@ -2,6 +2,7 @@ package com.nuvio.app.features.player.desktop
 
 import androidx.compose.ui.graphics.Color
 import co.touchlab.kermit.Logger
+import com.nuvio.app.features.player.LivePlaybackStartupPolicy
 import com.nuvio.app.features.player.PlayerControlAddonSubtitleItem
 import com.nuvio.app.features.player.PlayerControlEpisodeItem
 import com.nuvio.app.features.player.PlayerControlFilterItem
@@ -803,6 +804,15 @@ internal class NativePlayerController(
         if (current == 0L) return raw
         val reason = runCatching { NativePlayerBridge.endFileReason(current) }.getOrDefault(MpvEndFileReason.NONE)
         return MpvEndFileReason.applyTo(raw, reason, isLiveStream)
+    }
+
+    /** mpv ended a FILM's open with an error (see [LivePlaybackStartupPolicy.vodOpenFailed]); read separately like [liveAwareSnapshot]. */
+    fun vodOpenFailed(snapshot: PlayerPlaybackSnapshot, isLiveStream: Boolean): Boolean {
+        if (isLiveStream) return false
+        val current = handle
+        if (current == 0L) return false
+        val reason = runCatching { NativePlayerBridge.endFileReason(current) }.getOrDefault(MpvEndFileReason.NONE)
+        return LivePlaybackStartupPolicy.vodOpenFailed(snapshot, MpvEndFileReason.name(reason), isLiveStream)
     }
 
     fun releaseBeforeNavigation(onReleased: () -> Unit) {

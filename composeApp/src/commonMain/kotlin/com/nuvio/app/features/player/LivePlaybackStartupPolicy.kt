@@ -33,6 +33,15 @@ class LivePlaybackStartupPolicy(private val recoveringPlayedChannel: Boolean = f
         fun hasStarted(snapshot: PlayerPlaybackSnapshot): Boolean =
             snapshot.positionMs > 0L || snapshot.videoProgressTicks > 0L
 
+        /**
+         * A FILM/EPISODE source whose open failed: mpv ended the file with "error" before anything played or even a duration was
+         * known (a refused certificate, a 404, an unreachable host). The native snapshot stays "loading" forever in that state,
+         * so the screen would spin with no way out - report it as a playback error instead. Live channels have their own
+         * handling ([endFileSnapshot]); an error after playback began is a stream drop, not an open failure.
+         */
+        fun vodOpenFailed(snapshot: PlayerPlaybackSnapshot, reason: String?, isLive: Boolean): Boolean =
+            !isLive && reason == "error" && !hasStarted(snapshot) && snapshot.durationMs == 0L
+
         /** eof-reached may already be cleared by the time END_FILE is dispatched. */
         fun endFileSnapshot(snapshot: PlayerPlaybackSnapshot, reason: String?, isLive: Boolean): PlayerPlaybackSnapshot =
             if (isLive && (reason == "eof" || reason == "error")) {
