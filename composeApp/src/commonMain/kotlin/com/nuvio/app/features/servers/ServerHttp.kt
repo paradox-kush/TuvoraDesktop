@@ -13,6 +13,9 @@ internal interface ServerHttp {
 
     /** The certificate refusal recorded for [url]'s host while its request was failing, if any (cleared by reading). */
     fun certificateFailure(url: String): ServerCertificateException? = null
+
+    /** Whether a handshake for [url]'s host was refused by the trust glue (even one that cannot be offered for trust, like an expired certificate). */
+    fun certificateRefused(url: String): Boolean = false
 }
 
 internal class FixedServerHttp(private val client: HttpClient) : ServerHttp {
@@ -38,6 +41,9 @@ internal class TrustedServerHttp(
 
     override fun certificateFailure(url: String): ServerCertificateException? =
         serverAuthority(url)?.let(trust::certificateException)
+
+    override fun certificateRefused(url: String): Boolean =
+        serverAuthority(url)?.let(trust::hasRefusal) == true
 
     companion object {
         val shared: TrustedServerHttp by lazy { TrustedServerHttp(ServerTrust.shared) }

@@ -34,6 +34,9 @@ enum class QuickConnectFailure {
 
     /** Anything else the server answered. */
     SERVER_ERROR,
+
+    /** The address had no scheme and only answers over plain http: the screen asks before sending anything (see [QuickConnectDriver.plainHttpToPrompt]). */
+    PLAIN_HTTP,
 }
 
 /**
@@ -173,6 +176,13 @@ internal class QuickConnectDriver(
 
     private var challenge: QuickConnectChallenge? = null
 
+    @Volatile
+    private var plainHttpAddress: String? = null
+
+    /** The plain-http address to offer the user now (https failed to connect, http answers), else null. */
+    fun plainHttpToPrompt(): String? =
+        if ((mutable.value as? QuickConnectState.Failed)?.reason == QuickConnectFailure.PLAIN_HTTP) plainHttpAddress else null
+
     /** The certificate decision the screen must put to the user now (the request stopped on it), else null. */
     fun certificateToPrompt(): ServerCertificateException? =
         if ((mutable.value as? QuickConnectState.Failed)?.reason == QuickConnectFailure.CERTIFICATE) certificate else null
@@ -184,6 +194,7 @@ internal class QuickConnectDriver(
         send(QuickConnectEvent.Start)
         if (mutable.value != QuickConnectState.Starting) return
         certificate = null
+        plainHttpAddress = null
         challenge = null
         try {
             val issued = provider.quickConnectStart(address)
@@ -251,6 +262,10 @@ internal class QuickConnectDriver(
         if (error is ServerCertificateException) {
             certificate = error
             return QuickConnectFailure.CERTIFICATE
+        }
+        if (error is ServerPlainHttpException) {
+            plainHttpAddress = error.httpAddress
+            return QuickConnectFailure.PLAIN_HTTP
         }
         return when ((error as? ServerException)?.failure) {
             ServerFailure.AUTH_REQUIRED, ServerFailure.FORBIDDEN, ServerFailure.UNSUPPORTED, ServerFailure.NOT_FOUND -> QuickConnectFailure.DISABLED

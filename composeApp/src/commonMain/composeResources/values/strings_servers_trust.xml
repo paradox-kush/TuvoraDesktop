@@ -8,6 +8,9 @@
     <string name="servers_quick_connect_failed">Quick Connect did not finish.</string>
     <string name="servers_quick_connect_retry">Try again</string>
     <string name="servers_quick_connect_back">Sign in with a password</string>
+    <string name="servers_plain_http_title">No secure connection</string>
+    <string name="servers_plain_http_message">%1$s does not offer HTTPS. Continuing sends your password over plain HTTP, which anyone on the network can read. Only continue on a network you trust.</string>
+    <string name="servers_plain_http_continue">Continue over HTTP</string>
     <string name="servers_cert_title">Trust this certificate?</string>
     <string name="servers_cert_message">%1$s presented a certificate this device does not recognise. Only trust it if this is your own server.</string>
     <string name="servers_cert_changed_title">Certificate changed</string>

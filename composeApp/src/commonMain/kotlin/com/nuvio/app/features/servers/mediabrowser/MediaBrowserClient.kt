@@ -2,7 +2,9 @@ package com.nuvio.app.features.servers.mediabrowser
 
 import com.nuvio.app.core.build.AppVersionConfig
 import com.nuvio.app.core.network.readBoundedResponseBody
-import com.nuvio.app.core.sync.SyncClientIdentity
+import com.nuvio.app.features.servers.ServerCertificateRefusedException
+import com.nuvio.app.features.servers.ServerConnectException
+import com.nuvio.app.features.servers.ServerDeviceId
 import com.nuvio.app.features.servers.ServerException
 import com.nuvio.app.features.servers.ServerFailure
 import com.nuvio.app.features.servers.ServerHttp
@@ -33,7 +35,7 @@ internal class MediaBrowserClient(
     }
 
     val deviceId: String
-        get() = SyncClientIdentity.currentClientId()
+        get() = ServerDeviceId.current()
 
     suspend fun <T> get(
         baseUrl: String,
@@ -76,7 +78,8 @@ internal class MediaBrowserClient(
         } catch (_: Exception) {
             // A handshake the trust glue refused is not "unreachable": the user may be asked to (re-)trust the certificate.
             http.certificateFailure(url)?.let { throw it }
-            throw ServerException(ServerFailure.UNREACHABLE)
+            if (http.certificateRefused(url)) throw ServerCertificateRefusedException()
+            throw ServerConnectException()
         }
         if (allowRedirect && response.status in 300..399) return response
         throwForStatus(response.status)
@@ -84,7 +87,7 @@ internal class MediaBrowserClient(
     }
 
     fun authorizationValue(token: String?): String = buildString {
-        append("MediaBrowser Client=\"Nuvio\", Device=\"")
+        append("MediaBrowser Client=\"Tuvora\", Device=\"")
         append(getPlatform().name.headerValue())
         append("\", DeviceId=\"")
         append(deviceId.headerValue())
@@ -136,7 +139,8 @@ internal fun pathSegment(value: String): String = value.encodeURLPathPart()
 internal fun normalizeServerAddress(input: String, apiPath: String = ""): String? {
     var value = input.trim().trimEnd('/')
     if (value.isEmpty()) return null
-    if (!value.contains("://")) value = "http://$value"
+    // No scheme means https: whether plain http may be used is ServerAddressPolicy's decision (it asks the user), never a default.
+    if (!value.contains("://")) value = "https://$value"
     val url = runCatching { Url(value) }.getOrNull() ?: return null
     if (url.protocol != URLProtocol.HTTP && url.protocol != URLProtocol.HTTPS) return null
     if (url.host.isBlank() || !url.user.isNullOrEmpty() || !url.password.isNullOrEmpty()) return null

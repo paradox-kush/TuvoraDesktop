@@ -14,7 +14,7 @@ class MediaBrowserConnectionTest {
 
     @Test
     fun normalizesAddresses() {
-        assertEquals("http://192.168.1.10:8096", normalizeServerAddress("192.168.1.10:8096"))
+        assertEquals("https://192.168.1.10:8096", normalizeServerAddress("192.168.1.10:8096"), "no scheme means https (the policy decides about plain http)")
         assertEquals("https://media.example.com/jellyfin", normalizeServerAddress(" https://media.example.com/jellyfin/ "))
         assertEquals("https://media.example.com/jellyfin", normalizeServerAddress("https://media.example.com/jellyfin/web/index.html"))
         assertEquals("http://host:8096", normalizeServerAddress("http://host:8096/web/?x=1#/home"))

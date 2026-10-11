@@ -53,6 +53,7 @@ import com.nuvio.app.features.servers.QuickConnectPolicy
 import com.nuvio.app.features.servers.QuickConnectState
 import com.nuvio.app.features.servers.ServerCapability
 import com.nuvio.app.features.servers.ServerCertificateException
+import com.nuvio.app.features.servers.ServerPlainHttpException
 import com.nuvio.app.features.servers.ServerConnection
 import com.nuvio.app.features.servers.ServerTrust
 import com.nuvio.app.features.servers.supports
@@ -72,6 +73,9 @@ import nuvio.composeapp.generated.resources.servers_cert_changed_title
 import nuvio.composeapp.generated.resources.servers_cert_fingerprint
 import nuvio.composeapp.generated.resources.servers_cert_message
 import nuvio.composeapp.generated.resources.servers_cert_title
+import nuvio.composeapp.generated.resources.servers_plain_http_continue
+import nuvio.composeapp.generated.resources.servers_plain_http_message
+import nuvio.composeapp.generated.resources.servers_plain_http_title
 import nuvio.composeapp.generated.resources.servers_cert_trust
 import nuvio.composeapp.generated.resources.servers_cert_trust_new
 import nuvio.composeapp.generated.resources.servers_quick_connect
@@ -122,6 +126,8 @@ internal fun ServerSignInSheet(
     var error by remember { mutableStateOf<ServerFailure?>(null) }
     var certificate by remember { mutableStateOf<ServerCertificateException?>(null) }
     var quickConnect by remember { mutableStateOf<QuickConnectDriver?>(null) }
+    // An address typed without a scheme that only answers over plain http: asked before any secret is sent.
+    var plainHttp by remember { mutableStateOf<String?>(null) }
     val canConnect = !connecting && address.isNotBlank() && username.isNotBlank()
     val canQuickConnect = !connecting && address.isNotBlank() && request.provider.supports(ServerCapability.QUICK_CONNECT)
 
@@ -138,6 +144,8 @@ internal fun ServerSignInSheet(
                 throw cancelled
             } catch (untrusted: ServerCertificateException) {
                 certificate = untrusted
+            } catch (plain: ServerPlainHttpException) {
+                plainHttp = plain.httpAddress
             } catch (failure: ServerException) {
                 error = failure.failure
             } catch (_: Exception) {
@@ -164,6 +172,19 @@ internal fun ServerSignInSheet(
         if (driver != null) scope.launch { driver.start() } else connect()
     }
 
+    fun continueOverPlainHttp(httpAddress: String) {
+        // Explicit from here on: the typed address becomes the http one, so nothing is tried or decided silently again.
+        address = httpAddress
+        plainHttp = null
+        if (quickConnect != null) {
+            val retry = QuickConnectDriver(request.provider, httpAddress)
+            quickConnect = retry
+            scope.launch { retry.start() }
+        } else {
+            connect()
+        }
+    }
+
     val driver = quickConnect
     val qcState = driver?.state?.collectAsStateWithLifecycle()?.value
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -182,6 +203,7 @@ internal fun ServerSignInSheet(
     // A Quick Connect request that stopped on an untrusted certificate asks the same trust decision as a password sign-in.
     LaunchedEffect(qcState) {
         driver?.certificateToPrompt()?.let { certificate = it }
+        driver?.plainHttpToPrompt()?.let { plainHttp = it }
     }
     LaunchedEffect(qcState) {
         if (driver != null && qcState == QuickConnectState.Authorised) {
@@ -217,7 +239,18 @@ internal fun ServerSignInSheet(
             )
             Spacer(modifier = Modifier.height(NuvioTokens.Space.s20))
             val prompt = certificate
-            if (prompt != null) {
+            val plainPrompt = plainHttp
+            if (plainPrompt != null) {
+                PlainHttpPrompt(
+                    address = plainPrompt,
+                    onContinue = { continueOverPlainHttp(plainPrompt) },
+                    onCancel = {
+                        plainHttp = null
+                        quickConnect?.cancel()
+                        quickConnect = null
+                    },
+                )
+            } else if (prompt != null) {
                 CertificatePrompt(
                     prompt = prompt,
                     onTrust = { trustCertificate(prompt) },
@@ -391,6 +424,41 @@ private fun ServerFailure.signInMessage(provider: ServerProvider): String = when
 }
 
 @Composable
+private fun PlainHttpPrompt(
+    address: String,
+    onContinue: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    Column(verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s12)) {
+        Text(
+            text = stringResource(Res.string.servers_plain_http_title),
+            style = MaterialTheme.typography.titleMedium,
+            color = tokens.colors.danger,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = stringResource(Res.string.servers_plain_http_message, address.removePrefix("http://")),
+            style = MaterialTheme.typography.bodyMedium,
+            color = tokens.colors.textSecondary,
+        )
+        Button(
+            onClick = onContinue,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(NuvioTokens.Space.s56),
+            shape = tokens.shapes.button,
+            colors = ButtonDefaults.buttonColors(containerColor = tokens.colors.danger, contentColor = tokens.colors.onAccent),
+        ) {
+            Text(stringResource(Res.string.servers_plain_http_continue))
+        }
+        TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(Res.string.action_cancel), color = tokens.colors.textSecondary)
+        }
+    }
+}
+
+@Composable
 private fun CertificatePrompt(
     prompt: ServerCertificateException,
     onTrust: () -> Unit,
@@ -483,6 +551,7 @@ private fun QuickConnectPanel(
                         QuickConnectFailure.DISABLED -> Res.string.servers_quick_connect_disabled
                         QuickConnectFailure.UNREACHABLE -> Res.string.servers_quick_connect_unreachable
                         QuickConnectFailure.CERTIFICATE,
+                        QuickConnectFailure.PLAIN_HTTP,
                         QuickConnectFailure.SERVER_ERROR -> Res.string.servers_quick_connect_failed
                     },
                 ),

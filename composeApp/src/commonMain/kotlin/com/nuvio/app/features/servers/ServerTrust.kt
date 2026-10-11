@@ -202,6 +202,12 @@ internal class ServerTrust(
         return ServerCertificateException(f.authority, f.kind.name, f.fingerprint, changed = f.pinned != null && f.pinned != f.fingerprint)
     }
 
+    /** A recent refused handshake exists for [authority] (offerable for trust or not) - the failing request died on the certificate, not the network. */
+    fun hasRefusal(authority: String): Boolean {
+        val f = synchronized(lock) { failures[authority.lowercase()] } ?: return false
+        return nowMs() - f.atMs <= REFUSAL_WINDOW_MS
+    }
+
     fun pinnedFingerprint(authority: String): String? = pins.pinned(authority)
 
     /** The user accepted this certificate. */

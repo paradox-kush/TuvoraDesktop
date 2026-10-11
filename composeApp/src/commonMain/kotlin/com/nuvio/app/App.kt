@@ -100,6 +100,18 @@ internal fun AppEnvironment(content: @Composable () -> Unit) {
 }
 
 /**
+ * What every platform's loader carries before its network fetcher: the custom-poster fallback, SVG decoding and artwork of
+ * a pinned (self-signed) media server through the pinned client (other hosts fall through). Coil keeps only the LAST
+ * `components {}` set on a builder, so a platform hook that sets its own registry (Android, Desktop) must call this too -
+ * otherwise these are silently dropped (AppImageLoaderWiringTest builds the real loader and asserts all three).
+ */
+internal fun coil3.ComponentRegistry.Builder.addSharedImageComponents() {
+    add(CustomPosterFallbackInterceptor())
+    add(SvgDecoder.Factory())
+    add(com.nuvio.app.features.servers.PinnedServerImageFetcherFactory())
+}
+
+/**
  * The app's one Coil [ImageLoader]: used by the composable factory in [AppEnvironment] or, on Android,
  * by `NuvioApplication` (which implements `SingletonImageLoader.Factory` so the loader exists before
  * Coil's first request). Fork: the platform hook takes the context (IPv4-first fetcher + memory-tier
@@ -111,10 +123,7 @@ internal fun buildAppImageLoader(context: coil3.PlatformContext): ImageLoader =
         .diskCachePolicy(CachePolicy.ENABLED)
         .memoryCachePolicy(CachePolicy.ENABLED)
         .components {
-            add(CustomPosterFallbackInterceptor())
-            add(SvgDecoder.Factory())
-            // Artwork of a pinned (self-signed) media server goes through the pinned client; other hosts fall through.
-            add(com.nuvio.app.features.servers.PinnedServerImageFetcherFactory())
+            addSharedImageComponents()
             add(
                 coil3.network.ktor3.KtorNetworkFetcherFactory(
                     cacheStrategy = { coil3.network.cachecontrol.CacheControlCacheStrategy() },

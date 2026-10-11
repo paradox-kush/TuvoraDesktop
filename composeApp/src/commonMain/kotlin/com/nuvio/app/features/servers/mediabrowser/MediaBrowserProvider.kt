@@ -1,9 +1,11 @@
 package com.nuvio.app.features.servers.mediabrowser
 
+import com.nuvio.app.features.servers.ServerAddressPolicy
 import com.nuvio.app.features.servers.ServerCandidate
 import com.nuvio.app.features.servers.ServerCapability
 import com.nuvio.app.features.servers.ServerEpisode
 import com.nuvio.app.features.servers.ServerCertificateException
+import com.nuvio.app.features.servers.ServerPlainHttpException
 import com.nuvio.app.features.servers.ServerException
 import com.nuvio.app.features.servers.ServerFailure
 import com.nuvio.app.features.servers.ServerIndexEntry
@@ -64,8 +66,7 @@ internal abstract class MediaBrowserProvider(
     internal open fun isSupported(info: PublicInfo): Boolean = isSupportedVersion(info.version)
 
     override suspend fun signIn(address: String, username: String, password: String): ServerSignIn {
-        val normalized = normalizeServerAddress(address, apiPath) ?: throw ServerException(ServerFailure.NOT_FOUND)
-        val (baseUrl, info) = publicInfo(normalized)
+        val (baseUrl, info) = reach(address)
         if (!isSupported(info)) throw ServerException(ServerFailure.UNSUPPORTED)
         val response = client.execute(
             method = HttpMethod.Post,
@@ -98,9 +99,8 @@ internal abstract class MediaBrowserProvider(
     // POST /Users/AuthenticateWithQuickConnect {"Secret"} -> AuthenticationResult.
     override suspend fun quickConnectAvailable(address: String): Boolean {
         if (ServerCapability.QUICK_CONNECT !in capabilities) return false
-        val normalized = normalizeServerAddress(address, apiPath) ?: return false
         return try {
-            val (baseUrl, _) = publicInfo(normalized)
+            val (baseUrl, _) = reach(address)
             client.execute(HttpMethod.Get, baseUrl + apiPath, "/QuickConnect/Enabled", token = null).body.trim().equals("true", ignoreCase = true)
         } catch (error: CancellationException) {
             throw error
@@ -113,8 +113,7 @@ internal abstract class MediaBrowserProvider(
 
     override suspend fun quickConnectStart(address: String): QuickConnectChallenge {
         if (ServerCapability.QUICK_CONNECT !in capabilities) throw ServerException(ServerFailure.UNSUPPORTED)
-        val normalized = normalizeServerAddress(address, apiPath) ?: throw ServerException(ServerFailure.NOT_FOUND)
-        val (baseUrl, info) = publicInfo(normalized)
+        val (baseUrl, info) = reach(address)
         if (!isSupported(info)) throw ServerException(ServerFailure.UNSUPPORTED)
         val response = client.execute(HttpMethod.Post, baseUrl + apiPath, "/QuickConnect/Initiate", token = null)
         val result = client.json.decodeFromString(QuickConnectResult.serializer(), response.body)
@@ -157,6 +156,35 @@ internal abstract class MediaBrowserProvider(
         )
         val info = PublicInfo(serverName = challenge.serverName, id = challenge.serverId.ifBlank { null })
         return signInFrom(response.body, challenge.baseUrl, info, fallbackUserName = "")
+    }
+
+    /**
+     * The server's public info and its base URL for a typed [address], following [ServerAddressPolicy]: an explicit scheme as
+     * typed; otherwise https first, and plain http only as an offer ([ServerPlainHttpException]) after https failed to connect -
+     * never silently, so nothing secret is sent before the user agreed. Only the unauthenticated public-info request is made here.
+     */
+    private suspend fun reach(address: String): Pair<String, PublicInfo> {
+        val attempts = ServerAddressPolicy.attempts(address)
+            .map { normalizeServerAddress(it, apiPath) ?: throw ServerException(ServerFailure.NOT_FOUND) }
+        val first = attempts.firstOrNull() ?: throw ServerException(ServerFailure.NOT_FOUND)
+        try {
+            return publicInfo(first)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            val plain = attempts.getOrNull(1)
+            if (plain == null || !ServerAddressPolicy.fallsBackToPlainHttp(ServerAddressPolicy.outcomeOf(error))) throw error
+            val answers = try {
+                publicInfo(plain)
+                true
+            } catch (inner: CancellationException) {
+                throw inner
+            } catch (_: Exception) {
+                false
+            }
+            if (answers) throw ServerPlainHttpException(plain)
+            throw error
+        }
     }
 
     private suspend fun publicInfo(baseUrl: String): Pair<String, PublicInfo> {
@@ -592,7 +620,7 @@ internal abstract class MediaBrowserProvider(
     }
 
     private fun deviceProfile(capabilities: ServerPlayerCapabilities) = DeviceProfile(
-        name = "Nuvio",
+        name = "Tuvora",
         maxStreamingBitrate = MAX_STREAMING_BITRATE,
         directPlayProfiles = if (capabilities.directPlayAll && capabilities.allowDirectPlay) {
             listOf(DirectPlayProfile())

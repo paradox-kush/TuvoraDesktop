@@ -9,7 +9,7 @@
     <string name="servers_sign_in_title">Sign in to %1$s</string>
     <string name="servers_sign_in_subtitle">Enter your server address and the %1$s user to sign in with. Your password is only used to sign in.</string>
     <string name="servers_address">Server address</string>
-    <string name="servers_address_hint">http://192.168.1.10:8096</string>
+    <string name="servers_address_hint">https://192.168.1.10:8920</string>
     <string name="servers_username">Username</string>
     <string name="servers_password">Password</string>
     <string name="servers_connect">Connect</string>
