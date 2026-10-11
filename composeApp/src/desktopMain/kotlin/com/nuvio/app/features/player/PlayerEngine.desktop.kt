@@ -36,7 +36,9 @@ import com.nuvio.app.features.player.desktop.DesktopPlayerPictureInPicture
 import com.nuvio.app.features.player.desktop.NativePlayerController
 import com.nuvio.app.features.player.desktop.NativePlayerHost
 import com.nuvio.app.features.player.desktop.desktopFullscreenChanges
+import com.nuvio.app.features.servers.ServerRepository
 import com.nuvio.app.features.servers.rememberPinnedPlayback
+import com.nuvio.app.features.servers.serverAuthority
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.Res
@@ -77,7 +79,11 @@ actual fun PlatformPlayerSurface(
     // composition; its subtitle files map onto the same session. Every other source (IPTV, CA-signed servers) is returned
     // untouched. Null = the relay is still opening: render nothing yet, never hand libmpv the raw https url.
     val relayFailedMessage = stringResource(Res.string.servers_playback_failed)
-    val pinned = rememberPinnedPlayback(sourceUrl) { onError(relayFailedMessage) } ?: return
+    // The bundled libmpv does not verify TLS by default (tls-verify=no), so every media-server host goes through the relay too.
+    val pinned = rememberPinnedPlayback(
+        sourceUrl,
+        isVerifiedServerHost = { authority -> ServerRepository.uiState.value.connections.any { serverAuthority(it.address) == authority } },
+    ) { onError(relayFailedMessage) } ?: return
     val engineOnControllerReady = remember(onControllerReady, pinned) {
         if (!pinned.isRelayed) onControllerReady else { controller: PlayerEngineController ->
             onControllerReady(RelayedSubtitleController(controller, pinned::rewrite))

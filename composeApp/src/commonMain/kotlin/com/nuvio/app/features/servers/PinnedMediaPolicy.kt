@@ -18,6 +18,20 @@ internal object PinnedMediaPolicy {
         return if (pinnedFingerprint(authority) != null) Route.Pinned(authority) else Route.Direct
     }
 
+    /**
+     * Route for PLAYBACK on a platform whose player does not verify TLS itself (Desktop: the bundled libmpv defaults to
+     * `tls-verify=no`, proved by playing a self-signed https stream). A media-server stream carries its credential in the
+     * URL, so every https URL of a configured media-server host - pinned or CA-signed - is read through the verifying relay
+     * ([Route.Pinned] means "via the relay"); anything else (IPTV, add-ons, debrid, plain http, the relay itself) stays direct.
+     */
+    fun playbackRoute(url: String?, pinnedFingerprint: (authority: String) -> String?, isMediaServerAuthority: (authority: String) -> Boolean): Route {
+        val pinned = route(url, pinnedFingerprint)
+        if (pinned is Route.Pinned) return pinned
+        if (url.isNullOrBlank() || !url.startsWith("https://", ignoreCase = true)) return Route.Direct
+        val authority = serverAuthority(url) ?: return Route.Direct
+        return if (isMediaServerAuthority(authority)) Route.Pinned(authority) else Route.Direct
+    }
+
     /** Route using this device's pin store. */
     fun route(url: String?): Route = route(url) { ServerTrust.shared.pinnedFingerprint(it) }
 }

@@ -38,8 +38,19 @@ internal class PinnedPlayback(val url: String, private val session: RelaySession
  * instead of leaving a blank player).
  */
 @Composable
-internal fun rememberPinnedPlayback(sourceUrl: String, onFailed: (Throwable) -> Unit = {}): PinnedPlayback? {
-    val authority = (PinnedMediaPolicy.route(sourceUrl) as? PinnedMediaPolicy.Route.Pinned)?.authority
+internal fun rememberPinnedPlayback(
+    sourceUrl: String,
+    isVerifiedServerHost: ((authority: String) -> Boolean)? = null,
+    onFailed: (Throwable) -> Unit = {},
+): PinnedPlayback? {
+    // Default (mobile engines): only a server this device pinned needs the relay. A platform whose player does not verify
+    // TLS itself (Desktop libmpv) also relays every media-server host so the stream's credential never rides unverified TLS.
+    val route = if (isVerifiedServerHost == null) {
+        PinnedMediaPolicy.route(sourceUrl)
+    } else {
+        PinnedMediaPolicy.playbackRoute(sourceUrl, { ServerTrust.shared.pinnedFingerprint(it) }, isVerifiedServerHost)
+    }
+    val authority = (route as? PinnedMediaPolicy.Route.Pinned)?.authority
     val latestOnFailed = rememberUpdatedState(onFailed)
     var session by remember(authority) { mutableStateOf<RelaySession?>(null) }
     DisposableEffect(authority) {

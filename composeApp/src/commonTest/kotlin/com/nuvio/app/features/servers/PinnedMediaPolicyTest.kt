@@ -90,4 +90,26 @@ class PinnedMediaPolicyTest {
         assertNull(RelayRequestPolicy.sameAuthorityLocation("http://nas.local:8920/a", "nas.local:8920"), "downgrade")
         assertNull(RelayRequestPolicy.sameAuthorityLocation(null, "nas.local:8920"), "none")
     }
+
+    // Desktop's libmpv does not verify TLS by default (bundled build: tls-verify=no), and a media-server stream carries its
+    // credential in the URL: on Desktop every https media-server host is read through the verifying relay, pinned or CA-signed.
+    @Test
+    fun `desktop playback relays every https media server host, not only pinned ones`() {
+        val servers = setOf("jelly.example.com:443", "nas.local:8920")
+        val pins: (String) -> String? = { if (it == "nas.local:8920") "FP" else null }
+        val isServer: (String) -> Boolean = { it in servers }
+        assertEquals(PinnedMediaPolicy.Route.Pinned("nas.local:8920"), PinnedMediaPolicy.playbackRoute("https://nas.local:8920/Videos/1/stream", pins, isServer), "pinned")
+        assertEquals(PinnedMediaPolicy.Route.Pinned("jelly.example.com:443"), PinnedMediaPolicy.playbackRoute("https://jelly.example.com/Videos/1/stream?api_key=k", pins, isServer), "CA-signed server")
+    }
+
+    @Test
+    fun `desktop playback leaves everything that is not a media server host direct`() {
+        val isServer: (String) -> Boolean = { it == "jelly.example.com:443" }
+        val none: (String) -> String? = { null }
+        assertEquals(PinnedMediaPolicy.Route.Direct, PinnedMediaPolicy.playbackRoute("https://iptv.example.net:443/live/u/p/1.ts", none, isServer), "IPTV / add-on / debrid host")
+        assertEquals(PinnedMediaPolicy.Route.Direct, PinnedMediaPolicy.playbackRoute("http://jelly.example.com:443/x", none, isServer), "plain http")
+        assertEquals(PinnedMediaPolicy.Route.Direct, PinnedMediaPolicy.playbackRoute("https://jelly.example.com:8443/x", none, isServer), "another port")
+        assertEquals(PinnedMediaPolicy.Route.Direct, PinnedMediaPolicy.playbackRoute(null, none, isServer))
+        assertEquals(PinnedMediaPolicy.Route.Direct, PinnedMediaPolicy.playbackRoute("http://127.0.0.1:1234/token/x", none) { true }, "the relay itself")
+    }
 }
