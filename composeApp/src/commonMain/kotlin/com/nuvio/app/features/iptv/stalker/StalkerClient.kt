@@ -4,6 +4,7 @@ import com.nuvio.app.features.iptv.IptvClient
 import com.nuvio.app.features.iptv.PlaylistServerFailover
 import com.nuvio.app.features.iptv.XtreamAccount
 import com.nuvio.app.features.iptv.XtreamAccountInfo
+import com.nuvio.app.features.iptv.IptvCatalogFreshness
 import com.nuvio.app.features.iptv.XtreamCategory
 import com.nuvio.app.features.iptv.XtreamChannel
 import com.nuvio.app.features.iptv.XtreamEpisode
@@ -69,7 +70,7 @@ object StalkerClient : IptvClient {
     // lineup (the raw 13MB rows are NOT retained; get_all_channels items never enter rowCache).
     private val linkFlags = mutableMapOf<String, LinkFlags>()
 
-    // The live lineup lives in IptvContentDb (P6): one get_all_channels per [LINEUP_TTL_MS],
+    // The live lineup lives in IptvContentDb (P6): one get_all_channels per configured refresh interval,
     // replaced wholesale via replaceLiveLineup, every browse a local indexed read. That kills the
     // 13MB re-download every cold start AND makes a favorited channel playable offline — the cmd
     // (create_link's stable input) is persisted per row; only the single-use play URL never is.
@@ -259,7 +260,7 @@ object StalkerClient : IptvClient {
     )
 
     /**
-     * Ensures a fresh (≤[LINEUP_TTL_MS]) live lineup for [acc] is stored in [IptvContentDb],
+     * Ensures a fresh live lineup on the configured interval for [acc] is stored in [IptvContentDb],
      * mirroring it when stale: genres + the WHOLE lineup in ONE `get_all_channels` (what every real
      * MAG client uses — stalkerhek / magplex / stalker-to-m3u; TiviMate's playlist add does exactly
      * this, measured in research/iptv-catalog-loading.md). Portals without get_all_channels fall
@@ -274,11 +275,11 @@ object StalkerClient : IptvClient {
     private suspend fun ensureLineup(acc: XtreamAccount, force: Boolean = false): Boolean {
         val now = TraktPlatformClock.nowEpochMs()
         if (!force) {
-            IptvContentDb.ingestMeta(acc.id)?.takeIf { now - it.builtAtMs < LINEUP_TTL_MS }
+            IptvContentDb.ingestMeta(acc.id)?.takeIf { !IptvCatalogFreshness.stale(it.builtAtMs, acc.autoRefreshHours, now, fallbackHours = 12) }
                 ?.let { return it.liveCount > 0 }
         }
         return liveMutex.withLock {
-            IptvContentDb.ingestMeta(acc.id)?.takeIf { !force && now - it.builtAtMs < LINEUP_TTL_MS }
+            IptvContentDb.ingestMeta(acc.id)?.takeIf { !force && !IptvCatalogFreshness.stale(it.builtAtMs, acc.autoRefreshHours, now, fallbackHours = 12) }
                 ?.let { return@withLock it.liveCount > 0 }   // raced: another caller mirrored
             val cats = runCatching { categories(acc, "itv", "get_genres").getOrThrow() }.getOrNull()
             // B76: the whole lineup in ONE get_all_channels, STREAMED (see StalkerJsArrayStreamParser
@@ -1186,6 +1187,5 @@ object StalkerClient : IptvClient {
     // How long the mirrored live lineup stays fresh. Refreshed ONLY from a foreground browse
     // (a background Stalker sync would evict the other device on a shared MAC); 12h matches the
     // M3U catalog's cadence.
-    private const val LINEUP_TTL_MS = 12L * 60 * 60 * 1000
     private val SEASON_NAME = Regex("""season\s*(\d+)""", RegexOption.IGNORE_CASE)
 }

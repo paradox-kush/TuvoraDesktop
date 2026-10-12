@@ -769,12 +769,15 @@ internal fun MainAppContent(
         }
     }
 
-    // iOS auto-refresh: iOS has no WorkManager, so overdue IPTV playlists are refreshed
-    // foreground-on-launch (best-effort, off the main thread). Android schedules a periodic
-    // WorkManager worker from MainActivity instead, so this stays iOS-only.
-    LaunchedEffect(Unit) {
-        if (isIos) {
-            runCatching { com.nuvio.app.core.contracts.IptvCatalogAccess.catalog.refreshDuePlaylists() }
+    // Check on foreground/profile entry, not only the first iOS composition. A fresh playlist
+    // makes no request; Android's periodic worker shares the scheduler's single-flight lock.
+    LaunchedEffect(ownsAppRuntime, profileState.activeProfile?.profileIndex) {
+        if (!ownsAppRuntime) return@LaunchedEffect
+        AppForegroundMonitor.events().collectLatest { visibility ->
+            if (visibility == AppVisibility.Foreground) {
+                runCatching { com.nuvio.app.core.contracts.IptvCatalogAccess.catalog.refreshDuePlaylists() }
+                    .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+            }
         }
     }
 

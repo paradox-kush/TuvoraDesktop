@@ -43,8 +43,6 @@ object M3UClient : IptvClient {
 
     private const val CHUNK = 5_000
     private const val M3U_PROBE_BYTES = 1024
-    /** How long a stored catalog is considered fresh before a browse re-ingests it. */
-    private const val REFRESH_TTL_MS = 12L * 60 * 60 * 1000
 
     /**
      * Streams + parses the account's M3U URL into the content DB if it hasn't been ingested (or the
@@ -56,7 +54,7 @@ object M3UClient : IptvClient {
         val meta = IptvContentDb.ingestMeta(acc.id)
         // B64: a catalog built under the pre-B64 ids rebuilds once (and the saved refs follow, below).
         val oldIds = meta != null && meta.idScheme < M3U_ID_SCHEME
-        if (!force && meta != null && !isStale(meta) && !oldIds) return true
+        if (!force && meta != null && !isStale(meta, acc.autoRefreshHours) && !oldIds) return true
         val job = sharedIngest(acc, oldIds)
         // Stale (older than the refresh TTL) but usable: serve the stored copy NOW and refresh behind it.
         // The served generation stays readable until the new one commits (IptvContentDb.beginIngest), and
@@ -355,9 +353,9 @@ object M3UClient : IptvClient {
 
     // --- helpers ---------------------------------------------------------------
 
-    private fun isStale(meta: IngestMeta): Boolean {
+    private fun isStale(meta: IngestMeta, refreshHours: Int): Boolean {
         if (meta.builtAtMs <= 0) return false
-        return TraktPlatformClock.nowEpochMs() - meta.builtAtMs > REFRESH_TTL_MS
+        return IptvCatalogFreshness.stale(meta.builtAtMs, refreshHours, TraktPlatformClock.nowEpochMs(), fallbackHours = 12)
     }
 
     private fun IptvCategoryRow.toCategory() = XtreamCategory(id, name)

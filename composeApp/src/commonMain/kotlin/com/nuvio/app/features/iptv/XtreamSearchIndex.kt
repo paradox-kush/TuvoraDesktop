@@ -243,7 +243,7 @@ object XtreamSearchIndex {
     suspend fun invalidate(accountId: String) {
         mutex.withLock {
             channelCache.remove(accountId)
-            channelJobs.remove(accountId)
+            channelJobs.remove(accountId)?.cancel()
             categoryNameCache.keys.removeAll { it.startsWith("$accountId|") }
         }
     }

@@ -5,6 +5,7 @@ import com.nuvio.app.features.iptv.CONTENT_TYPE_LIVE
 import com.nuvio.app.features.iptv.CONTENT_TYPE_MOVIES
 import com.nuvio.app.features.iptv.CONTENT_TYPE_SERIES
 import com.nuvio.app.features.iptv.SOURCE_TYPE_XTREAM
+import com.nuvio.app.features.iptv.IptvCatalogFreshness
 import com.nuvio.app.features.iptv.XtreamAccount
 import com.nuvio.app.features.iptv.XtreamClient
 import com.nuvio.app.features.iptv.typeEnabled
@@ -47,8 +48,7 @@ internal object XtreamTmdbResolver {
 
     // Staleness ceiling before a re-fetch. The refresh is an incremental diff (unchanged
     // titles validate by fingerprint; only new/renamed re-index), so it's cheap on-device —
-    // the 72h window just bounds how often the full catalog JSON is re-downloaded.
-    private const val INDEX_TTL_MS = 72 * 60 * 60 * 1000L
+    // the playlist interval bounds how often the full catalog JSON is re-downloaded.
     private const val BUILD_BACKOFF_MS = 60 * 60 * 1000L
     private const val NEGATIVE_TTL_MS = 7 * 24 * 60 * 60 * 1000L
     private const val MAX_VERIFY_CALLS = 3
@@ -272,11 +272,11 @@ internal object XtreamTmdbResolver {
     // --- index freshness -------------------------------------------------------
 
     /**
-     * Builds the SQLite index from the full bulk list when missing or older than 24h.
+     * Builds the SQLite index when missing or past the playlist's refresh interval.
      * Single-flight per provider+kind; failures back off for an hour. Never throws —
      * resolve degrades to whatever index exists.
      */
-    suspend fun ensureIndexed(acc: XtreamAccount, kind: MatchKind) {
+    suspend fun ensureIndexed(acc: XtreamAccount, kind: MatchKind, force: Boolean = false, awaitRefresh: Boolean = false) {
         val key = "${acc.id}#${kind.slug}"
         // The index-state read is a SQLite query BEFORE the build's own try/catch, on the caller's
         // coroutine (a warm-up launch, a resolve() call, or a headless refresh worker). A
@@ -291,7 +291,7 @@ internal object XtreamTmdbResolver {
             is Guarded.Ok -> g.value
             Guarded.Failed -> return
         }
-        if (existing != null && now() - existing < INDEX_TTL_MS) return
+        if (!force && !IptvCatalogFreshness.stale(existing, acc.autoRefreshHours, now())) return
 
         // Durable backoff (survives an OS kill that bypasses the catch below): if a prior run began
         // this build and never recorded an outcome, or an expected failure is still within its
@@ -337,7 +337,7 @@ internal object XtreamTmdbResolver {
                             MatchKind.MOVIE -> XtreamClient.vodCategories(acc)
                             MatchKind.SERIES -> XtreamClient.seriesCategories(acc)
                             MatchKind.LIVE -> XtreamClient.liveCategories(acc)
-                        }.getOrNull()
+                        }.getOrThrow()
                         val session = XtreamMatchIndex.beginSync(acc.id, kind)
                         val fetched = when (kind) {
                             MatchKind.MOVIE -> XtreamClient.vodIndexItemsInto(acc, session::accept).getOrThrow()
@@ -350,11 +350,13 @@ internal object XtreamTmdbResolver {
                         check(fetched > 0 || XtreamMatchIndex.builtAt(acc.id, kind) == null) {
                             "panel returned an empty ${kind.slug} list"
                         }
+                        // Category failures must not advance the catalogue freshness stamp.
+                        XtreamMatchIndex.replaceCategories(acc.id, kind, cats.map { c -> c.id to c.name })
                         val st = session.finish()
-                        cats?.let { XtreamMatchIndex.replaceCategories(acc.id, kind, it.map { c -> c.id to c.name }) }
                         st
                     }
                     log.i { "synced ${kind.slug} index for ${acc.name}: +${stats.added} ~${stats.changed} -${stats.removed} (${stats.total} total)" }
+                    com.nuvio.app.features.iptv.IptvCatalogChanges.changed(acc.id, kind.name)
                     StartupJournal.record(StartupJournal.OP_INDEX_BUILD, key, token, JournalOutcome.COMPLETED)
                     buildLock.withLock { lastFailedBuildMs.remove(key) }
                 } catch (c: CancellationException) {
@@ -384,7 +386,7 @@ internal object XtreamTmdbResolver {
         // A stale-but-present index serves immediately — yesterday's catalog still
         // resolves, and the rebuild lands in the background. Only a MISSING index is
         // worth blocking the caller for.
-        if (existing != null) return
+        if (existing != null && !force && !awaitRefresh) return
         // await is cancellable (the caller's request may die); the build itself is not
         deferred.await()
     }
