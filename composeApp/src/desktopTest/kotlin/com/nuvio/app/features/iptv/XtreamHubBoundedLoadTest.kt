@@ -43,6 +43,7 @@ class XtreamHubBoundedLoadTest {
         id = "http://stall.test|u", name = "Stall", baseUrl = "http://stall.test", username = "u", password = "p",
     )
 
+    private var categoryName = "News"
     private var hangCategories = false
     private var failCategoryStreamsTimes = 0
     private val categoryStreamAsks = AtomicInteger()
@@ -55,7 +56,7 @@ class XtreamHubBoundedLoadTest {
                 action == null -> """{"user_info":{"auth":1,"status":"Active"},"server_info":{}}"""
                 action == "get_live_categories" -> {
                     if (hangCategories) awaitCancellation()
-                    """[{"category_id":"1","category_name":"News"}]"""
+                    """[{"category_id":"1","category_name":"$categoryName"}]"""
                 }
                 action == "get_live_streams" && "category_id=" in url -> {
                     if (categoryStreamAsks.incrementAndGet() <= failCategoryStreamsTimes) throw IOException("HTTP 503")
@@ -103,6 +104,21 @@ class XtreamHubBoundedLoadTest {
     private fun openPage() {
         XtreamHubRepository.selectAccount(account.id)
         XtreamHubRepository.selectSection(XtreamHubSection.LIVE)
+    }
+
+    @Test
+    fun `a committed refresh replaces a successfully displayed category`() = runBlocking {
+        openPage()
+        assertNotNull(withTimeoutOrNull(5_000) {
+            XtreamHubRepository.uiState.first { it.categories.any { c -> c.name == "News" } }
+        })
+        categoryName = "Today events"
+        IptvImportProgress.finished(account.id)
+        val refreshed = withTimeoutOrNull(5_000) {
+            XtreamHubRepository.uiState.first { it.categories.any { c -> c.name == "Today events" } }
+        }
+        assertNotNull(refreshed, "successful categories stayed cached after refresh")
+        Unit
     }
 
     @Test

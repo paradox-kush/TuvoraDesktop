@@ -16,6 +16,7 @@ data class XtreamHubUiState(
     val selectedAccountId: String? = null,
     val section: XtreamHubSection = XtreamHubSection.LIVE,
     val categories: List<XtreamHubCategory> = emptyList(),
+    val catalogueGeneration: Long = 0L,
     /** The category-list load. Entered only through [BoundedLoad], so it always ends (see that file). */
     val categoriesLoad: LoadStatus = LoadStatus.Idle,
     // Non-null when the category-list fetch failed and there was no cache to fall back on — the UI

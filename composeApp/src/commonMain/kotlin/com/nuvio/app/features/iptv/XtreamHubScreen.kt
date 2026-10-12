@@ -379,7 +379,7 @@ fun XtreamHubScreen(
                             // Keyed on the account/section too: a category id that survives a
                             // section switch would otherwise keep the effect from re-running.
                             if (!category.id.startsWith(SPECIAL_CATEGORY_PREFIX)) {
-                                LaunchedEffect(state.selectedAccountId, state.section, category.id) {
+                                LaunchedEffect(state.selectedAccountId, state.section, category.id, state.catalogueGeneration) {
                                     XtreamHubRepository.loadCategory(category.id)
                                     // Give the next few rows a head start so they land with boxes and
                                     // names instead of shimmer. The repository caps how many of these

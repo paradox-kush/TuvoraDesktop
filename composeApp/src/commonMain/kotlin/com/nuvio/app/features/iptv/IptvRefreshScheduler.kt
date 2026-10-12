@@ -1,6 +1,10 @@
 package com.nuvio.app.features.iptv
 
 import co.touchlab.kermit.Logger
+import com.nuvio.app.features.iptv.match.MatchKind
+import com.nuvio.app.features.iptv.match.XtreamMatchIndex
+import com.nuvio.app.features.iptv.match.XtreamTmdbResolver
+import kotlinx.coroutines.CancellationException
 import com.nuvio.app.features.iptv.content.IptvContentDb
 import com.nuvio.app.features.iptv.epg.XmltvClient
 import com.nuvio.app.features.profiles.ProfileRepository
@@ -19,8 +23,8 @@ import kotlinx.serialization.json.Json
  *  - **M3U (url/file):** re-ingest the catalog ([M3UClient.ingest], atomic meta-last) + refresh the
  *    XMLTV guide. The ingest's `ingest_meta.built_at` IS the last-refresh timestamp, so nothing extra
  *    is stored for M3U.
- *  - **Xtream:** API-on-demand — there's no catalog to re-ingest. "Refreshing" invalidates the search
- *    index's session channel cache (so it re-fetches) and bumps a stored last-checked timestamp.
+ *  - **Xtream:** rebuild only stale enabled catalogue kinds. Committed index timestamps determine
+ *    freshness; a successful reachability check never substitutes for refreshed categories.
  *
  * Defensive throughout: one playlist failing never aborts the others, and the whole pass is a no-op
  * when nothing is due. Serialized by a mutex so an on-launch pass and a periodic worker can't overlap.
@@ -48,6 +52,7 @@ object IptvRefreshScheduler {
                 val last = lastRefreshMs(acc, xtreamState)
                 if (!dueForRefresh(last, acc.autoRefreshHours, now)) continue
                 val ok = runCatching { refreshOne(acc) }
+                    .onFailure { if (it is CancellationException) throw it }
                     .onFailure { log.w(it) { "auto-refresh failed for ${acc.id}" } }
                     .getOrDefault(false)
                 if (ok) {
@@ -73,24 +78,42 @@ object IptvRefreshScheduler {
             if (ok) runCatching { XmltvClient.ensureEpg(acc, force = true) }
             ok
         }
-        else -> {
-            // Xtream/Stalker: invalidate the cached channel list so the next browse/search re-fetches,
-            // and verify the panel is still reachable (cheap) so we only bump the timestamp on success.
-            XtreamSearchIndex.invalidate(acc.id)
-            val reachable = IptvClient.forAccount(acc).accountInfo(acc).isSuccess
-            // Refresh the account's own whole guide too. This branch used to be a bare reachability
-            // ping — the guide machinery existed and was never invoked for the panel types that
-            // dominate usage, so an Xtream playlist had no stored guide and every browse paid a
-            // per-channel request. No-ops for a panel that serves no xmltv.php.
-            if (reachable) runCatching { XmltvClient.ensureEpg(acc, force = true) }
-            reachable
+        acc.sourceType == SOURCE_TYPE_XTREAM -> {
+            val kinds = MatchKind.entries.filter { kind ->
+                acc.typeEnabled(when (kind) {
+                    MatchKind.LIVE -> CONTENT_TYPE_LIVE
+                    MatchKind.MOVIE -> CONTENT_TYPE_MOVIES
+                    MatchKind.SERIES -> CONTENT_TYPE_SERIES
+                })
+            }
+            if (kinds.isEmpty()) false else {
+                val stamps = kinds.associateWith { XtreamMatchIndex.builtAt(acc.id, it) }
+                for (kind in IptvCatalogFreshness.dueKinds(stamps, acc.autoRefreshHours, TraktPlatformClock.nowEpochMs())) XtreamTmdbResolver.ensureIndexed(acc, kind, awaitRefresh = true)
+                // ensureIndexed contains failures/backoff. Only a committed fresh index counts as success.
+                val refreshed = kinds.all { !IptvCatalogFreshness.stale(XtreamMatchIndex.builtAt(acc.id, it), acc.autoRefreshHours, TraktPlatformClock.nowEpochMs()) }
+                if (refreshed) {
+                    XtreamSearchIndex.invalidate(acc.id)
+                    runCatching { XmltvClient.ensureEpg(acc, force = true) }
+                }
+                refreshed
+            }
         }
+        // A Stalker handshake can evict another device using the same MAC. Its foreground browse
+        // refreshes the lineup on the configured cadence; a background ping is not a refresh.
+        else -> false
     }
 
-    /** The last-refresh instant for a playlist: the M3U ingest time, or the stored Xtream checked time. */
+    /** The last-refresh instant for a playlist: the M3U ingest time, or the oldest enabled Xtream index. */
     private suspend fun lastRefreshMs(acc: XtreamAccount, xtreamState: Map<String, Long>): Long =
         if (acc.sourceType.isM3u()) {
             IptvContentDb.ingestMeta(acc.id)?.builtAtMs ?: 0L
+        } else if (acc.sourceType == SOURCE_TYPE_XTREAM) {
+            val kinds = MatchKind.entries.filter { kind -> acc.typeEnabled(when (kind) {
+                MatchKind.LIVE -> CONTENT_TYPE_LIVE
+                MatchKind.MOVIE -> CONTENT_TYPE_MOVIES
+                MatchKind.SERIES -> CONTENT_TYPE_SERIES
+            }) }
+            kinds.map { XtreamMatchIndex.builtAt(acc.id, it) ?: 0L }.minOrNull() ?: 0L
         } else {
             xtreamState[acc.id] ?: 0L
         }

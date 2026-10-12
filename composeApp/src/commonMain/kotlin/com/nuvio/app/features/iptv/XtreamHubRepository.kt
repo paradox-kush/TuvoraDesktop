@@ -70,6 +70,37 @@ object XtreamHubRepository {
     // this map from a background dispatcher.
     private val categoryLock = SynchronizedObject()
     private val cache = mutableMapOf<Pair<String, XtreamHubSection>, List<XtreamHubCategory>>()
+    private val cacheCheckedAt = mutableMapOf<String, Long>()
+    private val appliedRevisions = mutableMapOf<IptvCatalogKey, Long>()
+    private val pendingHeals = mutableMapOf<Pair<String, XtreamHubSection>, Set<String>>()
+    private val catalogueEpochs = mutableMapOf<String, Long>()
+    private fun catalogueEpoch(id: String): Long = synchronized(categoryLock) { catalogueEpochs[id] ?: 0L }
+
+    private fun invalidateCatalogue(accountId: String) {
+        val jobs = synchronized(categoryLock) {
+            cacheCheckedAt[accountId] = com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs()
+            catalogueEpochs[accountId] = (catalogueEpochs[accountId] ?: 0L) + 1L
+            cache.filterKeys { it.first == accountId }.forEach { (key, rows) ->
+                val failed = rows.filter { it.failed }.map { it.id }.toSet()
+                pendingHeals[key] = pendingHeals[key].orEmpty() + failed
+            }
+            cache.keys.removeAll { it.first == accountId }
+            loadedOrder.removeAll { it.accountId == accountId }
+            inFlightCategories.removeAll { it.accountId == accountId }
+            groupItems.keys.removeAll { it.first == accountId }
+            categoryJobs.remove(accountId).orEmpty().toList()
+        }
+        jobs.forEach { it.cancel() }
+        if (_uiState.value.selectedAccountId == accountId) {
+            _uiState.update { it.copy(catalogueGeneration = it.catalogueGeneration + 1L) }
+        }
+    }
+
+    private fun healRows(accountId: String, section: XtreamHubSection) {
+        if (!isCurrent(accountId, section)) return
+        val ids = synchronized(categoryLock) { pendingHeals.remove(accountId to section).orEmpty() }
+        ids.forEach { requestCategory(it, prefetch = false, explicit = true) }
+    }
 
     init {
         // Lazily enriched posters (PosterEnricher) patch loaded rows in place — the DB row is
@@ -80,35 +111,15 @@ object XtreamHubRepository {
         // Self-heal, event-driven (never a poll): an import the page gave up waiting on has landed, or a
         // playlist's catalog index finished building — show it, and ask the failed rows once more.
         scope.launch { IptvImportProgress.completed.collect { onCatalogLanded(it) } }
-        scope.launch {
-            var building = emptySet<String>()
-            XtreamMatchIndex.buildProgress.collect { progress ->
-                val finished = building - progress.keys
-                building = progress.keys
-                finished.forEach { onCatalogLanded(it) }
-            }
-        }
+
     }
 
     /** [accountId]'s catalog is now readable: end a failed page and re-ask its failed rows, once. */
     private fun onCatalogLanded(accountId: String) {
+        invalidateCatalogue(accountId)
+        synchronized(categoryLock) { groupFailures.removeAll { it.first == accountId } }
         val st = _uiState.value
-        if (st.selectedAccountId != accountId) return
-        if (st.categoriesLoad is LoadStatus.Failed || (st.categories.isEmpty() && st.categoriesLoad !is LoadStatus.Loading)) {
-            showSection(accountId, st.section)
-            return
-        }
-        val key = accountId to st.section
-        val failedIds = synchronized(categoryLock) {
-            groupFailures.removeAll { it.first == accountId }
-            val current = cache[key] ?: return@synchronized emptyList()
-            val ids = current.filter { it.failed }.map { it.id }
-            cache[key] = current.map { if (it.failed) it.copy(load = LoadStatus.Idle) else it }
-            ids
-        }
-        if (failedIds.isEmpty()) return
-        // One more ask each, now that the catalog is local (bounded by the same row deadline and slots).
-        failedIds.forEach { requestCategory(it, prefetch = false) }
+        if (st.selectedAccountId == accountId) showSection(accountId, st.section)
     }
     private var lastPrefetchMark: TimeMark? = null
     private val REFRESH_TTL = 6.hours
@@ -226,7 +237,20 @@ object XtreamHubRepository {
         combine(
             XtreamRepository.uiState.map { it.accounts }.distinctUntilChanged(),
             _uiState.map { it.accountsLoaded }.distinctUntilChanged(),
-        ) { playlists, _ -> playlists }
+            IptvCatalogChanges.state,
+        ) { playlists, _, revisions ->
+            var invalidated = false
+            revisions.forEach { (key, revision) ->
+                val id = key.accountId
+                if ((appliedRevisions[key] ?: 0L) != revision) {
+                    invalidateCatalogue(id)
+                    appliedRevisions[key] = revision
+                    invalidated = true
+                }
+            }
+            if (invalidated) ensureLoaded()
+            playlists
+        }
             .collect { playlists -> if (hubNeedsAccountSync(_uiState.value, playlists)) ensureLoaded() }
     }
 
@@ -278,6 +302,11 @@ object XtreamHubRepository {
 
     /** Show cached categories instantly, else fetch the (cheap) category list. */
     private fun showSection(accountId: String, section: XtreamHubSection) {
+        val account = accountFor(accountId)
+        val checked = synchronized(categoryLock) { cacheCheckedAt[accountId] }
+        if (IptvCatalogFreshness.stale(checked, account?.autoRefreshHours ?: 0, com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs())) {
+            invalidateCatalogue(accountId)
+        }
         if (accountFor(accountId)?.typeEnabled(section.contentKey) == false) {
             // Disabled content type: never fetched, nothing shown.
             _uiState.update { it.copy(categories = emptyList(), categoriesLoad = LoadStatus.Idle, loadError = null) }
@@ -460,6 +489,7 @@ object XtreamHubRepository {
     }
 
     private suspend fun fetchCategoryList(accountId: String, section: XtreamHubSection) {
+        val epoch = catalogueEpoch(accountId)
         val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == accountId } ?: run {
             // The playlist went away mid-load: end the skeleton (this return used to leave it up forever).
             if (isCurrent(accountId, section)) {
@@ -471,9 +501,12 @@ object XtreamHubRepository {
         // no per-session category fetch. Index absent (first run): fall through to the live
         // API below and kick the build so the NEXT visit is local.
         if (account.sourceType == SOURCE_TYPE_XTREAM) {
+            XtreamTmdbResolver.warmUp(listOf(account))
             val stored = runCatching { XtreamMatchIndex.categoriesFor(account.id, section.matchKind) }.getOrDefault(emptyList())
             if (stored.isNotEmpty()) {
+                if (catalogueEpoch(accountId) != epoch) return
                 val merged = synchronized(categoryLock) {
+                    if ((catalogueEpochs[accountId] ?: 0L) != epoch) return
                     val previous = cache[accountId to section].orEmpty().associateBy { it.id }
                     val next = stored.map { (id, name) ->
                         val old = previous[id]
@@ -485,6 +518,7 @@ object XtreamHubRepository {
                 val shown = applyCategoryOverlay(account.id, section.contentKey, merged)
                 if (isCurrent(accountId, section)) {
                     _uiState.update { it.copy(categories = shown, categoriesLoad = LoadStatus.Loaded, loadError = null) }
+                    healRows(accountId, section)
                 }
                 return
             }
@@ -511,6 +545,7 @@ object XtreamHubRepository {
                 XtreamHubSection.SERIES -> client.seriesCategories(account)
             }.getOrThrow()
         }
+        if (catalogueEpoch(accountId) != epoch) return
         val fresh = outcome.valueOrNull() ?: run {
             // Failed fetch: keep any warm cache, but if there's none the section would otherwise spin
             // forever — surface an error so the user knows the portal is unreachable, not just slow.
@@ -530,8 +565,10 @@ object XtreamHubRepository {
             }
             return
         }
+        if (catalogueEpoch(accountId) != epoch) return
         // Merge: carry over already-loaded items for categories that still exist.
         val merged = synchronized(categoryLock) {
+            if ((catalogueEpochs[accountId] ?: 0L) != epoch) return
             val previous = cache[accountId to section].orEmpty().associateBy { it.id }
             val next = fresh.map { cat ->
                 val old = previous[cat.id]
@@ -543,6 +580,7 @@ object XtreamHubRepository {
         val shown = applyCategoryOverlay(account.id, section.contentKey, merged)
         if (isCurrent(accountId, section)) {
             _uiState.update { it.copy(categories = shown, categoriesLoad = outcome.status, loadError = null) }
+            healRows(accountId, section)
         }
     }
 
@@ -592,6 +630,7 @@ object XtreamHubRepository {
         }
         if (!claimed) return
         com.nuvio.app.core.diag.HubTrace.log("category", "claimed") { "cat=$categoryId prefetch=$prefetch inFlight=${inFlightCategories.size}" }
+        val epoch = catalogueEpoch(accountId)
         val job = scope.launch {
             var completed = false
             val tClaim = com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs()
@@ -602,7 +641,7 @@ object XtreamHubRepository {
                     }
                     // The row's deadline starts with its permit: rows queued behind the 3 slots are
                     // waiting on us, not on the provider.
-                    updateCategory(accountId, section, categoryId) { it.copy(load = BoundedLoad.begin(LoadSurface.HUB_ROW)) }
+                    updateCategory(accountId, section, categoryId, epoch) { it.copy(load = BoundedLoad.begin(LoadSurface.HUB_ROW)) }
                     val account = XtreamRepository.uiState.value.accounts.firstOrNull { it.id == accountId }
                     val outcome = BoundedLoad.run(
                         surface = LoadSurface.HUB_ROW,
@@ -615,18 +654,19 @@ object XtreamHubRepository {
                     com.nuvio.app.core.diag.HubTrace.log("category", "fetched") {
                         "cat=$categoryId outcome=${outcome.status} total=${com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs() - tClaim}ms"
                     }
+                    if (catalogueEpoch(accountId) != epoch) return@withPermit
                     val window = outcome.valueOrNull()
                     if (window == null) {
                         // Failed or timed out: the row stays, with Retry — a failure used to read as an
                         // empty category and the row vanished for the session.
-                        updateCategory(accountId, section, categoryId) { it.copy(loaded = false, load = outcome.status) }
+                        updateCategory(accountId, section, categoryId, epoch) { it.copy(loaded = false, load = outcome.status) }
                     } else {
                         val (items, hasMore) = window
                         // Dedup the initial window by id BEFORE it becomes Lazy-list keys: a provider
                         // can return the same stream_id twice in one page, and a duplicate Compose `key`
                         // is a hard crash (a message-less SIGABRT on iOS, `Key … already used` on Android).
                         // Appended pages are already deduped by mergePagedWindow; the initial window was the gap.
-                        updateCategory(accountId, section, categoryId) {
+                        updateCategory(accountId, section, categoryId, epoch) {
                             it.copy(items = items.distinctBy { it.id }, loaded = true, load = outcome.status, hasMore = hasMore)
                         }
                         noteLoadedAndEvict(key)
@@ -634,9 +674,9 @@ object XtreamHubRepository {
                     completed = true
                 }
             } finally {
-                synchronized(categoryLock) { inFlightCategories.remove(key) }
+                synchronized(categoryLock) { if (catalogueEpoch(accountId) == epoch) inFlightCategories.remove(key) }
                 // Never strand a row as permanently "loading" if the fetch was cancelled.
-                if (!completed) updateCategory(accountId, section, categoryId) { it.copy(load = LoadStatus.Idle) }
+                if (!completed && catalogueEpoch(accountId) == epoch) updateCategory(accountId, section, categoryId, epoch) { it.copy(load = LoadStatus.Idle) }
             }
         }
         synchronized(categoryLock) { categoryJobs.getOrPut(accountId) { mutableListOf() }.add(job) }
@@ -674,6 +714,7 @@ object XtreamHubRepository {
             if (key in inFlightCategories) false else inFlightCategories.add(key)
         }
         if (!claimed) return
+        val epoch = catalogueEpoch(accountId)
         scope.launch {
             try {
                 val account = accountFor(accountId) ?: return@launch
@@ -682,12 +723,13 @@ object XtreamHubRepository {
                 val (more, hasMore) = BoundedLoad.run(LoadSurface.HUB_ROW) {
                     fetchWindow(account, section, categoryId, offset)
                 }.valueOrNull() ?: return@launch
-                updateCategory(accountId, section, categoryId) { cat ->
+                if (catalogueEpoch(accountId) != epoch) return@launch
+                updateCategory(accountId, section, categoryId, epoch) { cat ->
                     val (items, more2) = mergePagedWindow(cat.items, more, hasMore) { it.id }
                     cat.copy(items = items, hasMore = more2)
                 }
             } finally {
-                synchronized(categoryLock) { inFlightCategories.remove(key) }
+                synchronized(categoryLock) { if (catalogueEpoch(accountId) == epoch) inFlightCategories.remove(key) }
             }
         }
     }
@@ -977,7 +1019,7 @@ object XtreamHubRepository {
     }
 
     fun resetForProfile() {
-        synchronized(categoryLock) { cache.clear(); loadedOrder.clear(); groupItems.clear() }
+        synchronized(categoryLock) { cache.clear(); loadedOrder.clear(); groupItems.clear(); cacheCheckedAt.clear(); pendingHeals.clear() }
         entityIndex = null
         lastPrefetchMark = null
         epgFetched.clear()
@@ -1043,10 +1085,12 @@ object XtreamHubRepository {
         accountId: String,
         section: XtreamHubSection,
         categoryId: String,
+        epoch: Long? = null,
         transform: (XtreamHubCategory) -> XtreamHubCategory,
     ) {
         val key = accountId to section
         val updated = synchronized(categoryLock) {
+            if (epoch != null && (catalogueEpochs[accountId] ?: 0L) != epoch) return
             val current = cache[key]
             if (current == null) {
                 null
