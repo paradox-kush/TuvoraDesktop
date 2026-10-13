@@ -27,6 +27,7 @@ import com.nuvio.app.features.servers.ServerTrack
 import com.nuvio.app.features.streams.StreamSubtitle
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import com.nuvio.app.features.servers.FixedServerHttp
 import com.nuvio.app.features.servers.QuickConnectChallenge
 import com.nuvio.app.features.servers.QuickConnectPoll
@@ -324,11 +325,10 @@ internal abstract class MediaBrowserProvider(
     override suspend fun candidates(session: ServerSession, itemId: String): List<ServerCandidate> {
         val item = item(session, itemId, "MediaSources")
         val listed = mapper(session).candidates(item)
-        // Fork (10-09 add-on aggregator fix, kept on upstream's provider): a server that prepares streams only when
-        // asked (AIOStreams' /jellyfin with "resolve on open" off) answers the item page with Placeholder stand-ins
-        // only. Its real version list comes from PlaybackInfo, so ask once - and only for such an item.
+        // On-demand servers can omit sources or list only placeholders until PlaybackInfo.
+        // Populated items use their listed versions without another request.
         if (listed.isNotEmpty() || !VersionListPolicy.needsPlaybackInfo(item.mediaSources)) return listed
-        val info = runCatching {
+        val info = withTimeoutOrNull(SOURCE_DISCOVERY_TIMEOUT_MS) {
             playbackInfo(
                 session,
                 itemId,
@@ -340,7 +340,12 @@ internal abstract class MediaBrowserProvider(
                     deviceProfile = deviceProfile(ServerPlayerCapabilities(directPlayAll = true)),
                 ),
             )
-        }.getOrNull() ?: return listed
+        } ?: throw ServerException(ServerFailure.UNREACHABLE)
+        when (info.errorCode) {
+            null -> Unit
+            "NotAllowed" -> throw ServerException(ServerFailure.FORBIDDEN)
+            else -> throw ServerException(ServerFailure.UNSUPPORTED, info.errorCode)
+        }
         return mapper(session).candidates(item.copy(mediaSources = info.mediaSources))
     }
 
@@ -659,6 +664,7 @@ internal abstract class MediaBrowserProvider(
 
     private companion object {
         const val API_KEY = "api_key"
+        const val SOURCE_DISCOVERY_TIMEOUT_MS = 30_000L
         const val MAX_STREAMING_BITRATE = 1_000_000_000L
         const val LIST_FIELDS = "Overview,Genres,ProviderIds,PremiereDate"
         const val DETAIL_FIELDS = "Overview,Genres,ProviderIds,People,Studios,PremiereDate,EndDate"
