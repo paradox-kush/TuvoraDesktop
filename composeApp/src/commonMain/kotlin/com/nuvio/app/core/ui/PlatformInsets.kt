@@ -19,6 +19,9 @@ internal expect fun platformPhysicalTopInset(): Dp
 
 internal val LocalNuvioBottomNavigationOverlayPadding = staticCompositionLocalOf { 0.dp }
 
+/** Space below the status bar occupied by the native phone profile avatar. */
+internal val LocalNuvioCornerProfileOverlayPadding = staticCompositionLocalOf { 0.dp }
+
 internal val LocalBottomInsetsConsumed = staticCompositionLocalOf { false }
 
 /** CompositionLocal providing the shared [NuvioNavBarScrollState] so child screens can attach the nestedScrollConnection. */
