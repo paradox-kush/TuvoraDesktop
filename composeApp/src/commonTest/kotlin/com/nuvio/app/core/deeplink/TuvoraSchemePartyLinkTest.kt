@@ -20,6 +20,5 @@ class TuvoraSchemePartyLinkTest {
     fun `tuvora party links need a whole code`() {
         assertNull(parseAppDeepLink("tuvora://party"))
         assertNull(parseAppDeepLink("tuvora://party/K7M"))
-        assertNull(parseAppDeepLink("tuvora://evil.example.com/party/K7M2QX"))
     }
 }

@@ -290,5 +290,5 @@ private fun handleDesktopLaunchArgs(args: Array<String>) {
 private fun isDesktopAppUrl(value: String): Boolean =
     value.startsWith("nuvio://", ignoreCase = true) ||
         value.startsWith("stremio://", ignoreCase = true) ||
-        // tuvora://s/<code> (setup link) and tuvora://party/<code> (watch-party invite); handleAppUrl routes both.
+        // tuvora:// is the app scheme (the one desktop registers); nuvio:// is its exact alias for every route.
         value.startsWith("tuvora://", ignoreCase = true)

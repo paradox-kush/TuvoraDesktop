@@ -29,6 +29,29 @@ class AppUrlBridgeTest {
     }
 
     @Test
+    fun `the tuvora scheme is an exact alias of nuvio for every route`() {
+        val routes = listOf(
+            "://party/k7m-2qx", "://party?code=K7M2QX", "://meta?type=series&id=tt0944947",
+            "://free.nebulapro.xyz/sports/i/free/manifest.json", "://series/tt0944947", "://imdb/series/tt0944947",
+            "://tmdb/tv/1399", "://downloads", "://s/TUV-ABCD-EFGH-JKMN", "://detail/movie/tt1", "://auth/trakt?code=abc", "://s",
+        )
+        routes.forEach { route ->
+            assertEquals(parseAppDeepLink("nuvio$route"), parseAppDeepLink("tuvora$route"), "tuvora$route")
+        }
+        assertEquals(AppDeepLink.Party("K7M2QX"), parseAppDeepLink("TUVORA://party/K7M2QX"))
+        assertEquals(AppDeepLink.Downloads, parseAppDeepLink("tuvora://downloads"))
+    }
+
+    @Test
+    fun `links the app generates use the tuvora scheme and parse back`() {
+        val meta = buildMetaDeepLinkUrl("series", "tt0944947")
+        assertEquals("tuvora://meta?type=series&id=tt0944947", meta)
+        assertEquals(AppDeepLink.Meta(type = "series", id = "tt0944947"), parseAppDeepLink(meta))
+        assertEquals("tuvora://downloads", buildDownloadsDeepLinkUrl())
+        assertEquals(AppDeepLink.Downloads, parseAppDeepLink(buildDownloadsDeepLinkUrl()))
+    }
+
+    @Test
     fun `parses existing notification meta deeplink`() {
         assertEquals(
             AppDeepLink.Meta(type = "series", id = "tt0944947"),
@@ -126,12 +149,12 @@ class AppUrlBridgeTest {
     // ---- Desktop: the tuvora:// scheme the installers register ----
 
     @Test
-    fun `tuvora scheme carries a setup link on the s host only`() {
+    fun `the desktop-registered tuvora scheme opens every app route`() {
+        // Desktop registers only tuvora:// with the OS, so it must reach every route nuvio:// reaches (decision 2026-10-16).
         assertEquals(AppDeepLink.SetupCode("TUV-ABCD-EFGH-JKMN"), parseAppDeepLink("tuvora://s/TUV-ABCD-EFGH-JKMN"))
         assertEquals(AppDeepLink.SetupCode("TUV-ABCD-EFGH-JKMN"), parseAppDeepLink("TUVORA://S/TUV-ABCD-EFGH-JKMN"))
         assertNull(parseAppDeepLink("tuvora://s"), "no code")
-        assertNull(parseAppDeepLink("tuvora://meta?type=movie&id=tt1"), "tuvora is not a second spelling of nuvio")
-        assertNull(parseAppDeepLink("tuvora://downloads"))
-        assertNull(parseAppDeepLink("tuvora://evil.example.com/s/TUV-ABCD-EFGH-JKMN"))
+        assertEquals(AppDeepLink.Meta(type = "movie", id = "tt1"), parseAppDeepLink("tuvora://meta?type=movie&id=tt1"))
+        assertEquals(AppDeepLink.Downloads, parseAppDeepLink("tuvora://downloads"))
     }
 }

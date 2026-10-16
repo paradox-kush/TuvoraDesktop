@@ -17,7 +17,8 @@ import java.io.File
  * unit-tested; the OS calls themselves are verified by hand on each OS.
  */
 internal object DesktopUrlSchemeRegistration {
-    const val SCHEME = "tuvora"
+    /** The app scheme every generated link uses; nuvio:// is parsed as an alias but not registered on desktop. */
+    const val SCHEME = com.nuvio.app.core.deeplink.APP_URL_SCHEME
 
     /** `reg add` arguments for the per-user protocol keys, in order. [exe] is the installed launcher. */
     fun windowsRegCommands(exe: String): List<List<String>> {
