@@ -940,7 +940,12 @@ button:disabled {
 }
 
 .party-status {
-  align-self: center;
+  position: absolute;
+  top: calc(var(--slider-bottom) + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  pointer-events: none;
   max-width: min(46vw, 420px);
   padding: 6px 12px;
   border-radius: 999px;
