@@ -290,5 +290,5 @@ private fun handleDesktopLaunchArgs(args: Array<String>) {
 private fun isDesktopAppUrl(value: String): Boolean =
     value.startsWith("nuvio://", ignoreCase = true) ||
         value.startsWith("stremio://", ignoreCase = true) ||
-        // A provider's setup link (tuvora://s/<code>); handleAppUrl routes it to the setup-code entry.
+        // tuvora://s/<code> (setup link) and tuvora://party/<code> (watch-party invite); handleAppUrl routes both.
         value.startsWith("tuvora://", ignoreCase = true)

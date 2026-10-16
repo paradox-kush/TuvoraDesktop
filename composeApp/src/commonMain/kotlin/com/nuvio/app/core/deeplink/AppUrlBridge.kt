@@ -79,15 +79,15 @@ internal fun parseAppDeepLink(url: String): AppDeepLink? {
     val parsedUrl = runCatching { Url(url) }.getOrNull() ?: return null
     val scheme = parsedUrl.protocol.name.lowercase()
     if (scheme == "https" || scheme == "http") {
-        // Exactly what the manifest filter and the app-site association claim: https on tuvora.co (not www, not http).
+        // Exactly what the manifest filters and the app-site association claim: https on tuvora.co (not www,
+        // not http), /s/ and /party/ only. Upstream's nuvio.tv party links are not ours to open.
         val host = parsedUrl.host.lowercase()
         val segments = parsedUrl.pathSegments.map(String::trim).filter(String::isNotBlank)
-        return if (scheme == "https" && host == "tuvora.co" && segments.firstOrNull() == "s") {
-            segments.getOrNull(1)?.let(AppDeepLink::SetupCode)
-        } else if (scheme == "https" && host == "nuvio.tv" && segments.firstOrNull() == "party") {
-            partyDeepLink(segments.getOrNull(1))
-        } else {
-            null
+        if (scheme != "https" || host != "tuvora.co") return null
+        return when (segments.firstOrNull()) {
+            "s" -> segments.getOrNull(1)?.let(AppDeepLink::SetupCode)
+            "party" -> partyDeepLink(segments.getOrNull(1))
+            else -> null
         }
     }
     if (scheme == "stremio") {
@@ -98,9 +98,14 @@ internal fun parseAppDeepLink(url: String): AppDeepLink? {
         }
     }
     if (scheme == "tuvora") {
-        // Desktop: tuvora://s/<code>, the scheme the installers register for a provider's setup link.
+        // Desktop registers only this scheme with the OS (never nuvio://): tuvora://s/<code> for a provider's setup
+        // link, tuvora://party/<code> for a watch-party invite (the tuvora.co invite page's "Open in app" on desktop).
         val segments = parsedUrl.pathSegments.map(String::trim).filter(String::isNotBlank)
-        return if (parsedUrl.host.lowercase() == "s") segments.firstOrNull()?.let(AppDeepLink::SetupCode) else null
+        return when (parsedUrl.host.lowercase()) {
+            "s" -> segments.firstOrNull()?.let(AppDeepLink::SetupCode)
+            "party" -> partyDeepLink(segments.firstOrNull() ?: firstParameter(parsedUrl, "code"))
+            else -> null
+        }
     }
     if (scheme != "nuvio") return null
 
