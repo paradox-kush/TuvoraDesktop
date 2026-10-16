@@ -255,6 +255,9 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             )
         else -> ""
     }
+    // Desktop renders these in the native controls layer (the Compose pill and panel sit under the native video).
+    val controlsPartyAvailable by PartyRepository.available.collectAsStateWithLifecycle()
+    val controlsPartyState by PartyRepository.state.collectAsStateWithLifecycle()
     val playerControlsState = PlayerControlsState(
         title = title,
         episodeText = episodeText,
@@ -376,6 +379,13 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         themeBorderDefaultColor = themeColors.borderDefault.toCssColorString(),
         isPlaying = playbackSnapshot.isPlaying,
         isLoading = playbackSnapshot.isLoading,
+        partyLabel = if (NativePartyControlsPolicy.partyEntryVisible(controlsPartyAvailable, playerControlsLocked)) {
+            stringResource(Res.string.party_title)
+        } else {
+            ""
+        },
+        partyActive = controlsPartyState.party != null,
+        partyStatus = partyStatusText,
         isLocked = playerControlsLocked,
         lockedOverlayVisible = lockedOverlayVisible,
         controlsVisible = controlsVisible && !playerControlsLocked,
@@ -929,6 +939,21 @@ private fun PlayerScreenRuntime.requestBack() {
 
 private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControlsAction): Boolean {
     playerControlsLog.d { "action=$action ${playerControlLogContext()}" }
+    if (NativePartyControlsPolicy.routeAction(action, isPartySynced) == NativePartyControlsPolicy.Route.Party) {
+        // In a watch party the runtime runs play/pause/seek (publish, host-only), not the native fallback.
+        when (action) {
+            PlayerControlsAction.TogglePlayback,
+            PlayerControlsAction.KeyboardTogglePlayback -> togglePlayback()
+            PlayerControlsAction.SeekBack,
+            PlayerControlsAction.KeyboardSeekBack -> seekBy(-10_000L)
+            PlayerControlsAction.SeekForward,
+            PlayerControlsAction.KeyboardSeekForward -> seekBy(10_000L)
+            PlayerControlsAction.DoubleTapSeekBack -> handleDoubleTapSeek(PlayerSeekDirection.Backward)
+            PlayerControlsAction.DoubleTapSeekForward -> handleDoubleTapSeek(PlayerSeekDirection.Forward)
+            else -> return false
+        }
+        return true
+    }
     when (action) {
         PlayerControlsAction.ToggleChrome -> {
             if (playerControlsLocked) {
@@ -938,7 +963,13 @@ private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControl
             }
         }
         PlayerControlsAction.RevealLockedOverlay -> revealLockedOverlay()
-        PlayerControlsAction.Back -> requestBack()
+        PlayerControlsAction.Back -> {
+            if (NativePartyControlsPolicy.backClosesPartyPanel(showPartyPanel)) showPartyPanel = false else requestBack()
+        }
+        PlayerControlsAction.Party -> {
+            showPartyPanel = true
+            controlsVisible = false
+        }
         // The regular player keeps the desktop control's existing whole-window fullscreen
         // fallback. Surfaces with their own layout fullscreen (Live TV) may consume this action.
         PlayerControlsAction.ToggleFullscreen -> return false
@@ -1034,7 +1065,13 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
         }
         "setPlaybackState",
         "setPlaybackStateQuiet" -> {
-            shouldPlay = value >= 0.5
+            val play = value >= 0.5
+            if (NativePartyControlsPolicy.routePlaybackRequest(isPartySynced) == NativePartyControlsPolicy.Route.Party) {
+                // togglePlayback publishes to the party and keeps host-only members to their own pause.
+                if (play != shouldPlay) togglePlayback()
+                return true
+            }
+            shouldPlay = play
             if (type == "setPlaybackState") {
                 controlsVisible = true
             }
@@ -1101,9 +1138,11 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
             val interval = activeSkipInterval ?: return true
             val durationMs = playbackSnapshot.durationMs
             val action = interval.internalSkipAction(skipIntervals, durationMs) ?: return true
-            val seekMs = if (durationMs > 0L) action.targetMs.coerceAtMost(durationMs - 1) else action.targetMs
+            val requestedMs = if (durationMs > 0L) action.targetMs.coerceAtMost(durationMs - 1) else action.targetMs
+            val seekMs = (if (isPartyControlLocked) ownSeekTarget(requestedMs) else requestedMs) ?: return true
             playerController?.seekTo(seekMs)
             scheduleProgressSyncAfterSeek()
+            publishPartyPlayback(positionMs = seekMs)
             skipIntervalDismissed = true
         }
         "playNextEpisode" -> {
@@ -1411,9 +1450,17 @@ private fun PlayerScreenRuntime.handlePlayerControlsScrubChange(positionMs: Long
 
 private fun PlayerScreenRuntime.handlePlayerControlsScrubFinished(positionMs: Long) {
     playerControlsLog.d { "scrubFinished positionMs=$positionMs controller=${playerController != null} ${playerControlLogContext()}" }
-    finishTimelineScrub(positionMs)
-    playerController?.seekTo(positionMs)
+    // Same rules as the Compose timeline: a host-only guest seeks only for themselves, and every seek reaches the party.
+    val targetMs = if (isPartyControlLocked) ownSeekTarget(positionMs) else positionMs
+    if (targetMs == null) {
+        isScrubbingTimeline = false
+        scrubbingPositionMs = null
+        return
+    }
+    finishTimelineScrub(targetMs)
+    playerController?.seekTo(targetMs)
     scheduleProgressSyncAfterSeek()
+    publishPartyPlayback(positionMs = targetMs)
 }
 
 private fun PlayerScreenRuntime.playerControlLogContext(): String =

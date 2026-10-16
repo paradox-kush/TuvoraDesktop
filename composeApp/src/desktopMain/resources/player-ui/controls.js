@@ -27,6 +27,8 @@ const nextEpisodeButton = document.getElementById("nextEpisodeButton");
 const nextEpisodeButtonLabel = document.getElementById("nextEpisodeButtonLabel");
 const fullscreenButton = document.getElementById("fullscreenButton");
 const pipButton = document.getElementById("pipButton");
+const partyButton = document.getElementById("partyButton");
+const partyStatus = document.getElementById("partyStatus");
 const fullscreenIcon = document.getElementById("fullscreenIcon");
 const title = document.getElementById("title");
 const episode = document.getElementById("episode");
@@ -2568,6 +2570,21 @@ const renderChrome = () => {
   setActionButtonLabel("audio", state.audioLabel || "Audio");
   setActionButtonLabel("sources", state.sourcesLabel || "Sources");
   setActionButtonLabel("episodes", state.episodesLabel || "Episodes");
+  if (partyButton) {
+    // Watch party: the Compose pill and panel sit under the native video on desktop, so the entry and the
+    // pill's line live here. An empty label means the feature is unavailable.
+    const partyLabel = String(state.partyLabel || "").trim();
+    partyButton.setAttribute("aria-label", partyLabel);
+    partyButton.setAttribute("title", partyLabel);
+    partyButton.setAttribute("aria-pressed", state.partyActive ? "true" : "false");
+    partyButton.classList.toggle("active", Boolean(state.partyActive));
+    partyButton.hidden = !partyLabel;
+  }
+  if (partyStatus) {
+    const partyLine = String(state.partyStatus || "").trim();
+    partyStatus.textContent = partyLine;
+    partyStatus.hidden = !partyLine;
+  }
   if (pipButton) {
     const pipLabel = String(state.pipLabel || "").trim();
     pipButton.setAttribute("aria-label", pipLabel);

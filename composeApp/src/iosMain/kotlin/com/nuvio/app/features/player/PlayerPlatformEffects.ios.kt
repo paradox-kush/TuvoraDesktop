@@ -138,3 +138,14 @@ private class IOSPlayerGestureController : PlayerGestureController {
         UIScreen.mainScreen.brightness = originalBrightness
     }
 }
+
+@Composable
+internal actual fun PlayerSidePanelHost(
+    visible: Boolean,
+    width: androidx.compose.ui.unit.Dp,
+    onDismiss: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    // Compose draws over the video here: the panel stays inline in the player's Box.
+    content()
+}

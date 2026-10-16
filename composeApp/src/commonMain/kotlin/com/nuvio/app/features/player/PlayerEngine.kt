@@ -100,6 +100,8 @@ enum class PlayerControlsAction {
     SubmitIntro,
     LockToggle,
     VideoSettings,
+    /** Desktop native controls: open the Watch party panel. */
+    Party,
     DoubleTapSeekBack,
     DoubleTapSeekForward,
 }
@@ -228,6 +230,11 @@ data class PlayerControlsState(
     // desktop, where Compose draws underneath the native video and cannot overlay it.
     val streamInfoLines: List<StreamInfoLine> = emptyList(),
     val showStreamInfo: Boolean = false,
+    // Watch party on desktop: the native controls layer draws the entry point and the status line, because the
+    // Compose pill and panel cannot draw over the native video. An empty label hides the entry (feature unavailable).
+    val partyLabel: String = "",
+    val partyActive: Boolean = false,
+    val partyStatus: String = "",
     val showOpeningOverlay: Boolean = false,
     val openingArtwork: String? = null,
     val openingLogo: String? = null,

@@ -1393,6 +1393,7 @@ private fun String.toPlayerControlsAction(): PlayerControlsAction? =
         "external" -> PlayerControlsAction.OpenExternalPlayer
         "submitIntro" -> PlayerControlsAction.SubmitIntro
         "videoSettings" -> PlayerControlsAction.VideoSettings
+        "party" -> PlayerControlsAction.Party
         else -> null
     }
 
@@ -1633,6 +1634,12 @@ internal fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
                 ""
             },
         )
+        append(',')
+        appendJsonField("partyLabel", partyLabel)
+        append(',')
+        appendJsonField("partyActive", partyActive)
+        append(',')
+        appendJsonField("partyStatus", partyStatus)
         append(',')
         appendJsonField("lockLabel", lockLabel)
         append(',')

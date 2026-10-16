@@ -27,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -474,19 +475,24 @@ internal fun BoxScope.RenderParty(runtime: PlayerScreenRuntime) {
                 emptyList()
             }
             val noticeText = notice?.text()
+            val pillVisible = (controlsVisible || waitingNames.isNotEmpty() || !party.connected || noticeText != null || (partyBehind && !shouldPlay)) &&
+                !playerControlsLocked && !showPartyPanel
+            val pillMessage = when {
+                !party.connected -> stringResource(Res.string.party_reconnecting)
+                waitingNames.isNotEmpty() -> stringResource(Res.string.party_waiting_for, waitingNames.joinToString())
+                playback?.waiting == true -> stringResource(Res.string.party_waiting)
+                noticeText != null -> noticeText
+                partyBehind && !shouldPlay -> stringResource(Res.string.party_paused_for_you)
+                partyBehind -> partyBehindMs?.let { stringResource(Res.string.party_behind, formatPlaybackTime(it)) }
+                else -> null
+            }
+            // Desktop: the pill draws under the native video, so its line is mirrored into the native controls.
+            val nativeStatus = if (pillVisible) pillMessage.orEmpty() else ""
+            SideEffect { partyStatusText = nativeStatus }
             PartyStatusPill(
-                visible = (controlsVisible || waitingNames.isNotEmpty() || !party.connected || noticeText != null || (partyBehind && !shouldPlay)) &&
-                    !playerControlsLocked && !showPartyPanel,
+                visible = pillVisible,
                 members = party.members,
-                message = when {
-                    !party.connected -> stringResource(Res.string.party_reconnecting)
-                    waitingNames.isNotEmpty() -> stringResource(Res.string.party_waiting_for, waitingNames.joinToString())
-                    playback?.waiting == true -> stringResource(Res.string.party_waiting)
-                    noticeText != null -> noticeText
-                    partyBehind && !shouldPlay -> stringResource(Res.string.party_paused_for_you)
-                    partyBehind -> partyBehindMs?.let { stringResource(Res.string.party_behind, formatPlaybackTime(it)) }
-                    else -> null
-                },
+                message = pillMessage,
                 onClick = { showPartyPanel = true },
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -494,6 +500,9 @@ internal fun BoxScope.RenderParty(runtime: PlayerScreenRuntime) {
                     .padding(top = metrics.verticalPadding / 4 + 8.dp),
             )
         }
+        if (party == null) SideEffect { partyStatusText = "" }
+        // Desktop hosts the panel in its own window over the player (the native video covers Compose); elsewhere inline.
+        PlayerSidePanelHost(visible = showPartyPanel, width = 420.dp, onDismiss = { showPartyPanel = false }) {
         PartyPanel(
             visible = showPartyPanel,
             state = partyState,
@@ -530,6 +539,7 @@ internal fun BoxScope.RenderParty(runtime: PlayerScreenRuntime) {
             },
             onDismiss = { showPartyPanel = false },
         )
+        }
     }
 }
 

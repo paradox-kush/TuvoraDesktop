@@ -283,6 +283,8 @@ internal class PlayerScreenRuntime(
     var showVideoSettingsModal by mutableStateOf(false)
     var showStreamInfo by mutableStateOf(false)
     var showPartyPanel by mutableStateOf(false)
+    /** The party pill's current line, mirrored into the desktop native controls (empty = nothing to say). */
+    var partyStatusText by mutableStateOf("")
     var partyBehind by mutableStateOf(false)
     var partyBehindMs by mutableStateOf<Long?>(null)
     var partyRateNudge: Float? = null
