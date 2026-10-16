@@ -53,6 +53,9 @@ import com.nuvio.app.features.party.PartyEvent
 import com.nuvio.app.features.party.PartyMedia
 import com.nuvio.app.features.party.PartyMemberStatus
 import com.nuvio.app.features.party.PartyNotice
+import com.nuvio.app.features.party.PartyServerResolution
+import com.nuvio.app.features.party.PartyServerTitles
+import com.nuvio.app.isDesktop
 import com.nuvio.app.features.party.PartyPanel
 import com.nuvio.app.features.party.PartyPlayback
 import com.nuvio.app.features.party.PartyRepository
@@ -76,6 +79,7 @@ import nuvio.composeapp.generated.resources.party_caught_up
 import nuvio.composeapp.generated.resources.party_host_only_note
 import nuvio.composeapp.generated.resources.party_paused_for_you
 import nuvio.composeapp.generated.resources.party_reconnecting
+import nuvio.composeapp.generated.resources.party_server_not_connected
 import nuvio.composeapp.generated.resources.party_waiting
 import nuvio.composeapp.generated.resources.party_waiting_for
 import org.jetbrains.compose.resources.getString
@@ -503,6 +507,7 @@ internal fun BoxScope.RenderParty(runtime: PlayerScreenRuntime) {
         if (party == null) SideEffect { partyStatusText = "" }
         // Desktop hosts the panel in its own window over the player (the native video covers Compose); elsewhere inline.
         PlayerSidePanelHost(visible = showPartyPanel, width = 420.dp, onDismiss = { showPartyPanel = false }) {
+        val serverNotConnectedText = stringResource(Res.string.party_server_not_connected)
         PartyPanel(
             visible = showPartyPanel,
             state = partyState,
@@ -515,6 +520,12 @@ internal fun BoxScope.RenderParty(runtime: PlayerScreenRuntime) {
             },
             onWatchWithParty = {
                 party?.media?.let { media ->
+                    val notConnected = PartyServerTitles.localize(media) == PartyServerResolution.NotConnected
+                    if (NativePartyControlsPolicy.notConnectedNoticeInPlayer(isDesktop, notConnected)) {
+                        playerNotificationMessage = serverNotConnectedText
+                        playerNotificationToken += 1L
+                        return@let
+                    }
                     showPartyPanel = false
                     flushWatchProgress()
                     args.onOpenPartyMedia(media)

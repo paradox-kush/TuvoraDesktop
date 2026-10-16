@@ -76,3 +76,16 @@ class NativePartyPlaybackRejectionTest {
         assertFalse(NativePartyControlsPolicy.playbackRequestRefused(requestedPlay = false, resultingShouldPlay = false))
     }
 }
+
+class NativePartyServerTitleNoticeTest {
+    @Test
+    fun `desktop says not connected inside the player instead of a toast under the native video`() {
+        assertTrue(NativePartyControlsPolicy.notConnectedNoticeInPlayer(isDesktop = true, notConnected = true))
+    }
+
+    @Test
+    fun `phones keep the app toast and connected titles need no notice`() {
+        assertFalse(NativePartyControlsPolicy.notConnectedNoticeInPlayer(isDesktop = false, notConnected = true))
+        assertFalse(NativePartyControlsPolicy.notConnectedNoticeInPlayer(isDesktop = true, notConnected = false))
+    }
+}

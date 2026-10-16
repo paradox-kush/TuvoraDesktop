@@ -41,4 +41,11 @@ internal object NativePartyControlsPolicy {
      */
     fun playbackRequestRefused(requestedPlay: Boolean, resultingShouldPlay: Boolean): Boolean =
         requestedPlay != resultingShouldPlay
+
+    /**
+     * "Watch with the party" on a media-server title this device has no connection for. The shared path shows an app
+     * toast, which on desktop draws under the native video while the player is open; there the player says it
+     * through the native notification instead and stays put.
+     */
+    fun notConnectedNoticeInPlayer(isDesktop: Boolean, notConnected: Boolean): Boolean = isDesktop && notConnected
 }
