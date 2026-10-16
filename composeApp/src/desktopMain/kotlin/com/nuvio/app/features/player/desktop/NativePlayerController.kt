@@ -1641,6 +1641,8 @@ internal fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
         append(',')
         appendJsonField("partyStatus", partyStatus)
         append(',')
+        appendJsonField("playbackResyncToken", playbackResyncToken)
+        append(',')
         appendJsonField("lockLabel", lockLabel)
         append(',')
         appendJsonField("unlockLabel", unlockLabel)

@@ -61,3 +61,18 @@ class NativePartyControlsPolicyTest {
         assertFalse(NativePartyControlsPolicy.partyEntryVisible(available = true, controlsLocked = true))
     }
 }
+
+class NativePartyPlaybackRejectionTest {
+    @Test
+    fun `a refused play or pause resyncs the native button`() {
+        // A host-only guest pressing play while the party is paused: the runtime keeps shouldPlay false.
+        assertTrue(NativePartyControlsPolicy.playbackRequestRefused(requestedPlay = true, resultingShouldPlay = false))
+        assertTrue(NativePartyControlsPolicy.playbackRequestRefused(requestedPlay = false, resultingShouldPlay = true))
+    }
+
+    @Test
+    fun `an honoured request needs no resync`() {
+        assertFalse(NativePartyControlsPolicy.playbackRequestRefused(requestedPlay = true, resultingShouldPlay = true))
+        assertFalse(NativePartyControlsPolicy.playbackRequestRefused(requestedPlay = false, resultingShouldPlay = false))
+    }
+}

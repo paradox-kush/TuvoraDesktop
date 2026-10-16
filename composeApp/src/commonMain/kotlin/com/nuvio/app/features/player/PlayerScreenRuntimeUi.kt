@@ -386,6 +386,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         },
         partyActive = controlsPartyState.party != null,
         partyStatus = partyStatusText,
+        playbackResyncToken = playerControlsPlaybackResyncToken,
         isLocked = playerControlsLocked,
         lockedOverlayVisible = lockedOverlayVisible,
         controlsVisible = controlsVisible && !playerControlsLocked,
@@ -1069,6 +1070,9 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
             if (NativePartyControlsPolicy.routePlaybackRequest(isPartySynced) == NativePartyControlsPolicy.Route.Party) {
                 // togglePlayback publishes to the party and keeps host-only members to their own pause.
                 if (play != shouldPlay) togglePlayback()
+                if (NativePartyControlsPolicy.playbackRequestRefused(requestedPlay = play, resultingShouldPlay = shouldPlay)) {
+                    playerControlsPlaybackResyncToken += 1
+                }
                 return true
             }
             shouldPlay = play

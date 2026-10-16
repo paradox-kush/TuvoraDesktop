@@ -34,4 +34,11 @@ internal object NativePartyControlsPolicy {
 
     /** Whether the native controls show the Watch party entry. */
     fun partyEntryVisible(available: Boolean, controlsLocked: Boolean): Boolean = available && !controlsLocked
+
+    /**
+     * The runtime did not do what the native play button asked (a host-only guest may not start the party): the
+     * button already flipped optimistically, so the controls must be told to show the engine's real state now.
+     */
+    fun playbackRequestRefused(requestedPlay: Boolean, resultingShouldPlay: Boolean): Boolean =
+        requestedPlay != resultingShouldPlay
 }

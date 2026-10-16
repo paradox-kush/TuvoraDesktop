@@ -285,6 +285,8 @@ internal class PlayerScreenRuntime(
     var showPartyPanel by mutableStateOf(false)
     /** The party pill's current line, mirrored into the desktop native controls (empty = nothing to say). */
     var partyStatusText by mutableStateOf("")
+    /** Bumped when a native play/pause request is refused; see NativePartyControlsPolicy.playbackRequestRefused. */
+    var playerControlsPlaybackResyncToken by mutableStateOf(0L)
     var partyBehind by mutableStateOf(false)
     var partyBehindMs by mutableStateOf<Long?>(null)
     var partyRateNudge: Float? = null

@@ -366,6 +366,7 @@ let state = {
   subtitleColorSwatches: [],
   subtitleOutlineColorSwatches: [],
   closeModalsToken: 0,
+  playbackResyncToken: 0,
   submitIntroContentKey: "",
   notificationMessage: "",
   notificationToken: 0,
@@ -3360,6 +3361,7 @@ window.playerUpdate = update => {
 
 window.playerControls = nextState => {
   const previousCloseToken = Number(state.closeModalsToken) || 0;
+  const previousPlaybackResyncToken = Number(state.playbackResyncToken) || 0;
   const previousSubmitIntroSuccessToken = Number(state.submitIntroSuccessToken) || 0;
   const previousNotificationToken = Number(state.notificationToken) || 0;
   const previousResizeLabel = state.resizeModeLabel || "";
@@ -3381,6 +3383,14 @@ window.playerControls = nextState => {
     preMuteVolumeLevel = state.volumeLevel;
   }
   hasReceivedPlayerControls = true;
+  // The runtime refused a play/pause request (host-only watch party): drop the optimistic button state now
+  // instead of showing the wrong one until the 1.5 s pending timer gives up.
+  if ((Number(state.playbackResyncToken) || 0) !== previousPlaybackResyncToken) {
+    pendingIsPlaying = null;
+    window.clearTimeout(pendingPlaybackTimer);
+    pendingPlaybackTimer = 0;
+    state = { ...state, isPlaying: lastNativeIsPlaying };
+  }
   const closeToken = Number(state.closeModalsToken) || 0;
   const submitIntroSuccessToken = Number(state.submitIntroSuccessToken) || 0;
   if (closeToken !== previousCloseToken) {

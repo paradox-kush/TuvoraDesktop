@@ -235,6 +235,8 @@ data class PlayerControlsState(
     val partyLabel: String = "",
     val partyActive: Boolean = false,
     val partyStatus: String = "",
+    /** Bumped when the runtime refuses a native play/pause request: the controls drop their optimistic state. */
+    val playbackResyncToken: Long = 0L,
     val showOpeningOverlay: Boolean = false,
     val openingArtwork: String? = null,
     val openingLogo: String? = null,
