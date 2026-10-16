@@ -11,7 +11,6 @@ import com.nuvio.app.features.library.sync.libraryDeltaPageSize
 import com.nuvio.app.features.library.sync.librarySnapshotPageSize
 import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.core.poster.CustomPosterUrlRepository
-import com.nuvio.app.core.poster.withCustomPosterUrls
 import com.nuvio.app.features.servers.ServerItemRef
 import com.nuvio.app.features.tracking.TrackingLibraryProvider
 import com.nuvio.app.features.tracking.TrackingLibraryTab
@@ -697,15 +696,12 @@ object LibraryRepository {
         val localItems = localSnapshot.items.sortedByDescending { it.savedAtEpochMs }
         _localItems.value = localItems
         val sourceMode = effectiveLibrarySourceMode()
-        val posterPattern = CustomPosterUrlRepository.patternForScreen(com.nuvio.app.core.poster.CustomPosterScreen.LIBRARY)
         activeLibraryProvider(sourceMode)?.let { provider ->
             val providerSnapshot = provider.snapshot()
             val newUiState = LibraryUiState(
                 sourceMode = sourceMode,
-                items = providerSnapshot.items.withCustomPosterUrls(posterPattern),
-                sections = providerSnapshot.sections.map { section ->
-                    section.copy(items = section.items.withCustomPosterUrls(posterPattern))
-                },
+                items = providerSnapshot.items,
+                sections = providerSnapshot.sections,
                 isLoaded = providerSnapshot.hasLoaded,
                 isLoading = providerSnapshot.isLoading,
                 errorMessage = providerSnapshot.errorMessage,
@@ -730,10 +726,8 @@ object LibraryRepository {
 
         val newUiState = LibraryUiState(
             sourceMode = LibrarySourceMode.LOCAL,
-            items = items.withCustomPosterUrls(posterPattern),
-            sections = sections.map { section ->
-                section.copy(items = section.items.withCustomPosterUrls(posterPattern))
-            },
+            items = items,
+            sections = sections,
             isLoaded = localSnapshot.hasLoaded,
             isLoading = localSnapshot.isLoading,
             errorMessage = null,
