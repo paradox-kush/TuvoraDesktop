@@ -58,6 +58,7 @@ internal typealias NativePlayerCreate = (
 
 internal val defaultNativePlayerCreate: NativePlayerCreate = { target, source, headers, playWhenReady, positionMs,
                                                  controlsPageUrl, decoderPriority, rtxVsr, sink ->
+    NativePlayerBridge.ensureLoaded()
     NativePlayerBridge.create(
         hostViewPtr = target.viewPtr,
         hostX = target.x,
@@ -625,6 +626,7 @@ internal class NativePlayerController(
                 }
             }
             "toggleFullscreen" -> {
+                if (onEvent(type, value)) return
                 // Fork: a screen that owns fullscreen (Live TV's docked/fullscreen modes) handles it
                 // first; otherwise upstream's picture-in-picture toggle, else app fullscreen.
                 val handled = onAction(PlayerControlsAction.ToggleFullscreen)
@@ -1427,6 +1429,10 @@ internal fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
         append(',')
         appendJsonField("playbackSpeedLabel", playbackSpeedLabel)
         append(',')
+        appendJsonField("holdToSpeedEnabled", holdToSpeedEnabled)
+        append(',')
+        appendJsonField("holdToSpeedValue", holdToSpeedValue)
+        append(',')
         appendJsonField("isFullscreen", isFullscreen)
         append(',')
         appendJsonField("isLive", isLive)
@@ -1696,6 +1702,8 @@ internal fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
         append(',')
         appendJsonField("positionMs", positionMs)
         append(',')
+        appendJsonField("bufferedPositionMs", bufferedPositionMs)
+        append(',')
         appendJsonField("sourceIsLoading", sourceIsLoading)
         append(',')
         appendJsonArrayField("sourceFilters", sourceFilters) { appendFilterItemJson(it) }
@@ -1786,6 +1794,7 @@ private fun PlayerControlsState.nativeControlsStructureKey(): PlayerControlsStat
         isLoading = false,
         durationMs = 0L,
         positionMs = 0L,
+        bufferedPositionMs = 0L,
     )
 
 private fun StringBuilder.appendJsonField(name: String, value: String) {
@@ -1805,6 +1814,8 @@ private fun StringBuilder.appendJsonField(name: String, value: Float?) {
     append('"').append(name).append("\":")
     if (value == null || value.isNaN() || value.isInfinite()) {
         append("null")
+    } else if (name == "holdToSpeedValue") {
+        append(value.coerceIn(1f, 4f))
     } else {
         append(value.coerceIn(0f, 1f))
     }
