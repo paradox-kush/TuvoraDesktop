@@ -140,10 +140,9 @@ internal object LegacyMediaServerMapper {
         remoteUserId = entry.userId,
         userName = entry.userName.orEmpty(),
         credentialRef = credentialRef,
-        // (Desktop has no MIXED kind: MOVIE is a placeholder, the first refresh replaces every library with the server's real kinds.)
         // The fork kept no library selection, only the libraries the user had put on Home as rows of their own. They stay selected;
         // the first refresh lists the server's real libraries (new ones selected by default, upstream's rule).
-        libraries = entry.homeLibraries.map { (libraryId, name) -> ServerLibrary(id = libraryId, name = name, kind = ServerMediaKind.MOVIE, selected = true) },
+        libraries = entry.homeLibraries.map { (libraryId, name) -> ServerLibrary(id = libraryId, name = name, kind = ServerMediaKind.MIXED, selected = true) },
         enabled = entry.enabled,
         useCatalogMetadata = false,
         importWatchState = entry.homeRows.any { it in watchRows },

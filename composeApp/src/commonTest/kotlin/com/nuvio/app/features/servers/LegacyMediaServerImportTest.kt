@@ -109,6 +109,9 @@ class LegacyMediaServerImportTest {
         assertTrue(connection.importWatchState, "Continue watching on Home maps to importing watch progress")
         assertEquals(listOf("lib-movies"), connection.libraries.map { it.id })
         assertTrue(connection.libraries.single().selected)
+        // The fork stored no library kind: a placeholder must hold movies AND shows, or an imported TV library lists as Movies.
+        assertEquals(ServerMediaKind.MIXED, connection.libraries.single().kind)
+        assertTrue(connection.libraries.single().holds(ServerMediaKind.SERIES))
     }
 
     @Test

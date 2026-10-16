@@ -297,6 +297,11 @@ object ServerRepository {
                 .associate { it.id to ServerFailure.AUTH_REQUIRED },
             revision = _uiState.value.revision + 1,
         )
+        // A server that holds no library list yet (imported from the released fork stack, or arrived from another device) lists its
+        // libraries once in the background, so it is not an empty "No libraries selected" until the user finds Refresh.
+        connections
+            .filter { ServerLibraryBootstrapPolicy.needsRefresh(it, hasToken = !ServerTokenPolicy.needsSignIn(token(it.credentialRef))) }
+            .forEach { connection -> scope.launch { runCatching { refreshLibraries(connection.id) } } }
     }
 
     /** A server that arrived from another device has no token here: show it as "Sign in again" up front. */
