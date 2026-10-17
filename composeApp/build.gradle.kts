@@ -998,6 +998,9 @@ val buildWindowsPlayerBridge = tasks.register<Exec>("buildWindowsPlayerBridge") 
 val prepareWindowsPlayerRuntime = tasks.register<Sync>("prepareWindowsPlayerRuntime") {
     enabled = isWindowsHost
     into(windowsPlayerRuntimeOutput)
+    // The OpenSSL-based Windows libmpv cannot use its build machine's default CA path.
+    // Keep the bundle in the runtime index so packaged and extracted players both receive it.
+    from(layout.projectDirectory.file("src/desktopMain/native/windows/cacert.pem"))
     if (windowsWebView2LoaderDll.exists()) {
         from(windowsWebView2LoaderDll)
     }
