@@ -243,7 +243,7 @@ jobs:
             '@echo off',
             ('call "{0}" >nul' -f $vcvars),
             'if errorlevel 1 exit /b %errorlevel%',
-            ('cl /nologo /EHsc /std:c++17 /DUNICODE /D_UNICODE /DNOMINMAX /DWIN32_LEAN_AND_MEAN /permissive- "{0}" /I"{1}\include" /I"{1}\include\win32" /I"{2}\build\native\include" /Fo"{3}" /Fe"{4}" /link "{2}\build\native\x64\WebView2Loader.dll.lib" Ole32.lib User32.lib Gdi32.lib Dwmapi.lib Shell32.lib' -f $source, $env:JAVA_HOME, $env:WEBVIEW2_ROOT, $obj, $exe),
+            ('cl /nologo /EHsc /std:c++17 /DUNICODE /D_UNICODE /DNOMINMAX /DWIN32_LEAN_AND_MEAN /permissive- "{0}" /I"{1}\include" /I"{1}\include\win32" /I"{2}\build\native\include" /Fo"{3}" /Fe"{4}" /link "{2}\build\native\x64\WebView2Loader.dll.lib" Ole32.lib User32.lib Gdi32.lib Dwmapi.lib D3D11.lib Shell32.lib' -f $source, $env:JAVA_HOME, $env:WEBVIEW2_ROOT, $obj, $exe),
             'exit /b %ERRORLEVEL%'
           ) | Set-Content -LiteralPath $bat -Encoding ASCII
           & cmd.exe /d /c $bat
