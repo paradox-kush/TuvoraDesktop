@@ -15,6 +15,10 @@ on:
         description: Compile the native player bridges only (Linux .so on ubuntu, Windows .dll on windows-2022) - the fast check after touching native/*/player_bridge.*
         type: boolean
         default: false
+      windows_tls:
+        description: Compile Windows bridge and test packaged HTTPS trust with the shipped libmpv only
+        type: boolean
+        default: false
 
 concurrency:
   group: build-${{ github.ref }}
@@ -23,6 +27,7 @@ concurrency:
 jobs:
   desktop:
     name: Compile + test (desktop JVM)
+    if: ${{ !inputs.windows_tls }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -165,7 +170,7 @@ jobs:
 
   windows-bridge:
     name: Native player bridge (Windows)
-    if: inputs.native_bridges
+    if: inputs.native_bridges || inputs.windows_tls
     runs-on: windows-2022
     env:
       WEBVIEW2_VERSION: 1.0.4078.44
@@ -215,3 +220,33 @@ jobs:
           $text = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($dll.FullName))
           if ($text -notmatch "Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setTlsVerifyForNextCreate") { throw "setTlsVerifyForNextCreate is not exported by the Windows bridge" }
           Write-Host "setTlsVerifyForNextCreate is exported"
+
+      - name: Fetch shipped libmpv for TLS regression
+        if: inputs.windows_tls
+        shell: bash
+        run: git lfs pull --include="composeApp/src/desktopMain/native/windows/runtime/**" --exclude=""
+
+      - name: Prepare and test Windows playback trust
+        if: inputs.windows_tls
+        shell: pwsh
+        run: |
+          & .\gradlew.bat :composeApp:prepareWindowsPlayerRuntime :composeApp:generateWindowsPlayerRuntimeIndex "-Pnuvio.webview2.dir=$env:WEBVIEW2_ROOT" --no-configuration-cache --no-daemon --stacktrace
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vcvars = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC\Auxiliary\Build\vcvars64.bat' | Select-Object -First 1
+          if (-not $vcvars) { throw "MSVC environment was not found" }
+          $source = Join-Path $PWD 'composeApp\src\desktopMain\native\windows\tests\tls_smoke.cpp'
+          $exe = Join-Path $env:RUNNER_TEMP 'tls_smoke.exe'
+          $obj = Join-Path $env:RUNNER_TEMP 'tls_smoke.obj'
+          $bat = Join-Path $env:RUNNER_TEMP 'compile-tls-smoke.bat'
+          @(
+            '@echo off',
+            ('call "{0}" >nul' -f $vcvars),
+            'if errorlevel 1 exit /b %errorlevel%',
+            ('cl /nologo /EHsc /std:c++17 /DUNICODE /D_UNICODE /DNOMINMAX /DWIN32_LEAN_AND_MEAN /permissive- "{0}" /I"{1}\include" /I"{1}\include\win32" /I"{2}\build\native\include" /Fo"{3}" /Fe"{4}" /link "{2}\build\native\x64\WebView2Loader.dll.lib" Ole32.lib User32.lib Gdi32.lib Dwmapi.lib D3D11.lib Shell32.lib' -f $source, $env:JAVA_HOME, $env:WEBVIEW2_ROOT, $obj, $exe),
+            'exit /b %ERRORLEVEL%'
+          ) | Set-Content -LiteralPath $bat -Encoding ASCII
+          & cmd.exe /d /c $bat
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/windows/test-player-tls.py --exe "$exe" --runtime composeApp/build/native/windows-runtime
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

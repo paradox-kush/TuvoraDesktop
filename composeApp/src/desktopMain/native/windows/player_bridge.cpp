@@ -641,6 +641,24 @@ MpvApi &mpvApi() {
     return api;
 }
 
+void configureMpvTls(MpvApi &api, mpv_handle *mpv, bool verify) {
+    const std::wstring caPath = moduleDirectory() + L"\\cacert.pem";
+    const DWORD attributes = GetFileAttributesW(caPath.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) {
+        throw std::runtime_error("Windows playback certificate bundle is missing. Please reinstall Tuvora.");
+    }
+    auto set = [&](const char *name, const char *value) {
+        const int result = api.setOptionString(mpv, name, value);
+        if (result < 0) {
+            throw std::runtime_error(std::string("Unable to configure playback ") + name + ": " + api.errorText(result));
+        }
+    };
+    // Resolve beside the loaded bridge, never the working directory or OpenSSL's build-time path.
+    // libmpv accepts UTF-8 paths, including an install/cache directory with non-ASCII characters.
+    set("tls-ca-file", toUtf8(caPath).c_str());
+    set("tls-verify", verify ? "yes" : "no");
+}
+
 class WindowsMpvWebPlayer;
 LRESULT CALLBACK messageWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK containerWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
@@ -1840,7 +1858,7 @@ private:
             // TLS: libmpv's own default is tls-verify=no (proved on the bundled libmpv: a self-signed https stream loads unverified).
             // Verify by default; the Kotlin side asks for "no" only for an IPTV panel source (PlaybackTlsPolicy) through
             // NativePlayerBridge.setTlsVerifyForNextCreate, consumed (reset to "verify") by the next create. Same as the macOS bridge.
-            setMpvOptionStringLocked("tls-verify", gNextCreateTlsVerify.exchange(true) ? "yes" : "no");
+            configureMpvTls(api, mpv, gNextCreateTlsVerify.exchange(true));
             // keep-open parks the core on the last frame at EOF, which is right for a file and
             // wrong for a live channel: an IPTV panel closing the socket mid-stream reads as a
             // clean EOF, so the picture freezes with nothing to time it out. Bound the blocking
