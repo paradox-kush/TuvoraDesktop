@@ -384,6 +384,29 @@ jobs:
             "dist/Tuvora-Linux-x86_64-${VERSION}.AppImage" \
             "dist/Tuvora-Linux-x86_64-${VERSION}.deb"
 
+      - name: Publish and verify website download pointers
+        env:
+          RELEASE_TOKEN: ${{ secrets.TUVORA_RELEASE_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          test -n "$RELEASE_TOKEN" || { echo "::error::TUVORA_RELEASE_TOKEN is required to publish download links"; exit 1; }
+          while IFS='|' read -r PLATFORM ASSET; do
+            URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ASSET}"
+            BODY=$(jq -n --arg p "$PLATFORM" --arg t "$TAG" --arg u "$URL" --arg n "$ASSET" '{platform:$p,tag:$t,asset_url:$u,asset_name:$n}')
+            curl -fsS --max-time 30 -X POST https://tuvora.co/api/releases \
+              -H "authorization: Bearer $RELEASE_TOKEN" -H 'content-type: application/json' -d "$BODY"
+            TARGET=$(curl -fsS --max-time 20 -o /dev/null -w '%{redirect_url}' "https://tuvora.co/${PLATFORM}")
+            test "$TARGET" = "$URL" || { echo "::error::${PLATFORM} points at the wrong release"; exit 1; }
+            echo "Verified ${PLATFORM}: ${TAG}"
+          done <<EOF
+          mac|Tuvora-macOS-arm64-${VERSION}.dmg
+          mac-intel|Tuvora-macOS-x86_64-${VERSION}.dmg
+          windows|Tuvora-Windows-x64-${VERSION}.msi
+          linux|Tuvora-Linux-x86_64-${VERSION}.AppImage
+          linux-deb|Tuvora-Linux-x86_64-${VERSION}.deb
+          EOF
+
       # Community announcements — no-ops until the DISCORD_/TELEGRAM_ secrets exist.
       # Never fails the release (all curl errors are swallowed).
       - name: Announce release (Discord + Telegram)
