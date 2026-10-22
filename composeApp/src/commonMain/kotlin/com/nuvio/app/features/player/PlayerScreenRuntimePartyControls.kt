@@ -97,6 +97,7 @@ internal fun PlayerScreenRuntime.rememberPartyControlsState(): PlayerControlPart
     }
     val chatMessages by PartyChat.messages.collectAsStateWithLifecycle()
     val unread by PartyChat.unread.collectAsStateWithLifecycle()
+    val chatAvailable by PartyChat.available.collectAsStateWithLifecycle()
     val chatVisible = partyChatVisible && party != null
     DisposableEffect(chatVisible) {
         PartyChat.setOpen(chatVisible)
@@ -122,7 +123,7 @@ internal fun PlayerScreenRuntime.rememberPartyControlsState(): PlayerControlPart
         message = partyMessage,
         messageToken = partyMessageToken,
         labels = partyControlLabels(),
-        chat = PlayerControlChatState(unread = unread),
+        chat = PlayerControlChatState(available = chatAvailable, unread = unread),
     )
     if (party == null) return base
 
@@ -153,6 +154,7 @@ internal fun PlayerScreenRuntime.rememberPartyControlsState(): PlayerControlPart
     }
     val chat = if (chatVisible) {
         PlayerControlChatState(
+            available = chatAvailable,
             unread = unread,
             ready = true,
             messages = partyChatRows(chatMessages).map { row ->
@@ -183,7 +185,7 @@ internal fun PlayerScreenRuntime.rememberPartyControlsState(): PlayerControlPart
             },
         )
     } else {
-        PlayerControlChatState(unread = unread)
+        PlayerControlChatState(available = chatAvailable, unread = unread)
     }
     val canSwitch = elsewhere && party.isHost
     return base.copy(

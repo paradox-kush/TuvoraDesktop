@@ -923,7 +923,7 @@ private fun PlayerScreenRuntime.requestBack() {
     }
 }
 
-private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControlsAction): Boolean {
+internal fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControlsAction): Boolean {
     playerControlsLog.d { "action=$action ${playerControlLogContext()}" }
     if (NativePartyControlsPolicy.routeAction(action, isPartySynced) == NativePartyControlsPolicy.Route.Party) {
         // In a watch party the runtime runs play/pause/seek (publish, host-only), not the native fallback.
@@ -1007,7 +1007,7 @@ private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControl
     return true
 }
 
-private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: Double): Boolean {
+internal fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: Double): Boolean {
     if (type.shouldLogPlayerControlsEvent()) {
         playerControlsLog.d { "event type=$type value=$value ${playerControlLogContext()}" }
     }

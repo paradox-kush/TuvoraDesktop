@@ -190,6 +190,12 @@ object PartyRepository {
         }
     }
 
+    /** Test seam: put the repository in a joined party without a backend. */
+    internal fun seedForTesting(party: ActiveParty?, playback: PartyPlayback?) {
+        _state.value = PartyUiState(party = party)
+        _playback.value = playback
+    }
+
     fun publishPlayback(paused: Boolean, positionMs: Long, rate: Float) {
         val at = clock.nowMs()
         scope.launch { publish(paused = paused, positionMs = positionMs, rate = rate, waiting = false, at = at) }

@@ -50,6 +50,8 @@ data class PlayerControlPartyMember(
 
 @Serializable
 data class PlayerControlChatState(
+    /** False until the backend has answered a chat RPC (PartyChatAvailabilityPolicy): the controls then show no chat UI. */
+    val available: Boolean = false,
     val unread: Int = 0,
     val ready: Boolean = false,
     val messages: List<PlayerControlChatMessage> = emptyList(),

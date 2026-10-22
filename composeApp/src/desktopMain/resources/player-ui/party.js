@@ -71,6 +71,9 @@ const currentPartyChat = () => {
   return chat && typeof chat === "object" ? chat : {};
 };
 
+// Chat shows only once the backend has answered a chat RPC; a missing RPC leaves the rest of the party untouched.
+const partyChatAvailable = () => Boolean(currentPartyChat().available);
+
 const partyUnreadCount = () => (currentParty().active ? Math.max(0, Number(currentPartyChat().unread) || 0) : 0);
 
 const partyElement = (tag, className = "", text = null) => {
@@ -672,8 +675,9 @@ const renderPartyChat = visible => {
 
 const renderPartyTabs = () => {
   const active = Boolean(currentParty().active);
-  partyTabs.hidden = !active;
-  if (!active) {
+  const chatAvailable = partyChatAvailable();
+  partyTabs.hidden = !active || !chatAvailable;
+  if (!active || !chatAvailable) {
     partyTab = "party";
     updatePartyBadge(partyTabBadge, 0);
     return;

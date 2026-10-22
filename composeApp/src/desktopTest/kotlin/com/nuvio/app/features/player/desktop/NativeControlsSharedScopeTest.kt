@@ -2,7 +2,11 @@ package com.nuvio.app.features.player.desktop
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import com.nuvio.app.features.player.PlayerControlPartyState
+import com.nuvio.app.features.player.PlayerControlsState
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 /**
  * The native controls page loads loading-indicator.js, party.js and controls.js as classic scripts, so their top-level
@@ -40,5 +44,24 @@ class NativeControlsSharedScopeTest {
             assertEquals(false, name in html, "$name still in controls.html")
             assertEquals(false, name in js, "$name still in controls.js")
         }
+    }
+
+    @Test
+    fun `the party pill stays up when the controls auto-hide`() {
+        // Phone parity: "Waiting for...", "Reconnecting" and the behind line must survive the chrome fading out.
+        val css = resource("player-ui/controls.css") + resource("player-ui/party.css")
+        val hidingRules = Regex("""([^{}]*\.player\.chrome-hidden[^{}]*)\{""").findAll(css).map { it.groupValues[1] }.toList()
+        assertTrue(hidingRules.isNotEmpty(), "the chrome-hidden rules exist")
+        hidingRules.forEach { selectors -> assertFalse("party-pill" in selectors, selectors.trim()) }
+        val js = resource("player-ui/party.js")
+        assertTrue("(state.controlsVisible || party.pillPinned)" in js, "pill visibility follows pillPinned, not only the chrome")
+    }
+
+    @Test
+    fun `chat is hidden until the backend answers`() {
+        val js = resource("player-ui/party.js")
+        assertTrue("partyTabs.hidden = !active || !chatAvailable" in js, "the chat tab is gated on chat.available")
+        val json = PlayerControlsState(party = PlayerControlPartyState()).toControlsJson(isFullscreen = false)
+        assertTrue("\"chat\":{\"available\":false" in json, "controls JSON carries chat.available=false by default")
     }
 }
