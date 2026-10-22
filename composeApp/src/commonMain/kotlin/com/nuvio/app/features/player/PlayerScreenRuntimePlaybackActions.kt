@@ -511,9 +511,11 @@ internal fun PlayerScreenRuntime.startOverFromBeginning() {
     if (controller != null) controller.restartFromBeginning() else startOverGeneration += 1
 }
 
+internal val AndroidPlaybackEngine.switchTarget: AndroidPlaybackEngine
+    get() = if (this == AndroidPlaybackEngine.Libmpv) AndroidPlaybackEngine.ExoPlayer else AndroidPlaybackEngine.Libmpv
+
 internal fun PlayerScreenRuntime.switchPlaybackEngine() {
-    val engine = playerController?.playbackEngine ?: return
-    val target = if (engine == AndroidPlaybackEngine.Libmpv) AndroidPlaybackEngine.ExoPlayer else AndroidPlaybackEngine.Libmpv
+    val target = playerController?.playbackEngine?.switchTarget ?: return
     flushWatchProgress()
     if (initialSeekApplied) {
         activeInitialPositionMs = playbackSnapshot.positionMs.coerceAtLeast(0L)

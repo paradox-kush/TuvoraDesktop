@@ -1,6 +1,7 @@
 package com.nuvio.app.core.ui
 
 import android.os.Build
+import coil3.ComponentRegistry
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.gif.AnimatedImageDecoder
@@ -42,6 +43,8 @@ internal actual fun ImageLoader.Builder.configurePlatformImageLoader(context: Pl
         }
         .allowRgb565(true)
         .precision(Precision.INEXACT)
+
+internal actual fun ComponentRegistry.Builder.addPlatformDecoders() = Unit
 
 // The Application implements SingletonImageLoader.Factory (NuvioApplication) so the loader exists
 // before Coil's first request; the composable factory in App.kt is skipped on Android.

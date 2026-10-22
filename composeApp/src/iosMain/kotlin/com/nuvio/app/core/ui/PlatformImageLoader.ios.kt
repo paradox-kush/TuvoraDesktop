@@ -1,5 +1,6 @@
 package com.nuvio.app.core.ui
 
+import coil3.ComponentRegistry
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.memory.MemoryCache
@@ -17,5 +18,7 @@ internal actual fun ImageLoader.Builder.configurePlatformImageLoader(context: Pl
         memory.registerBudget("image_memory_cache", cap, priority = 0) { cache.clear() }
         cache
     }
+
+internal actual fun ComponentRegistry.Builder.addPlatformDecoders() = Unit
 
 internal actual val platformProvidesImageLoader: Boolean = false

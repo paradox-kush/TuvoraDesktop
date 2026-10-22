@@ -319,6 +319,7 @@ private fun NativePlayerSurface(
     LaunchedEffect(controller) {
         var openFailureReported = false
         while (true) {
+            if (controller.isReleasing) { delay(500L); continue }
             val snapshot = controller.liveAwareSnapshot(latestIsLiveStream.value)
             onSnapshot(snapshot)
             // A film whose open failed (refused certificate, 404, unreachable host) never leaves "loading" in the native

@@ -244,7 +244,7 @@ button:disabled {
   left: 50%;
   z-index: 42;
   min-width: 108px;
-  max-width: min(240px, calc(100% - 40px));
+  max-width: min(420px, calc(100% - 40px));
   min-height: 41px;
   padding: 11px 16px;
   border: 1px solid rgba(255, 255, 255, .12);
@@ -492,6 +492,36 @@ button:disabled {
 
 .provider {
   font-style: italic;
+}
+
+.player-badges {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: min(760px, 100%);
+  padding: 4px 0;
+  overflow: hidden;
+}
+
+.player-badge {
+  flex: none;
+  box-sizing: border-box;
+  height: 17px;
+  padding: 2px 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+
+.player-badge img {
+  display: block;
+  height: 13px;
+  min-width: 28px;
+  max-width: 78px;
+  object-fit: contain;
+  border-radius: 6px;
 }
 
 .parental-guide {

@@ -17,6 +17,7 @@ import coil3.svg.SvgDecoder
 import com.nuvio.app.core.poster.CustomPosterFallbackInterceptor
 import com.nuvio.app.core.ui.NativeProfileSwitcherController
 import com.nuvio.app.core.ui.NuvioTheme
+import com.nuvio.app.core.ui.addPlatformDecoders
 import com.nuvio.app.core.ui.configurePlatformImageLoader
 import com.nuvio.app.core.ui.desktopUiScaleForWindow
 import com.nuvio.app.core.ui.platformProvidesImageLoader
@@ -107,6 +108,7 @@ internal fun AppEnvironment(content: @Composable () -> Unit) {
  */
 internal fun coil3.ComponentRegistry.Builder.addSharedImageComponents() {
     add(CustomPosterFallbackInterceptor())
+    addPlatformDecoders() // before SvgDecoder: desktop's SvgEmbeddedImageDecoder must claim SVGs with embedded images first
     add(SvgDecoder.Factory())
     add(com.nuvio.app.features.servers.PinnedServerImageFetcherFactory())
 }

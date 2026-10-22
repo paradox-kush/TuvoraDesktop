@@ -1,5 +1,6 @@
 package com.nuvio.app.core.ui
 
+import coil3.ComponentRegistry
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.memory.MemoryCache
@@ -12,9 +13,9 @@ internal actual val platformProvidesImageLoader: Boolean = false
 internal actual fun ImageLoader.Builder.configurePlatformImageLoader(context: PlatformContext): ImageLoader.Builder =
     components {
         // This `components {}` REPLACES the registry App.kt built (Coil keeps only the last one set), so the shared
-        // components (poster fallback, SVG, pinned-server artwork) are added here again, before the GIF decoder.
+        // components (poster fallback, SVG, pinned-server artwork) are added here again, before the network fetcher. Platform decoders (GIF, SVG with embedded images) ride inside
+        // addSharedImageComponents() so they are registered ahead of the plain SvgDecoder.
         addSharedImageComponents()
-        add(SkiaGifDecoder.Factory())
     }
     // JVM Coil sizes its default cache as 15% of a hardcoded 512MiB "total memory" (~77MiB).
     // Size it from the memory tier instead (desktop is always HIGH → 96MiB) and register it
@@ -27,3 +28,8 @@ internal actual fun ImageLoader.Builder.configurePlatformImageLoader(context: Pl
         memory.registerBudget("image_memory_cache", cap, priority = 0) { cache.clear() }
         cache
     }
+
+internal actual fun ComponentRegistry.Builder.addPlatformDecoders() {
+    add(SkiaGifDecoder.Factory())
+    add(SvgEmbeddedImageDecoder.Factory())
+}

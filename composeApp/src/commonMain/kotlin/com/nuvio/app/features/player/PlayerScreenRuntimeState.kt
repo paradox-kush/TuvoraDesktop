@@ -165,6 +165,8 @@ internal class PlayerScreenRuntime(
     var activeProviderAddonId by mutableStateOf(providerAddonId)
     var activeStream by mutableStateOf(args.stream)
     var currentStreamBingeGroup by mutableStateOf(initialBingeGroup)
+    var currentStreamFilename by mutableStateOf(args.stream?.behaviorHints?.filename)
+    var currentStreamInfoHash by mutableStateOf(args.stream?.infoHash)
     var activeSeasonNumber by mutableStateOf(seasonNumber)
     var activeEpisodeNumber by mutableStateOf(episodeNumber)
     var activeEpisodeTitle by mutableStateOf(episodeTitle)
@@ -230,6 +232,7 @@ internal class PlayerScreenRuntime(
     var showSourcesPanel by mutableStateOf(false)
     var showEpisodesPanel by mutableStateOf(false)
     var showSubmitIntroModal by mutableStateOf(false)
+    var showSwitchEngineConfirm by mutableStateOf(false)
     var submitIntroSegmentType by mutableStateOf("intro")
     var submitIntroStartTimeStr by mutableStateOf("00:00")
     var submitIntroEndTimeStr by mutableStateOf("00:00")
@@ -287,6 +290,12 @@ internal class PlayerScreenRuntime(
     var partyStatusText by mutableStateOf("")
     /** Bumped when a native play/pause request is refused; see NativePartyControlsPolicy.playbackRequestRefused. */
     var playerControlsPlaybackResyncToken by mutableStateOf(0L)
+    var partyPanelToken by mutableStateOf(0L)
+    var partyMessage by mutableStateOf("")
+    var partyMessageToken by mutableStateOf(0L)
+    var copyPartyInvite: () -> Unit = {}
+    var showPartyChat by mutableStateOf(false)
+    var partyChatVisible by mutableStateOf(false)
     var partyBehind by mutableStateOf(false)
     var partyBehindMs by mutableStateOf<Long?>(null)
     var partyRateNudge: Float? = null

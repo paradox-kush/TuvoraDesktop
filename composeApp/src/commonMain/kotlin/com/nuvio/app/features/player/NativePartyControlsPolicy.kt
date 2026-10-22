@@ -49,3 +49,13 @@ internal object NativePartyControlsPolicy {
      */
     fun notConnectedNoticeInPlayer(isDesktop: Boolean, notConnected: Boolean): Boolean = isDesktop && notConnected
 }
+
+/**
+ * Upstream 8633ef741 renders the whole watch-party UI (panel, chat, pill) as HTML inside the native controls
+ * (player-ui/party.js). The fork ships its own panel as a window over the video (PlayerSidePanelHost) plus the
+ * native status line, so both cannot be live at once: this switch picks the fork's. Flip it to adopt upstream's
+ * in-controls UI (then retire the window and the fork's party button/status line).
+ */
+internal object DesktopPartyUi {
+    const val inControlsPanel: Boolean = false
+}

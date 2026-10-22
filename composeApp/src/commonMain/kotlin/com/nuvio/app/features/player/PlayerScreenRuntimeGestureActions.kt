@@ -6,6 +6,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import com.nuvio.app.features.player.skip.SkipInterval
+import com.nuvio.app.features.player.skip.internalSkipAction
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.*
@@ -155,9 +157,9 @@ internal fun PlayerScreenRuntime.showVolumeFeedback(level: PlayerAudioLevel) {
     )
 }
 
-internal fun PlayerScreenRuntime.togglePlayback() {
+internal fun PlayerScreenRuntime.togglePlayback(revealControls: Boolean = true) {
     if (isPartyControlLocked) {
-        toggleOwnPlayback()
+        toggleOwnPlayback(revealControls)
         return
     }
     if (playbackSnapshot.isPlaying) {
@@ -170,7 +172,9 @@ internal fun PlayerScreenRuntime.togglePlayback() {
         shouldPlay = true
         playerController?.play()
     }
-    controlsVisible = true
+    if (revealControls) {
+        controlsVisible = true
+    }
     publishPartyPlayback(positionMs = if (playbackSnapshot.isEnded) 0L else currentPlaybackPositionMs())
 }
 
@@ -181,7 +185,87 @@ internal fun PlayerScreenRuntime.prepareTogglePlaybackForNativeFallback(revealCo
     }
 }
 
-internal fun PlayerScreenRuntime.seekBy(offsetMs: Long) {
+internal fun PlayerScreenRuntime.toggleFromNativeControls(revealControls: Boolean = true): Boolean {
+    if (isPartySynced) {
+        togglePlayback(revealControls)
+        return true
+    }
+    prepareTogglePlaybackForNativeFallback(revealControls)
+    return false
+}
+
+internal fun PlayerScreenRuntime.applyNativePlaybackState(play: Boolean) {
+    if (!isPartyControlLocked) {
+        val restart = play && playbackSnapshot.isEnded
+        shouldPlay = play
+        publishPartyPlayback(positionMs = if (restart) 0L else currentPlaybackPositionMs())
+        return
+    }
+    when {
+        play == shouldPlay -> Unit
+        !play -> {
+            partyBehind = true
+            shouldPlay = false
+        }
+        partyBehind -> shouldPlay = true
+        else -> {
+            playerController?.pause()
+            partyBlocksControl()
+        }
+    }
+}
+
+internal fun PlayerScreenRuntime.seekFromNativeControls(offsetMs: Long, revealControls: Boolean = true): Boolean {
+    if (isPartySynced) {
+        seekBy(offsetMs, revealControls)
+        return true
+    }
+    prepareSeekByForNativeFallback(offsetMs, revealControls)
+    return false
+}
+
+internal fun PlayerScreenRuntime.finishTimelineSeek(positionMs: Long) {
+    val targetMs = if (isPartyControlLocked) ownSeekTarget(positionMs) else positionMs
+    if (targetMs == null) {
+        isScrubbingTimeline = false
+        scrubbingPositionMs = null
+        return
+    }
+    finishTimelineScrub(targetMs)
+    playerController?.seekTo(targetMs)
+    scheduleProgressSyncAfterSeek()
+    publishPartyPlayback(positionMs = targetMs)
+}
+
+internal fun PlayerScreenRuntime.skipInterval(interval: SkipInterval) {
+    val durationMs = playbackSnapshot.durationMs
+    val rawMs = interval.internalSkipAction(skipIntervals, durationMs)?.targetMs ?: return
+    val requestedMs = if (durationMs > 0L) rawMs.coerceAtMost(durationMs - 1) else rawMs
+    val seekMs = if (isPartyControlLocked) ownSeekTarget(requestedMs) ?: return else requestedMs
+    playerController?.seekTo(seekMs)
+    scheduleProgressSyncAfterSeek()
+    publishPartyPlayback(positionMs = seekMs)
+    skipIntervalDismissed = true
+}
+
+internal fun PlayerScreenRuntime.setPlaybackPlaying(playing: Boolean) {
+    if (playing == shouldPlay) return
+    if (isPartyControlLocked) {
+        toggleOwnPlayback()
+        return
+    }
+    val restart = playing && playbackSnapshot.isEnded
+    if (restart) playerController?.seekTo(0L)
+    shouldPlay = playing
+    if (playing) playerController?.play() else playerController?.pause()
+    val positionMs = pendingSeekTarget
+        ?.takeIf { (_, mark) -> mark.elapsedNow() < PendingSeekWindow }
+        ?.first
+        ?: currentPlaybackPositionMs()
+    publishPartyPlayback(positionMs = if (restart) 0L else positionMs)
+}
+
+internal fun PlayerScreenRuntime.seekBy(offsetMs: Long, revealControls: Boolean = true) {
     val fromMs = pendingSeekTarget
         ?.takeIf { (_, mark) -> mark.elapsedNow() < PendingSeekWindow }
         ?.first
@@ -192,7 +276,7 @@ internal fun PlayerScreenRuntime.seekBy(offsetMs: Long) {
     lastManualSkipSeekPositions = fromMs to targetMs
     pendingSeekTarget = targetMs to TimeSource.Monotonic.markNow()
     if (isPartySynced) playerController?.seekTo(targetMs) else playerController?.seekBy(offsetMs)
-    applySeekByControlFeedback(offsetMs, partyPositionMs = targetMs)
+    applySeekByControlFeedback(offsetMs, revealControls, partyPositionMs = targetMs)
 }
 
 internal fun PlayerScreenRuntime.prepareSeekByForNativeFallback(
@@ -290,11 +374,20 @@ internal fun PlayerScreenRuntime.cyclePlaybackSpeed() {
     val speeds = listOf(1f, 1.25f, 1.5f, 2f)
     val current = playbackSnapshot.playbackSpeed
     val next = speeds.firstOrNull { it > current + 0.01f } ?: speeds.first()
-    partyRateNudge = null
-    playerController?.setPlaybackSpeed(next)
-    publishPartyPlayback(rate = next)
+    applyPlaybackSpeed(next)
     showGestureMessage(formatPlaybackSpeedLabel(next))
     controlsVisible = true
+}
+
+internal fun PlayerScreenRuntime.selectPlaybackSpeed(speed: Float) {
+    if (partyBlocksControl()) return
+    applyPlaybackSpeed(speed)
+}
+
+private fun PlayerScreenRuntime.applyPlaybackSpeed(speed: Float) {
+    partyRateNudge = null
+    playerController?.setPlaybackSpeed(speed)
+    publishPartyPlayback(rate = speed)
 }
 
 internal fun PlayerScreenRuntime.activateHoldToSpeed() {

@@ -219,7 +219,7 @@ fun main(args: Array<String>) {
             if (smokePlayerUrl == null) {
                 installFeatures {
                     ProvideDesktopWindowInsets(isFullscreen = windowState.placement == WindowPlacement.Fullscreen) {
-                        App()
+                        MiddleClickAutoscroll { App() }
                     }
                 }
             } else {

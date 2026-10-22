@@ -27,7 +27,7 @@ const nextEpisodeButton = document.getElementById("nextEpisodeButton");
 const nextEpisodeButtonLabel = document.getElementById("nextEpisodeButtonLabel");
 const fullscreenButton = document.getElementById("fullscreenButton");
 const pipButton = document.getElementById("pipButton");
-const partyButton = document.getElementById("partyButton");
+const partyEntryButton = document.getElementById("partyEntryButton");
 const partyStatus = document.getElementById("partyStatus");
 const fullscreenIcon = document.getElementById("fullscreenIcon");
 const title = document.getElementById("title");
@@ -35,6 +35,7 @@ const episode = document.getElementById("episode");
 const playbackMetadata = document.querySelector(".metadata");
 const streamTitle = document.getElementById("streamTitle");
 const providerName = document.getElementById("providerName");
+const playerBadges = document.getElementById("playerBadges");
 const resizeLabel = document.getElementById("resizeLabel");
 const speedLabel = document.getElementById("speedLabel");
 const subtitlesLabel = document.getElementById("subtitlesLabel");
@@ -919,6 +920,7 @@ const applyTheme = () => {
   setColor("--theme-text-secondary", state.themeTextSecondaryColor, "rgba(255, 255, 255, .72)");
   setColor("--theme-text-muted", state.themeTextMutedColor, "rgba(255, 255, 255, .6)");
   setColor("--theme-border-default", state.themeBorderDefaultColor, "rgba(255, 255, 255, .12)");
+  setColor("--theme-danger", state.themeDangerColor, "#e36a8a");
 };
 
 const formatTime = milliseconds => {
@@ -958,6 +960,31 @@ const setProgress = (positionMs, durationMs, bufferedPositionMs) => {
 const setText = (element, text) => {
   element.textContent = text || "";
   element.hidden = !text;
+};
+
+let playerBadgesSignature = "";
+
+const renderPlayerBadges = () => {
+  const badges = Array.isArray(state.badges) ? state.badges : [];
+  const signature = JSON.stringify(badges);
+  if (signature === playerBadgesSignature) return;
+  playerBadgesSignature = signature;
+  playerBadges.textContent = "";
+  badges.forEach((badge) => {
+    const chip = document.createElement("span");
+    chip.className = "player-badge";
+    if (String(badge.tagStyle || "").toLowerCase() === "filled" && badge.tagColor) chip.style.background = badge.tagColor;
+    if (badge.borderColor) chip.style.borderColor = badge.borderColor;
+    const image = document.createElement("img");
+    image.alt = badge.name || "";
+    image.draggable = false;
+    image.addEventListener("error", () => chip.remove());
+    image.addEventListener("load", () => { playerBadges.hidden = !playerBadges.childElementCount; });
+    image.src = badge.imageUrl;
+    chip.appendChild(image);
+    playerBadges.appendChild(chip);
+  });
+  playerBadges.hidden = badges.length === 0;
 };
 
 const setVisible = (element, visible) => {
@@ -1089,6 +1116,7 @@ const modalByName = {
   episodes: episodesModal,
   submitIntro: submitIntroModal,
   p2pConsent: p2pConsentModal,
+  party: partyModal,
 };
 const modalElements = Object.values(modalByName);
 const modalCloseTimers = new Map();
@@ -1140,6 +1168,7 @@ const closePlayerModal = (notifyDismiss = false, animated = true) => {
     send("cancelP2pForPlayerControls", 0);
   }
   if (closingModal === "episodes") onEpisodesModalClosed();
+  if (closingModal === "party") onPartyModalClosed();
   renderChrome();
 };
 
@@ -1149,6 +1178,8 @@ const openPlayerModal = modal => {
     closePlayerModal(false);
     return;
   }
+  if (activeModal === "party" && modal !== "party") onPartyModalClosed();
+  if (modal === "party" && activeModal !== "party") onPartyModalOpened();
   activeModal = modal;
   if (modal === "submitIntro") {
     const contentKey = state.submitIntroContentKey || "";
@@ -2212,6 +2243,7 @@ const renderActiveModal = (modalOpened = false) => {
   if (activeModal === "episodes") renderEpisodesModal(modalOpened);
   if (activeModal === "submitIntro") renderSubmitIntroModal();
   if (activeModal === "p2pConsent") renderP2pConsentModal();
+  if (activeModal === "party") renderPartyModal();
 };
 
 window.nuvioNativeViewportChanged = () => {
@@ -2559,6 +2591,7 @@ const renderChrome = () => {
   setText(episode, state.episodeText);
   setText(streamTitle, state.streamTitle);
   setText(providerName, state.providerName);
+  renderPlayerBadges();
   resizeLabel.textContent = state.resizeModeLabel || "Fit";
   speedLabel.textContent = state.playbackSpeedLabel || "1x";
   subtitlesLabel.textContent = state.subtitlesLabel || "Subs";
@@ -2571,15 +2604,15 @@ const renderChrome = () => {
   setActionButtonLabel("audio", state.audioLabel || "Audio");
   setActionButtonLabel("sources", state.sourcesLabel || "Sources");
   setActionButtonLabel("episodes", state.episodesLabel || "Episodes");
-  if (partyButton) {
+  if (partyEntryButton) {
     // Watch party: the Compose pill and panel sit under the native video on desktop, so the entry and the
     // pill's line live here. An empty label means the feature is unavailable.
     const partyLabel = String(state.partyLabel || "").trim();
-    partyButton.setAttribute("aria-label", partyLabel);
-    partyButton.setAttribute("title", partyLabel);
-    partyButton.setAttribute("aria-pressed", state.partyActive ? "true" : "false");
-    partyButton.classList.toggle("active", Boolean(state.partyActive));
-    partyButton.hidden = !partyLabel;
+    partyEntryButton.setAttribute("aria-label", partyLabel);
+    partyEntryButton.setAttribute("title", partyLabel);
+    partyEntryButton.setAttribute("aria-pressed", state.partyActive ? "true" : "false");
+    partyEntryButton.classList.toggle("active", Boolean(state.partyActive));
+    partyEntryButton.hidden = !partyLabel;
   }
   if (partyStatus) {
     const partyLine = String(state.partyStatus || "").trim();
@@ -2634,6 +2667,7 @@ const renderChrome = () => {
   } else {
     renderNativePlaybackPrompts();
   }
+  renderPartyChrome();
   syncChromeAutoHideTimer(showOpening);
 };
 
@@ -2786,6 +2820,16 @@ const keepChromeVisibleFromKeyboard = () => {
 let fineSeekTimer = 0;
 let fineSeekAccumulatedMs = 0;
 let fineSeekDirection = null;
+let partySeekTimer = 0;
+const partySeekSettleMs = 300;
+
+const finishPartySeek = () => {
+  partySeekTimer = 0;
+  isScrubbing = false;
+  state.positionMs = scrubPositionMs;
+  send("scrubFinish", scrubPositionMs);
+  render();
+};
 
 const fineSeek = isForward => {
   const direction = isForward ? "forward" : "backward";
@@ -2798,7 +2842,8 @@ const fineSeek = isForward => {
     fineSeekAccumulatedMs = stepMs;
   }
 
-  const currentPosMs = Math.max(0, Number(state.positionMs) || 0);
+  const partySeek = Boolean(partySeekTimer || currentParty().synced);
+  const currentPosMs = Math.max(0, Number(partySeekTimer ? scrubPositionMs : state.positionMs) || 0);
   const durationMs = Math.max(0, Number(state.durationMs) || 0);
   const bufferedPositionMs = Math.max(0, Number(state.bufferedPositionMs) || 0);
   const targetPosMs = Math.max(0, durationMs > 0 ? Math.min(durationMs, currentPosMs + stepMs) : currentPosMs + stepMs);
@@ -2810,7 +2855,15 @@ const fineSeek = isForward => {
   const sign = deltaSec > 0 ? "+" : "";
   showPlayerToast(`${sign}${deltaSec}s`);
 
-  send("scrubFinish", targetPosMs);
+  if (partySeek) {
+    isScrubbing = true;
+    scrubPositionMs = targetPosMs;
+    send("scrubChange", targetPosMs);
+    window.clearTimeout(partySeekTimer);
+    partySeekTimer = window.setTimeout(finishPartySeek, partySeekSettleMs);
+  } else {
+    send("scrubFinish", targetPosMs);
+  }
 
   if (fineSeekTimer) {
     window.clearTimeout(fineSeekTimer);
@@ -3369,6 +3422,8 @@ window.playerControls = nextState => {
   const previousEpisodeStreamsVisible = Boolean(state.episodeStreamsVisible);
   const previousSelectedSubtitleLanguageKey = state.selectedSubtitleLanguageKey || "__off__";
   const previousSelectedSubtitleOptionId = state.selectedSubtitleOptionId || "";
+  const previousParty = state.party;
+  const replayingParty = !hasReceivedPlayerControls;
   const currentPlaybackState = pendingIsPlaying === null
     ? state.isPlaying
     : pendingIsPlaying;
@@ -3406,6 +3461,7 @@ window.playerControls = nextState => {
   if (notificationToken !== previousNotificationToken) {
     showPlayerToast(state.notificationMessage);
   }
+  if (!replayingParty) applyPartyControls(previousParty);
   if (state.showP2pConsent && activeModal !== "p2pConsent") {
     openPlayerModal("p2pConsent");
   } else if (!state.showP2pConsent && activeModal === "p2pConsent") {
@@ -3832,6 +3888,11 @@ document.addEventListener("keyup", event => {
 });
 
 document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && isPartyConfirmOpen()) {
+    event.preventDefault();
+    closePartyConfirm();
+    return;
+  }
   if (event.key === "Escape" && activeModal) {
     clearSpaceHoldTimerAndStopSpeedBoost();
     event.preventDefault();
@@ -3962,7 +4023,7 @@ document.addEventListener("keydown", event => {
   }
 
   if (activeModal && event.code.startsWith("Arrow") && document.activeElement && document.activeElement.tagName !== "BODY" && document.activeElement !== root) {
-    const modalEl = modalByName[activeModal];
+    const modalEl = isPartyConfirmOpen() ? partyConfirm : modalByName[activeModal];
     if (!modalEl) return;
     const focusable = Array.from(modalEl.querySelectorAll('button:not([disabled]):not([hidden]), input:not([disabled]):not([hidden]), [tabindex]:not([tabindex="-1"])'))
       .filter(el => el.offsetWidth > 0 || el.offsetHeight > 0);

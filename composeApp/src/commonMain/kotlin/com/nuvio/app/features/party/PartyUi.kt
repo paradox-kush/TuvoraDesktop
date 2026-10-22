@@ -50,6 +50,9 @@ import com.nuvio.app.features.profiles.parseHexColor
 import com.nuvio.app.features.profiles.profileAvatarImageUrl
 import kotlinx.coroutines.delay
 import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.party_control_everyone
+import nuvio.composeapp.generated.resources.party_control_host_only
+import nuvio.composeapp.generated.resources.party_ended
 import nuvio.composeapp.generated.resources.party_episode_format
 import nuvio.composeapp.generated.resources.party_error_ended
 import nuvio.composeapp.generated.resources.party_error_full
@@ -57,6 +60,10 @@ import nuvio.composeapp.generated.resources.party_error_network
 import nuvio.composeapp.generated.resources.party_error_not_found
 import nuvio.composeapp.generated.resources.party_error_rate_limited
 import nuvio.composeapp.generated.resources.party_error_removed
+import nuvio.composeapp.generated.resources.party_media_changed
+import nuvio.composeapp.generated.resources.party_member_joined
+import nuvio.composeapp.generated.resources.party_member_left
+import nuvio.composeapp.generated.resources.party_removed
 import nuvio.composeapp.generated.resources.party_sign_in_required
 import nuvio.composeapp.generated.resources.party_status_buffering
 import nuvio.composeapp.generated.resources.party_status_choosing
@@ -66,6 +73,7 @@ import nuvio.composeapp.generated.resources.party_status_offline
 import nuvio.composeapp.generated.resources.party_status_ready
 import nuvio.composeapp.generated.resources.party_unavailable
 import org.jetbrains.compose.resources.StringResource
+import org.jetbrains.compose.resources.getString
 import org.jetbrains.compose.resources.stringResource
 
 internal enum class PartyPresenceState {
@@ -371,4 +379,15 @@ internal fun PartyMedia.displayTitle(): String {
     if (season == null || episode == null) return title
     val label = stringResource(Res.string.party_episode_format, season, episode)
     return if (title.isBlank()) label else "$title · $label"
+}
+
+internal suspend fun PartyEvent.message(): String = when (this) {
+    is PartyEvent.MemberJoined -> getString(Res.string.party_member_joined, name)
+    is PartyEvent.MemberLeft -> getString(Res.string.party_member_left, name)
+    PartyEvent.Removed -> getString(Res.string.party_removed)
+    PartyEvent.Ended -> getString(Res.string.party_ended)
+    is PartyEvent.MediaChanged -> getString(Res.string.party_media_changed, media.title)
+    is PartyEvent.ControlChanged -> getString(
+        if (hostOnly) Res.string.party_control_host_only else Res.string.party_control_everyone,
+    )
 }

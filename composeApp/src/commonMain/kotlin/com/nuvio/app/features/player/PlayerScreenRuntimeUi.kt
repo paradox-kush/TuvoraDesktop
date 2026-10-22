@@ -34,6 +34,7 @@ import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nuvio.app.core.ui.NuvioStatusModal
 import com.nuvio.app.features.p2p.P2pStreamingState
 import com.nuvio.app.features.party.PartyRepository
 import com.nuvio.app.features.p2p.formatP2pMegabytes
@@ -258,6 +259,9 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     // Desktop renders these in the native controls layer (the Compose pill and panel sit under the native video).
     val controlsPartyAvailable by PartyRepository.available.collectAsStateWithLifecycle()
     val controlsPartyState by PartyRepository.state.collectAsStateWithLifecycle()
+    // Upstream's in-controls (HTML) party UI is compiled in but off: the fork's party window is the desktop panel (DesktopPartyUi).
+    val partyControls = if (isDesktop && DesktopPartyUi.inControlsPanel) rememberPartyControlsState() else PlayerControlPartyState()
+    val playerBadges = if (isDesktop) rememberPlayerBadges() else emptyList()
     val playerControlsState = PlayerControlsState(
         title = title,
         episodeText = episodeText,
@@ -275,7 +279,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         pauseOverlayDescription = (activePauseDescription ?: activeStreamSubtitle).orEmpty(),
         resizeModeLabel = stringResource(resizeMode.labelRes),
         playbackSpeedLabel = formatPlaybackSpeedLabel(playbackSnapshot.playbackSpeed),
-        holdToSpeedEnabled = playerSettingsUiState.holdToSpeedEnabled,
+        holdToSpeedEnabled = playerSettingsUiState.holdToSpeedEnabled && !partyControls.synced,
         holdToSpeedValue = playerSettingsUiState.holdToSpeedValue,
         subtitlesLabel = stringResource(Res.string.compose_player_subs),
         audioLabel = stringResource(Res.string.compose_player_audio),
@@ -377,6 +381,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         themeTextSecondaryColor = themeColors.textSecondary.toCssColorString(),
         themeTextMutedColor = themeColors.textMuted.toCssColorString(),
         themeBorderDefaultColor = themeColors.borderDefault.toCssColorString(),
+        themeDangerColor = themeColors.danger.toCssColorString(),
         isPlaying = playbackSnapshot.isPlaying,
         isLoading = playbackSnapshot.isLoading,
         partyLabel = if (NativePartyControlsPolicy.partyEntryVisible(controlsPartyAvailable, playerControlsLocked)) {
@@ -442,6 +447,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         submitIntroSuccessToken = playerControlsSubmitIntroSuccessToken,
         notificationMessage = playerNotificationMessage,
         notificationToken = playerNotificationToken,
+        party = partyControls,
         showOpeningOverlay = openingOverlayWanted,
         openingArtwork = background ?: poster,
         openingLogo = logo,
@@ -685,7 +691,9 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             suppressOpeningOverlay = isDesktop && playerSurfaceSourceUrl != null,
         )
         RenderPlayerModals(displayedPositionMs = displayedPositionMs)
-        RenderParty(runtime = runtime)
+        if (!isDesktop) {
+            RenderParty(runtime = runtime)
+        }
     }
 }
 
@@ -717,6 +725,7 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
     val isInPip = rememberIsInPictureInPicture()
     val partyState by PartyRepository.state.collectAsStateWithLifecycle()
     val partyActive = partyState.party != null
+    val playerBadges = if (isDesktop) emptyList() else rememberPlayerBadges()
     AnimatedVisibility(
         visible = PlayerChromeVisibilityPolicy.shellVisible(
             controlsVisible = controlsVisible,
@@ -746,6 +755,7 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
             showRemainingTime = showRemainingTime,
             onRuntimeClick = { showRemainingTime = !showRemainingTime },
             releaseInfo = metaUiState.meta?.takeIf { it.id == parentMetaId }?.releaseInfo,
+            badges = playerBadges,
             hideDetails = activeSkipInterval != null && !skipIntervalDismissed,
             onInteraction = { controlsActivityTick += 1 },
             showPlaybackControls = controlsVisible,
@@ -754,10 +764,7 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
             },
             onBack = { requestBack() },
             onPartyClick = if (PartyRepository.available.collectAsStateWithLifecycle().value) {
-                {
-                    showPartyPanel = true
-                    controlsVisible = false
-                }
+                { openPartyPanel() }
             } else {
                 null
             },
@@ -847,7 +854,7 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
                 null
             },
             onSwitchEngineClick = if (playerController?.playbackEngine != null) {
-                { switchPlaybackEngine() }
+                { showSwitchEngineConfirm = true }
             } else {
                 null
             },
@@ -862,18 +869,7 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
                 isScrubbingTimeline = true
                 scrubbingPositionMs = positionMs
             },
-            onScrubFinished = { positionMs ->
-                val targetMs = if (isPartyControlLocked) ownSeekTarget(positionMs) else positionMs
-                if (targetMs == null) {
-                    isScrubbingTimeline = false
-                    scrubbingPositionMs = null
-                } else {
-                    finishTimelineScrub(targetMs)
-                    playerController?.seekTo(targetMs)
-                    scheduleProgressSyncAfterSeek()
-                    publishPartyPlayback(positionMs = targetMs)
-                }
-            },
+            onScrubFinished = { positionMs -> finishTimelineSeek(positionMs) },
             horizontalSafePadding = horizontalSafePadding,
             modifier = Modifier.fillMaxSize(),
         )
@@ -968,36 +964,18 @@ private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControl
             if (NativePartyControlsPolicy.backClosesPartyPanel(showPartyPanel)) showPartyPanel = false else requestBack()
         }
         PlayerControlsAction.Party -> {
-            showPartyPanel = true
+            openPartyPanel()
             controlsVisible = false
         }
         // The regular player keeps the desktop control's existing whole-window fullscreen
         // fallback. Surfaces with their own layout fullscreen (Live TV) may consume this action.
         PlayerControlsAction.ToggleFullscreen -> return false
-        PlayerControlsAction.TogglePlayback -> {
-            prepareTogglePlaybackForNativeFallback()
-            return false
-        }
-        PlayerControlsAction.KeyboardTogglePlayback -> {
-            prepareTogglePlaybackForNativeFallback(revealControls = false)
-            return false
-        }
-        PlayerControlsAction.SeekBack -> {
-            prepareSeekByForNativeFallback(-10_000L)
-            return false
-        }
-        PlayerControlsAction.KeyboardSeekBack -> {
-            prepareSeekByForNativeFallback(-10_000L, revealControls = false)
-            return false
-        }
-        PlayerControlsAction.SeekForward -> {
-            prepareSeekByForNativeFallback(10_000L)
-            return false
-        }
-        PlayerControlsAction.KeyboardSeekForward -> {
-            prepareSeekByForNativeFallback(10_000L, revealControls = false)
-            return false
-        }
+        PlayerControlsAction.TogglePlayback -> return toggleFromNativeControls()
+        PlayerControlsAction.KeyboardTogglePlayback -> return toggleFromNativeControls(revealControls = false)
+        PlayerControlsAction.SeekBack -> return seekFromNativeControls(-10_000L)
+        PlayerControlsAction.KeyboardSeekBack -> return seekFromNativeControls(-10_000L, revealControls = false)
+        PlayerControlsAction.SeekForward -> return seekFromNativeControls(10_000L)
+        PlayerControlsAction.KeyboardSeekForward -> return seekFromNativeControls(10_000L, revealControls = false)
         PlayerControlsAction.KeyboardVolumeDown,
         PlayerControlsAction.KeyboardVolumeUp -> {
             return false
@@ -1067,18 +1045,17 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
         "setPlaybackState",
         "setPlaybackStateQuiet" -> {
             val play = value >= 0.5
-            if (NativePartyControlsPolicy.routePlaybackRequest(isPartySynced) == NativePartyControlsPolicy.Route.Party) {
-                // togglePlayback publishes to the party and keeps host-only members to their own pause.
-                if (play != shouldPlay) togglePlayback()
-                if (NativePartyControlsPolicy.playbackRequestRefused(requestedPlay = play, resultingShouldPlay = shouldPlay)) {
-                    playerControlsPlaybackResyncToken += 1
-                }
-                return true
+            applyNativePlaybackState(play)
+            if (NativePartyControlsPolicy.playbackRequestRefused(requestedPlay = play, resultingShouldPlay = shouldPlay)) {
+                playerControlsPlaybackResyncToken += 1
             }
-            shouldPlay = play
             if (type == "setPlaybackState") {
                 controlsVisible = true
             }
+        }
+        "setPlaybackSpeed" -> {
+            if (!isPartySynced) return false
+            selectPlaybackSpeed(value.toFloat())
         }
         "reloadSources" -> {
             prepareSourcesForPlayerControls(forceRefresh = true)
@@ -1138,20 +1115,10 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
             submitIntroStatusMessage = null
         }
         "submitIntroCommit" -> submitIntroFromPlayerControls()
-        "skipInterval" -> {
-            val interval = activeSkipInterval ?: return true
-            val durationMs = playbackSnapshot.durationMs
-            val action = interval.internalSkipAction(skipIntervals, durationMs) ?: return true
-            val requestedMs = if (durationMs > 0L) action.targetMs.coerceAtMost(durationMs - 1) else action.targetMs
-            val seekMs = (if (isPartyControlLocked) ownSeekTarget(requestedMs) else requestedMs) ?: return true
-            playerController?.seekTo(seekMs)
-            scheduleProgressSyncAfterSeek()
-            publishPartyPlayback(positionMs = seekMs)
-            skipIntervalDismissed = true
-        }
+        "skipInterval" -> activeSkipInterval?.let { skipInterval(it) }
         "playNextEpisode" -> {
             if (nextEpisodeInfo?.hasAired == true && !nextEpisodeAutoPlaySearching && nextEpisodeAutoPlayCountdown == null) {
-                playNextEpisode()
+                if (!partyBlocksControl()) playNextEpisode()
             }
         }
         "enableP2pForPlayerControls" -> enableP2pForPlayerControls()
@@ -1279,7 +1246,7 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
         "streamInfoComplete" -> {
             showStreamInfoOverlay = false
         }
-        else -> return false
+        else -> return handlePartyControlsEvent(type, value)
     }
     return true
 }
@@ -1454,17 +1421,7 @@ private fun PlayerScreenRuntime.handlePlayerControlsScrubChange(positionMs: Long
 
 private fun PlayerScreenRuntime.handlePlayerControlsScrubFinished(positionMs: Long) {
     playerControlsLog.d { "scrubFinished positionMs=$positionMs controller=${playerController != null} ${playerControlLogContext()}" }
-    // Same rules as the Compose timeline: a host-only guest seeks only for themselves, and every seek reaches the party.
-    val targetMs = if (isPartyControlLocked) ownSeekTarget(positionMs) else positionMs
-    if (targetMs == null) {
-        isScrubbingTimeline = false
-        scrubbingPositionMs = null
-        return
-    }
-    finishTimelineScrub(targetMs)
-    playerController?.seekTo(targetMs)
-    scheduleProgressSyncAfterSeek()
-    publishPartyPlayback(positionMs = targetMs)
+    finishTimelineSeek(positionMs)
 }
 
 private fun PlayerScreenRuntime.playerControlLogContext(): String =
@@ -1905,18 +1862,7 @@ private fun BoxScope.RenderPlaybackOverlays(
             skipsToPostCredits = activeSkipInterval?.internalSkipAction(skipIntervals, playbackSnapshot.durationMs)?.skipsToPostCredits == true,
             skipIntervalDismissed = skipIntervalDismissed,
             controlsVisible = controlsVisible,
-            onSkipInterval = { interval ->
-                val durationMs = playbackSnapshot.durationMs
-                val rawMs = interval.internalSkipAction(skipIntervals, durationMs)?.targetMs ?: return@PlayerPlaybackOverlays
-                val requestedMs = if (durationMs > 0L) rawMs.coerceAtMost(durationMs - 1) else rawMs
-                val seekMs = if (isPartyControlLocked) ownSeekTarget(requestedMs) else requestedMs
-                if (seekMs != null) {
-                    playerController?.seekTo(seekMs)
-                    scheduleProgressSyncAfterSeek()
-                    publishPartyPlayback(positionMs = seekMs)
-                    skipIntervalDismissed = true
-                }
-            },
+            onSkipInterval = { interval -> skipInterval(interval) },
             onDismissSkipInterval = { skipIntervalDismissed = true },
             sliderEdgePadding = sliderEdgePadding,
             overlayBottomPadding = overlayBottomPadding,
@@ -2145,4 +2091,19 @@ private fun PlayerScreenRuntime.RenderPlayerModals(displayedPositionMs: Long) {
         addonSubtitle = selectedAddonSubtitle.takeIf { useCustomSubtitles },
         onDismiss = { showStreamInfo = false },
     )
+    val switchEngineTarget = playerController?.playbackEngine?.switchTarget
+    if (switchEngineTarget != null) {
+        NuvioStatusModal(
+            isVisible = showSwitchEngineConfirm,
+            title = stringResource(Res.string.player_engine_switch_title, switchEngineTarget.label),
+            message = stringResource(Res.string.player_engine_switch_message),
+            confirmText = stringResource(Res.string.action_switch),
+            dismissText = stringResource(Res.string.action_cancel),
+            onConfirm = {
+                showSwitchEngineConfirm = false
+                switchPlaybackEngine()
+            },
+            onDismiss = { showSwitchEngineConfirm = false },
+        )
+    }
 }

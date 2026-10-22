@@ -78,6 +78,7 @@ import com.nuvio.app.core.ui.accentBrush
 import com.nuvio.app.core.ui.appIconPainter
 import com.nuvio.app.core.ui.gradientMask
 import com.nuvio.app.core.ui.nuvioTypeScale
+import com.nuvio.app.features.streams.StreamBadge
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
 import com.nuvio.app.core.i18n.localizedEpisodeTitle
@@ -102,6 +103,7 @@ internal fun PlayerControlsShell(
     showRemainingTime: Boolean = false,
     onRuntimeClick: () -> Unit = {},
     releaseInfo: String? = null,
+    badges: List<StreamBadge> = emptyList(),
     hideDetails: Boolean = false,
     onNextEpisodeClick: (() -> Unit)? = null,
     onInteraction: () -> Unit = {},
@@ -140,11 +142,12 @@ internal fun PlayerControlsShell(
 ) {
     val density = LocalDensity.current
     var timelineHeight by remember { mutableStateOf(0.dp) }
+    var sourceLineHeight by remember { mutableStateOf(0.dp) }
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val centerControlHeight = metrics.playIconSize + maxOf(metrics.playButtonPadding, metrics.sideButtonPadding) * 2
         val centerBottomPadding = if (useLegacyLayout) metrics.centerLift else maxOf(
             metrics.centerLift,
-            timelineHeight * 2 + centerControlHeight + 16.dp - maxHeight,
+            (timelineHeight - sourceLineHeight) * 2 + centerControlHeight + 16.dp - maxHeight,
         )
         Box(
             modifier = Modifier
@@ -223,6 +226,7 @@ internal fun PlayerControlsShell(
                         onBack = onBack,
                         onPartyClick = onPartyClick,
                         partyActive = partyActive,
+                        onSwitchEngineClick = onSwitchEngineClick,
                         modifier = Modifier
                             .align(Alignment.TopEnd)
                             .windowInsetsPadding(WindowInsets.safeContent.only(WindowInsetsSides.Top))
@@ -322,6 +326,10 @@ internal fun PlayerControlsShell(
                             providerName = providerName,
                             isPlaying = playbackSnapshot.isPlaying,
                             metrics = metrics,
+                            badges = badges,
+                            onSourceLineHeightChanged = { height ->
+                                sourceLineHeight = with(density) { height.toDp() }
+                            },
                         )
                     }
                     if (isLive) {
@@ -350,7 +358,6 @@ internal fun PlayerControlsShell(
                         onSourcesClick = onSourcesClick,
                         onEpisodesClick = onEpisodesClick,
                         onNextEpisodeClick = onNextEpisodeClick,
-                        onSwitchEngineClick = onSwitchEngineClick,
                         onSpeedClick = onSpeedClick,
                         onResizeModeClick = onResizeModeClick,
                         onVideoSettingsClick = onVideoSettingsClick,

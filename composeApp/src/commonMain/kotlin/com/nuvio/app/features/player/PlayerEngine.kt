@@ -2,6 +2,7 @@ package com.nuvio.app.features.player
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import com.nuvio.app.features.streams.StreamBadge
 
 interface PlayerEngineController {
     val playbackEngine: AndroidPlaybackEngine? get() = null
@@ -219,6 +220,7 @@ data class PlayerControlsState(
     val themeTextSecondaryColor: String = "rgba(255, 255, 255, .72)",
     val themeTextMutedColor: String = "rgba(255, 255, 255, .60)",
     val themeBorderDefaultColor: String = "rgba(255, 255, 255, .12)",
+    val themeDangerColor: String = "#e5484d",
     val isPlaying: Boolean = false,
     val isLoading: Boolean = false,
     val isLocked: Boolean = false,
@@ -305,6 +307,8 @@ data class PlayerControlsState(
     val submitIntroSuccessToken: Long = 0L,
     val notificationMessage: String = "",
     val notificationToken: Long = 0L,
+    val party: PlayerControlPartyState = PlayerControlPartyState(),
+    val badges: List<StreamBadge> = emptyList(),
 )
 
 data class PlayerControlFilterItem(
