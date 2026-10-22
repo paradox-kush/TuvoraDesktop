@@ -256,11 +256,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             )
         else -> ""
     }
-    // Desktop renders these in the native controls layer (the Compose pill and panel sit under the native video).
-    val controlsPartyAvailable by PartyRepository.available.collectAsStateWithLifecycle()
-    val controlsPartyState by PartyRepository.state.collectAsStateWithLifecycle()
-    // Upstream's in-controls (HTML) party UI is compiled in but off: the fork's party window is the desktop panel (DesktopPartyUi).
-    val partyControls = if (isDesktop && DesktopPartyUi.inControlsPanel) rememberPartyControlsState() else PlayerControlPartyState()
+    val partyControls = if (isDesktop) rememberPartyControlsState() else PlayerControlPartyState()
     val playerBadges = if (isDesktop) rememberPlayerBadges() else emptyList()
     val playerControlsState = PlayerControlsState(
         title = title,
@@ -384,13 +380,6 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         themeDangerColor = themeColors.danger.toCssColorString(),
         isPlaying = playbackSnapshot.isPlaying,
         isLoading = playbackSnapshot.isLoading,
-        partyLabel = if (NativePartyControlsPolicy.partyEntryVisible(controlsPartyAvailable, playerControlsLocked)) {
-            stringResource(Res.string.party_title)
-        } else {
-            ""
-        },
-        partyActive = controlsPartyState.party != null,
-        partyStatus = partyStatusText,
         playbackResyncToken = playerControlsPlaybackResyncToken,
         isLocked = playerControlsLocked,
         lockedOverlayVisible = lockedOverlayVisible,
@@ -960,13 +949,7 @@ private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControl
             }
         }
         PlayerControlsAction.RevealLockedOverlay -> revealLockedOverlay()
-        PlayerControlsAction.Back -> {
-            if (NativePartyControlsPolicy.backClosesPartyPanel(showPartyPanel)) showPartyPanel = false else requestBack()
-        }
-        PlayerControlsAction.Party -> {
-            openPartyPanel()
-            controlsVisible = false
-        }
+        PlayerControlsAction.Back -> requestBack()
         // The regular player keeps the desktop control's existing whole-window fullscreen
         // fallback. Surfaces with their own layout fullscreen (Live TV) may consume this action.
         PlayerControlsAction.ToggleFullscreen -> return false

@@ -28,7 +28,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -109,13 +108,10 @@ internal fun PlayerScreenRuntime.partyBlocksControl(): Boolean {
 }
 
 internal fun PlayerScreenRuntime.showPartyMessage(message: String) {
-    if (isDesktop && DesktopPartyUi.inControlsPanel) {
+    if (isDesktop) {
+        // The app toast and the gesture HUD draw under the native video: the native controls (party.js) show it.
         partyMessage = message
         partyMessageToken += 1L
-    } else if (isDesktop) {
-        // The app toast and the gesture HUD draw under the native video: say it through the native notification.
-        playerNotificationMessage = message
-        playerNotificationToken += 1L
     } else {
         showGestureMessage(message)
     }
@@ -567,9 +563,6 @@ internal fun BoxScope.RenderParty(runtime: PlayerScreenRuntime) {
         if (party != null) {
             val pillVisible = (controlsVisible || partyPillPinned(party, playback, notice)) && !playerControlsLocked && !showPartyPanel
             val pillMessage = partyPillMessage(party, playback, notice)
-            // Desktop: the pill draws under the native video, so its line is mirrored into the native controls.
-            val nativeStatus = if (pillVisible) pillMessage.orEmpty() else ""
-            SideEffect { partyStatusText = nativeStatus }
             PartyStatusPill(
                 visible = pillVisible,
                 members = party.members,
@@ -582,9 +575,6 @@ internal fun BoxScope.RenderParty(runtime: PlayerScreenRuntime) {
                     .padding(top = metrics.verticalPadding / 4 + 8.dp),
             )
         }
-        if (party == null) SideEffect { partyStatusText = "" }
-        // Desktop hosts the panel in its own window over the player (the native video covers Compose); elsewhere inline.
-        PlayerSidePanelHost(visible = showPartyPanel, width = 420.dp, onDismiss = { showPartyPanel = false }) {
         PartyPanel(
             visible = showPartyPanel,
             state = partyState,
@@ -606,7 +596,6 @@ internal fun BoxScope.RenderParty(runtime: PlayerScreenRuntime) {
             onCatchUp = { catchUpWithParty() },
             onDismiss = { showPartyPanel = false },
         )
-        }
     }
 }
 

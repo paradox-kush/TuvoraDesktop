@@ -73,8 +73,7 @@ private object NativeFocusBackStack {
  * surface owns keyboard focus while a video plays, so Compose never sees Escape there and the fullscreen
  * player could not be left with the keyboard (Live TV fullscreen trap, 24da89597). The bridge consumes
  * Escape only when a registered handler took it; otherwise the event continues to Compose's own Esc input.
- * The native party panel window (PlayerSidePanelHost) relies on this too: Escape reaches its handler whichever
- * window has focus. Mouse Back goes through NavigationBackHandler (upstream 7559c4a82).
+ * Mouse Back goes through NavigationBackHandler (upstream 7559c4a82).
  */
 private object EscapeKeyBridge {
     private var holders = 0

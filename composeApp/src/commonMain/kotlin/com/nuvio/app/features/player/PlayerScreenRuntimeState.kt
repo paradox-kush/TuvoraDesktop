@@ -286,8 +286,6 @@ internal class PlayerScreenRuntime(
     var showVideoSettingsModal by mutableStateOf(false)
     var showStreamInfo by mutableStateOf(false)
     var showPartyPanel by mutableStateOf(false)
-    /** The party pill's current line, mirrored into the desktop native controls (empty = nothing to say). */
-    var partyStatusText by mutableStateOf("")
     /** Bumped when a native play/pause request is refused; see NativePartyControlsPolicy.playbackRequestRefused. */
     var playerControlsPlaybackResyncToken by mutableStateOf(0L)
     var partyPanelToken by mutableStateOf(0L)

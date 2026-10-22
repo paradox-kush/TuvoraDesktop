@@ -160,15 +160,12 @@
           <button class="header-button" id="submitIntroButton" data-command="submitIntro" aria-label="Submit intro"><svg><use href="#icon-flag"></use></svg></button>
           <button class="header-button" id="partyButton" type="button" aria-label="Watch party" hidden><svg><use href="#icon-party"></use></svg></button>
           <button class="header-button" id="videoSettingsButton" data-command="videoSettings" aria-label="Video settings"><svg><use href="#icon-build"></use></svg></button>
-          <button class="header-button" id="partyEntryButton" data-command="party" aria-label="" aria-pressed="false" hidden><svg><use href="#icon-party"></use></svg></button>
           <button class="header-button pip-lock-button" id="pipLockButton" type="button" aria-pressed="false" aria-label="Lock player controls"><svg><use href="#icon-lock"></use></svg></button>
           <button class="header-button" id="pipButton" data-command="pictureInPicture" aria-label=""><svg><use href="#icon-pip"></use></svg></button>
           <button class="header-button" id="fullscreenButton" data-command="toggleFullscreen" aria-label="Enter fullscreen"><svg><use id="fullscreenIcon" href="#icon-fullscreen"></use></svg></button>
           <button class="header-button" id="backButton" data-command="back" aria-label="Close player"><svg><use href="#icon-close"></use></svg></button>
         </nav>
       </header>
-      <!-- Watch party line: outside the header actions so it stays up when the chrome auto-hides (phone pill parity). -->
-      <div class="party-status" id="partyStatus" role="status" aria-live="polite" hidden></div>
 
       <button class="party-pill" id="partyPill" type="button" tabindex="-1" aria-hidden="true">
         <span class="party-stack" id="partyPillStack"></span>

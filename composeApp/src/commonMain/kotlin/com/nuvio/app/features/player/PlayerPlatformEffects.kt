@@ -67,16 +67,3 @@ fun rememberPlayerGestureController(restoreBrightness: Boolean): PlayerGestureCo
 
 @Composable
 internal expect fun rememberPlatformPlayerGestureController(): PlayerGestureController?
-
-/**
- * Hosts a player side panel (e.g. Watch party). Desktop: its own borderless window over the player's right edge,
- * because the native video layer covers every Compose pixel inside the player. Android/iOS: inline, as before.
- * [onDismiss] is what closing the host window means; the panel keeps its own close button and Back handling.
- */
-@Composable
-internal expect fun PlayerSidePanelHost(
-    visible: Boolean,
-    width: androidx.compose.ui.unit.Dp,
-    onDismiss: () -> Unit,
-    content: @Composable () -> Unit,
-)

@@ -969,29 +969,6 @@ button:disabled {
   color: var(--theme-accent, currentColor);
 }
 
-.party-status {
-  position: absolute;
-  top: calc(var(--slider-bottom) + env(safe-area-inset-top));
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 2;
-  pointer-events: none;
-  max-width: min(46vw, 420px);
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, .55);
-  color: var(--theme-control-foreground);
-  font-size: 13px;
-  line-height: 18px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.party-status[hidden] {
-  display: none;
-}
-
 .header-button:hover {
   background: var(--theme-selected-surface);
 }
