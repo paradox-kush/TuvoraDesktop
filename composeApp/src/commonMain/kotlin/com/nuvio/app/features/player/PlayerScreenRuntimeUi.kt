@@ -1402,7 +1402,7 @@ private fun PlayerScreenRuntime.handlePlayerControlsScrubChange(positionMs: Long
     scrubbingPositionMs = positionMs
 }
 
-private fun PlayerScreenRuntime.handlePlayerControlsScrubFinished(positionMs: Long) {
+internal fun PlayerScreenRuntime.handlePlayerControlsScrubFinished(positionMs: Long) {
     playerControlsLog.d { "scrubFinished positionMs=$positionMs controller=${playerController != null} ${playerControlLogContext()}" }
     finishTimelineSeek(positionMs)
 }

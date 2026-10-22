@@ -107,7 +107,7 @@ class NativeControlsPartyRoutingTest {
         assertTrue(runtime.handlePlayerControlsAction(PlayerControlsAction.SeekForward))
         await("seek +10 reached the party") { PartyRepository.playback.value?.positionMs == 70_000L }
         assertTrue(runtime.handlePlayerControlsAction(PlayerControlsAction.DoubleTapSeekBack), "double tap routes through the party")
-        runtime.handlePlayerControlsEvent("scrubFinish", 80_000.0)
+        runtime.handlePlayerControlsScrubFinished(80_000L)
         await("scrub reached the party") { PartyRepository.playback.value?.positionMs == 80_000L }
         assertTrue(80_000L in controller.seeks, controller.seeks.toString())
     }
@@ -135,7 +135,7 @@ class NativeControlsPartyRoutingTest {
         assertTrue(runtime.handlePlayerControlsAction(PlayerControlsAction.TogglePlayback))
         assertEquals(0, controller.plays, "a guest may not start a paused host-only party")
         assertTrue(runtime.handlePlayerControlsAction(PlayerControlsAction.SeekForward))
-        runtime.handlePlayerControlsEvent("scrubFinish", 80_000.0)
+        runtime.handlePlayerControlsScrubFinished(80_000L)
         val intro = SkipInterval(startTime = 0.0, endTime = 90.0, type = "intro", provider = "test")
         runtime.skipIntervals = listOf(intro)
         runtime.activeSkipInterval = intro
