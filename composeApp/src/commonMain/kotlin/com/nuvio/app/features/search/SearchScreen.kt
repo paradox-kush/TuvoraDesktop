@@ -58,7 +58,7 @@ import com.nuvio.app.features.addons.firstEnabledManifestError
 import com.nuvio.app.features.addons.hasPendingEnabledManifests
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.MetaPreview
-import com.nuvio.app.features.home.buildAddonCatalogRefreshSignature
+import com.nuvio.app.features.home.buildAddonCatalogRefreshKey
 import com.nuvio.app.features.home.components.HomeCatalogRowSection
 import com.nuvio.app.features.home.components.HomeEmptyStateCard
 import com.nuvio.app.features.home.components.homeSectionHorizontalPaddingForWidth
@@ -155,8 +155,8 @@ fun SearchScreen(
         }
     }
 
-    val addonRefreshKey = remember(addonsUiState.addons) {
-        buildAddonCatalogRefreshSignature(addonsUiState.addons)
+    val addonRefreshKey = remember(addonsUiState.addons, addonsUiState.availabilityRevision) {
+        buildAddonCatalogRefreshKey(addonsUiState.addons, addonsUiState.availabilityRevision)
     }
     val addonManifestsLoading = addonsUiState.addons.hasPendingEnabledManifests()
 
