@@ -124,8 +124,10 @@ fun <T> NuvioShelfSection(
         }
         LazyRow(
             state = state,
-            modifier = rowModifier.nuvioDesktopDragScroll(state),
-            contentPadding = rowContentPadding,
+            modifier = rowModifier
+                .nuvioHorizontalScrollBleed(LocalVerticalBarPadding.current)
+                .nuvioDesktopDragScroll(state),
+            contentPadding = rowContentPadding.withVerticalBar(),
             horizontalArrangement = Arrangement.spacedBy(itemSpacing),
         ) {
             if (duplicateSafeEntries != null) {
@@ -326,6 +328,7 @@ fun NuvioPosterCard(
                     onLoading = { imageFailed.value = false; imageLoaded.value = false },
                     onSuccess = { imageFailed.value = false; imageLoaded.value = true },
                     onError = { imageFailed.value = true },
+                    desktopAnimation = posterCardStyle.animatedArtworkMode.toDesktopAnimation(),
                 )
             }
             // Read after the image composes, so an onError write lands as a forward invalidation.

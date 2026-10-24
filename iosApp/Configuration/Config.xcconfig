@@ -5,3 +5,7 @@ TEAM_ID=
 
 PRODUCT_NAME=Nuvio
 PRODUCT_BUNDLE_IDENTIFIER=com.nuvio.app.Nuvio$(TEAM_ID)
+
+// Compile-time SDK availability for upstream iOS 27.1 vertical sidebar APIs.
+SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos27.1*] = $(inherited) TUVORA_HAS_IOS_VERTICAL_BAR
+SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphonesimulator27.1*] = $(inherited) TUVORA_HAS_IOS_VERTICAL_BAR

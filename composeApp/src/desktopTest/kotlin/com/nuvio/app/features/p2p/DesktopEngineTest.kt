@@ -52,10 +52,10 @@ class DesktopEngineTest {
     }
 
     @Test
-    fun explicitAndStaleEventsAreIgnored() {
+    fun matchingTorrentFailuresSurfaceAndStaleEventsAreIgnored() {
         assertNull(unexpectedStreamStopError(7L, "stream", "stream", "stopped", "unknown"))
         assertNull(unexpectedStreamStopError(0L, "old-stream", "stream", "stopped", "unknown"))
-        assertNull(unexpectedTorrentError(9L, "torrent", "torrent", "failed", "unknown"))
+        assertEquals(P2pStreamingState.Error("failed"), unexpectedTorrentError(9L, "torrent", "torrent", "failed", "unknown"))
         assertNull(unexpectedTorrentError(0L, "old-torrent", "torrent", "failed", "unknown"))
         assertNull(unexpectedTorrentError(0L, null, "torrent", "disk cache budget exceeded", "unknown"))
         assertEquals(
@@ -74,7 +74,7 @@ class DesktopEngineTest {
     @Test
     fun bundledLibraryLoadsAndCreatesEngine() {
         val runtime = NuvioEngineRuntime.load(DesktopEngineLibrary.resolve())
-        assertEquals("0.1.5", runtime.version)
+        assertEquals("0.1.6", runtime.version)
 
         val root = Files.createTempDirectory("nuvio-engine-desktop-").toFile()
         try {
