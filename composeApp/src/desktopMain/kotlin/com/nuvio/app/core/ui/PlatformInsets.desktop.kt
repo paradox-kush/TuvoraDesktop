@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.InternalComposeUiApi
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalPlatformWindowInsets
@@ -35,22 +36,24 @@ internal fun ProvideDesktopWindowInsets(
     }
 
     val inheritedInsets = LocalPlatformWindowInsets.current
-    val titleBarTop = with(LocalDensity.current) { if (isFullscreen) 0 else 28.dp.roundToPx() }
-    val windowInsets = remember(inheritedInsets, titleBarTop) {
+    // Foundation caches its platform-inset adapter. Keep its identity stable and expose
+    // fullscreen/scaling changes as observable values through that same adapter.
+    val titleBarTop = rememberUpdatedState(with(LocalDensity.current) { if (isFullscreen) 0 else 28.dp.roundToPx() })
+    val windowInsets = remember(inheritedInsets) {
         object : PlatformWindowInsets by inheritedInsets {
-            override val captionBar = inheritedInsets.captionBar.withTopInset(titleBarTop)
-            override val statusBars = inheritedInsets.statusBars.withTopInset(titleBarTop)
-            override val systemBars = inheritedInsets.systemBars.withTopInset(titleBarTop)
+            override val captionBar = inheritedInsets.captionBar.withTopInset { titleBarTop.value }
+            override val statusBars = inheritedInsets.statusBars.withTopInset { titleBarTop.value }
+            override val systemBars = inheritedInsets.systemBars.withTopInset { titleBarTop.value }
         }
     }
     CompositionLocalProvider(LocalPlatformWindowInsets provides windowInsets, content = content)
 }
 
 @OptIn(InternalComposeUiApi::class)
-private fun PlatformInsets.withTopInset(topInset: Int): PlatformInsets =
+private fun PlatformInsets.withTopInset(topInset: () -> Int): PlatformInsets =
     object : PlatformInsets by this {
         override val top: Int
-            get() = maxOf(this@withTopInset.top, topInset)
+            get() = maxOf(this@withTopInset.top, topInset())
     }
 
 @Composable

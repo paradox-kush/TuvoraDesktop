@@ -1,5 +1,6 @@
 package com.nuvio.app.features.catalog
 
+import com.nuvio.app.core.ui.rememberAnimatedArtworkAnimation
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -419,6 +420,7 @@ private fun CatalogPosterTile(
                         contentDescription = item.name,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop,
+                        desktopAnimation = rememberAnimatedArtworkAnimation(),
                     )
                 }
                 NuvioPosterWatchedOverlay(isWatched = isWatched)

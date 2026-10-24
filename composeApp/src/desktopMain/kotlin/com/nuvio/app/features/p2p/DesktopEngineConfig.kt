@@ -54,6 +54,8 @@ internal fun unexpectedStreamStopError(
     return P2pStreamingState.Error(message?.trim()?.takeIf(String::isNotEmpty) ?: fallbackMessage)
 }
 
+// Command-correlated failures still belong to the active torrent; only torrent identity rejects stale events.
+@Suppress("UNUSED_PARAMETER")
 internal fun unexpectedTorrentError(
     requestId: Long,
     eventTorrentId: String?,
@@ -61,8 +63,7 @@ internal fun unexpectedTorrentError(
     message: String?,
     fallbackMessage: String,
 ): P2pStreamingState.Error? {
-    if (requestId != 0L ||
-        eventTorrentId == null ||
+    if (eventTorrentId == null ||
         currentTorrentId == null ||
         eventTorrentId != currentTorrentId
     ) {
