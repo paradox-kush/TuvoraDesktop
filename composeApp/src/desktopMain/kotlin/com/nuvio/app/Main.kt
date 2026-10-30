@@ -1,5 +1,8 @@
 package com.nuvio.app
 
+import com.nuvio.app.features.settings.AppIconRepository
+
+import com.nuvio.app.features.autosync.AutoSyncPreferencesDesktop
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.awt.SwingWindow
@@ -81,6 +84,8 @@ fun main(args: Array<String>) {
     // Load cached profile data synchronously so the profile color is available
     // on the very first Compose frame (matching Android's SharedPreferences behavior).
     ProfileRepository.loadCachedProfiles()
+    AppIconRepository.ensureLoaded()
+    AutoSyncPreferencesDesktop.initialize()
     DiscordPresenceManager.start()
 
     application {
