@@ -38,17 +38,21 @@ export APPIMAGE_WEBSITE_URL="https://tuvora.co"
 
 # The DEB hook in composeApp/build.gradle.kts runs patch-linux-deb.sh (runtime Depends: libmpv2,
 # WebKitGTK, GStreamer) and verify-linux-deb.sh; the AppImage hook runs build-appimage.sh.
-./gradlew \
-    :composeApp:packageReleaseDeb \
-    :composeApp:packageReleaseAppImage \
-    "-Pnuvio.desktop.versionName=${version}" \
-    "-Pnuvio.desktop.versionCode=${version_code}" \
-    "-PversionNameOverride=${version}" \
-    "-PversionCodeOverride=${version_code}" \
-    -Pcompose.desktop.packaging.checkJdkVendor=false \
-    --no-configuration-cache \
-    --no-daemon \
-    --stacktrace
+# One task per Gradle invocation: both packaging tasks share composeApp/build/compose/binaries/main-release/app,
+# and Gradle 9 fails validation ("uses this output of ... without declaring a dependency") when it
+# schedules them in the same build. Sequential runs reuse the up-to-date distributable.
+for package_task in packageReleaseDeb packageReleaseAppImage; do
+    ./gradlew \
+        ":composeApp:${package_task}" \
+        "-Pnuvio.desktop.versionName=${version}" \
+        "-Pnuvio.desktop.versionCode=${version_code}" \
+        "-PversionNameOverride=${version}" \
+        "-PversionCodeOverride=${version_code}" \
+        -Pcompose.desktop.packaging.checkJdkVendor=false \
+        --no-configuration-cache \
+        --no-daemon \
+        --stacktrace
+done
 
 deb_dir="composeApp/build/compose/binaries/main-release/deb"
 mapfile -t debs < <(find "$deb_dir" -maxdepth 1 -type f -name '*.deb' | sort)
