@@ -29,6 +29,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -116,6 +117,11 @@ internal fun IptvPlaylistDetailPane(
     modifier: Modifier = Modifier,
 ) {
     val tokens = MaterialTheme.nuvio
+    // UX179: "Refresh now". The controller owns the work and the cooldown lives in the engine; this only renders it.
+    val refreshScope = androidx.compose.runtime.rememberCoroutineScope()
+    val refreshController = remember(account.id, refreshScope) { IptvManualRefreshController(refreshScope) }
+    val refreshState by refreshController.state.collectAsState()
+    LaunchedEffect(account.id) { refreshController.load(account) }
     Column(
         modifier = modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(start = 8.dp, end = 4.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -178,6 +184,8 @@ internal fun IptvPlaylistDetailPane(
             NameRow(name = model.name, renaming = renaming, onStartRename = onStartRename, onRename = onRename, onCancelRename = onCancelRename)
             SettingsGroupDivider(isTablet = true)
             ServerLoginRow(locked = model.lockedServerLogin, providerName = model.providerName.orEmpty(), onEdit = { onAction(PlaylistMenuAction.EditServerLogin) })
+            SettingsGroupDivider(isTablet = true)
+            RefreshNowRow(state = refreshState, isTablet = true, onRefresh = { refreshController.start(account) })
             SettingsGroupDivider(isTablet = true)
             SettingsSwitchRow(
                 title = stringResource(Res.string.provider_details_enabled),
