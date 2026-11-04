@@ -1385,7 +1385,20 @@ public:
 
     void addSubtitleUrl(const std::string &url) {
         if (url.empty()) return;
+        // B200: http-header-fields is global to the mpv core, so the stream's Cookie/Authorization/
+        // tokens would be sent to the (third-party) subtitle host. sub-add opens the file
+        // synchronously: clear the headers for it, then restore the stream's.
+        {
+            std::lock_guard<std::mutex> lock(mpvMutex);
+            if (mpv) mpvApi().setPropertyString(mpv, "http-header-fields", "");
+        }
         command({"sub-add", url, "select"});
+        {
+            std::lock_guard<std::mutex> lock(mpvMutex);
+            if (mpv && !streamHeaderFields.empty()) {
+                mpvApi().setPropertyString(mpv, "http-header-fields", streamHeaderFields.c_str());
+            }
+        }
     }
 
     void removeExternalSubtitles() {
@@ -1527,6 +1540,8 @@ private:
 
     std::mutex mpvMutex;
     mpv_handle *mpv = nullptr;
+    // B200: the stream's http-header-fields as handed to mpv at create; restored after a sub-add.
+    std::string streamHeaderFields;
     std::thread eventThread;
     std::atomic<long long> videoFrameTicks_{0};
     std::atomic_bool stopping = false;
@@ -1955,6 +1970,7 @@ private:
                     }
                 }
                 setMpvOptionStringLocked("http-header-fields", headers.c_str());
+                streamHeaderFields = headers;
             }
 
             int initResult = api.initialize(mpv);

@@ -1104,6 +1104,8 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     WKWebView *_webView;
     PlayerScriptHandler *_scriptHandler;
     mpv_handle *_mpv;
+    // B200: the stream's http-header-fields as handed to mpv at create; restored after a sub-add.
+    NSString *_streamHeaderFields;
     NSTimer *_timer;
     NSTimer *_resizeSettleTimer;
     NSTimer *_fullscreenTransitionTimer;
@@ -1840,6 +1842,7 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
         }
         NSString *headers = [escaped componentsJoinedByString:@","];
         setMpvOptionString(_mpv, "http-header-fields", headers.UTF8String);
+        _streamHeaderFields = headers;
     }
 
     int initResult = mpv_initialize(_mpv);
@@ -2614,7 +2617,15 @@ static void nuvioMpvWakeup(void *ctx) {
 
 - (void)addSubtitleUrl:(NSString *)url {
     if (!_mpv || url.length == 0) return;
+    // B200: http-header-fields is global to the mpv core, so the stream's Cookie/Authorization/tokens
+    // would be sent to the (third-party) subtitle host. sub-add opens the file synchronously: clear the
+    // headers for it, then restore the stream's.
+    const char *streamFields = _streamHeaderFields.UTF8String;
+    mpv_set_property_string(_mpv, "http-header-fields", "");
     [self command:@[@"sub-add", url, @"select"]];
+    if (streamFields != nullptr && streamFields[0] != '\0') {
+        mpv_set_property_string(_mpv, "http-header-fields", streamFields);
+    }
 }
 
 - (void)removeExternalSubtitles {

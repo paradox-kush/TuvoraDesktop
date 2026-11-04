@@ -57,6 +57,8 @@ constexpr double kMaxVolumePercent = 200.0;
 
 struct Player {
     mpv_handle *mpv = nullptr;
+    // B200: the stream's http-header-fields as handed to mpv at create; restored after a sub-add.
+    std::string streamHeaderFields;
     std::thread eventThread;
     std::atomic<bool> running{false};
     std::atomic<bool> ended{false};
@@ -1671,6 +1673,7 @@ JNIEXPORT jlong JNICALL NP(create)(
         mpv_set_option_string(m, "tls-verify", gNextCreateTlsVerify.exchange(true) ? "yes" : "no");
         if (!headerFields.empty()) {
             mpv_set_option_string(m, "http-header-fields", headerFields.c_str());
+            player->streamHeaderFields = headerFields;
         }
         if (initialPositionMs > 0) {
             std::string start = std::to_string(initialPositionMs / 1000.0);
@@ -1982,7 +1985,14 @@ JNIEXPORT void JNICALL NP(addSubtitleUrl)(JNIEnv *env, jobject, jlong handle, js
     if (!p) return;
     std::string sub = jstringToUtf8(env, url);
     const char *cmd[] = {"sub-add", sub.c_str(), "select", nullptr};
+    // B200: http-header-fields is global to the mpv core, so the stream's Cookie/Authorization/tokens
+    // would be sent to the (third-party) subtitle host. sub-add opens the file synchronously: clear
+    // the headers for it, then restore the stream's.
+    mpv_set_property_string(p->mpv, "http-header-fields", "");
     mpv_command(p->mpv, cmd);
+    if (!p->streamHeaderFields.empty()) {
+        mpv_set_property_string(p->mpv, "http-header-fields", p->streamHeaderFields.c_str());
+    }
 }
 
 JNIEXPORT void JNICALL NP(clearExternalSubtitles)(JNIEnv *, jobject, jlong handle) {
