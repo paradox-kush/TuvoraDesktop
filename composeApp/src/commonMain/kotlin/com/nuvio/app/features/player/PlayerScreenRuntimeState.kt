@@ -212,6 +212,8 @@ internal class PlayerScreenRuntime(
     val playerReleaseSurfaceRetention = PlayerReleaseSurfaceRetention()
     var playerControllerSourceUrl by mutableStateOf<String?>(null)
     var errorMessage by mutableStateOf<String?>(null)
+    /** The live reconnect ladder ran out: the error modal offers Retry beside Go back. */
+    var liveReconnectFailed by mutableStateOf(false)
     /**
      * Resolves a user-facing string for a message the runtime raises itself (toasts). Production uses the
      * Compose resource environment; tests replace it, since the Android host JVM has no resource system.
