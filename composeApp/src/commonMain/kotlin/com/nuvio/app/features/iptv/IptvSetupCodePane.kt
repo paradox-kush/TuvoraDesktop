@@ -55,9 +55,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.auth.AuthState
 import com.nuvio.app.core.build.AppFeaturePolicy
-import com.nuvio.app.core.ui.NuvioStatusModal
 import com.nuvio.app.core.ui.NuvioTokens
-import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.profiles.ProfileState
 import nuvio.composeapp.generated.resources.Res
@@ -74,6 +72,9 @@ import nuvio.composeapp.generated.resources.provider_desktop_route_stalker_desc
 import nuvio.composeapp.generated.resources.provider_desktop_route_xtream
 import nuvio.composeapp.generated.resources.provider_desktop_route_xtream_desc
 import nuvio.composeapp.generated.resources.provider_setup_add_to
+import nuvio.composeapp.generated.resources.provider_setup_add_to_device
+import nuvio.composeapp.generated.resources.provider_setup_preview_device
+import nuvio.composeapp.generated.resources.provider_setup_preview_device_note
 import nuvio.composeapp.generated.resources.provider_setup_adding
 import nuvio.composeapp.generated.resources.provider_setup_cancel
 import nuvio.composeapp.generated.resources.provider_setup_code_help
@@ -81,9 +82,6 @@ import nuvio.composeapp.generated.resources.provider_setup_code_label
 import nuvio.composeapp.generated.resources.provider_setup_code_placeholder
 import nuvio.composeapp.generated.resources.provider_setup_continue
 import nuvio.composeapp.generated.resources.provider_setup_enter_other_code
-import nuvio.composeapp.generated.resources.provider_setup_guest_confirm
-import nuvio.composeapp.generated.resources.provider_setup_guest_message
-import nuvio.composeapp.generated.resources.provider_setup_guest_title
 import nuvio.composeapp.generated.resources.provider_setup_paste
 import nuvio.composeapp.generated.resources.provider_setup_preview_account
 import nuvio.composeapp.generated.resources.provider_setup_preview_addons
@@ -92,7 +90,6 @@ import nuvio.composeapp.generated.resources.provider_setup_preview_loading
 import nuvio.composeapp.generated.resources.provider_setup_preview_playlists
 import nuvio.composeapp.generated.resources.provider_setup_preview_profile
 import nuvio.composeapp.generated.resources.provider_setup_section_title
-import nuvio.composeapp.generated.resources.provider_setup_sign_in_needed
 import org.jetbrains.compose.resources.StringResource
 import org.jetbrains.compose.resources.stringResource
 
@@ -113,14 +110,12 @@ internal fun IptvSetupCodePane(
 ) {
     val tokens = MaterialTheme.nuvio
     val clipboard = LocalClipboardManager.current
-    val signInNeeded = stringResource(Res.string.provider_setup_sign_in_needed)
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
 
     val submit = {
         when (controller.onContinue()) {
             ContinueResult.OPEN_PREVIEW -> onPreview()
-            ContinueResult.NEEDS_SIGN_IN -> if (!controller.state.value.guestPrompt) NuvioToastController.show(signInNeeded)
             ContinueResult.REJECTED -> Unit
         }
     }
@@ -136,7 +131,6 @@ internal fun IptvSetupCodePane(
         controller.onTyped(grouped)
         if (pasted && SetupCodeEntryPolicy.submitsOnPaste(grouped)) submit()
     }
-    GuestSignInDialog(ui, controller)
 
     val live = SetupCodeEntryPolicy.liveProblem(ui.typed)
     val problem = ui.typedProblem ?: live
@@ -232,21 +226,6 @@ private fun ManualRoute(type: XtreamSourceType, title: StringResource, descripti
     }
 }
 
-/** Asks a guest before signing them out of guest mode to reach sign-in (that wipes what a guest saved on the device). */
-@Composable
-private fun GuestSignInDialog(ui: SetupCodeUiState, controller: SetupCodeController) {
-    if (!ui.guestPrompt) return
-    NuvioStatusModal(
-        title = stringResource(Res.string.provider_setup_guest_title),
-        message = stringResource(Res.string.provider_setup_guest_message),
-        isVisible = true,
-        confirmText = stringResource(Res.string.provider_setup_guest_confirm),
-        dismissText = stringResource(Res.string.provider_setup_cancel),
-        onConfirm = controller::confirmGuestSignIn,
-        onDismiss = controller::dismissGuestPrompt,
-    )
-}
-
 /**
  * The preview: what the held code will add, which profile gets it, and one gold "Add to <profile>". Return
  * confirms, Esc cancels back to the entry field. Refusals (expired, used, network, rate limit) are plain
@@ -265,7 +244,6 @@ internal fun IptvSetupPreviewPane(
     val tokens = MaterialTheme.nuvio
     // Keyed on the held-code generation: a link (or a new Continue) while this pane is open restarts the load.
     LaunchedEffect(ui.holdGeneration) { controller.loadPreview() }
-    GuestSignInDialog(ui, controller)
     val focus = remember { FocusRequester() }
     LaunchedEffect(ui.previewLoading, ui.previewOutcome) { runCatching { focus.requestFocus() } }
 
@@ -273,6 +251,7 @@ internal fun IptvSetupPreviewPane(
     val outcome = ui.previewOutcome
     val selected = profileState.profiles.firstOrNull { it.profileIndex == ui.selectedProfileIndex } ?: profileState.activeProfile
     val dead = ui.redeemRefusal is SetupCodeOutcome.Unusable || ui.redeemRefusal is SetupCodeOutcome.Expired
+    val onDevice = accountKindOf(auth) != AccountKind.REAL
     val canConfirm = preview != null && !ui.redeeming && !dead
 
     Column(
@@ -327,6 +306,11 @@ internal fun IptvSetupPreviewPane(
                         }
                     }
 
+                    if (onDevice) {
+                        // B205: no account. Nothing to pick; the playlists land on this device and a later sign-in claims them.
+                        SectionTitle(stringResource(Res.string.provider_setup_preview_device))
+                        Text(stringResource(Res.string.provider_setup_preview_device_note), style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textMuted)
+                    } else {
                     SectionTitle(stringResource(Res.string.provider_setup_preview_profile))
                     if (profileState.profiles.size > 1) {
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -346,6 +330,7 @@ internal fun IptvSetupPreviewPane(
                     (auth as? AuthState.Authenticated)?.email?.let {
                         Text(stringResource(Res.string.provider_setup_preview_account) + ": " + it, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textMuted)
                     }
+                    }
                     ui.redeemRefusal?.let { refusal ->
                         Text(refusal.message?.text().orEmpty(), style = MaterialTheme.typography.bodyMedium, color = tokens.colors.danger)
                         if (refusal is SetupCodeOutcome.Expired) DesktopContactButtons(refusal.support.links())
@@ -359,6 +344,7 @@ internal fun IptvSetupPreviewPane(
                         ) {
                             Text(
                                 if (ui.redeeming) stringResource(Res.string.provider_setup_adding)
+                                else if (onDevice) stringResource(Res.string.provider_setup_add_to_device)
                                 else stringResource(Res.string.provider_setup_add_to, selected?.name.orEmpty()),
                             )
                         }

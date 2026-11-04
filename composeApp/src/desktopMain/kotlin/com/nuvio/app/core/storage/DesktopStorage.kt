@@ -26,16 +26,31 @@ internal object DesktopStorage {
         stores.getOrPut(name) { Store(rootDir.resolve("$name.properties")) }
     }
 
-    fun wipe() {
-        synchronized(stores) {
-            stores.values.forEach(Store::clearInMemory)
-            stores.clear()
+    /**
+     * Stores the account wipe must NOT clear. B205: the pending device-setup claim is what carries playlists
+     * redeemed with no account into the account, and the sign-in of a guest is exactly when this wipe runs.
+     */
+    internal val PRESERVED_STORE_NAMES: Set<String> = setOf("tuvora_device_setup_claims")
+
+    private val preservedFileNames: Set<String> = PRESERVED_STORE_NAMES.map { "$it.properties" }.toSet()
+
+    fun wipe() = wipe(rootDir)
+
+    /** [root] is a parameter so a test wipes a temp directory, never the real app data. */
+    internal fun wipe(root: Path) {
+        // The in-memory stores belong to the real data directory; a wipe of any other directory (a test's) leaves them be.
+        if (root == rootDir) {
+            synchronized(stores) {
+                val doomed = stores.keys.filter { it !in PRESERVED_STORE_NAMES }
+                doomed.forEach { name -> stores.remove(name)?.clearInMemory() }
+            }
         }
-        if (!rootDir.exists()) return
-        Files.walk(rootDir).use { stream ->
+        if (!root.exists()) return
+        Files.walk(root).use { stream ->
             stream
                 .sorted(Comparator.reverseOrder())
-                .filter { it != rootDir }
+                .filter { it != root }
+                .filter { path -> !(path.parent == root && path.fileName.toString() in preservedFileNames) }
                 .forEach { path -> runCatching { Files.deleteIfExists(path) } }
         }
     }

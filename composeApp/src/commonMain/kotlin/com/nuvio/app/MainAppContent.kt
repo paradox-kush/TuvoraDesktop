@@ -940,14 +940,10 @@ internal fun MainAppContent(
         val shellReadyNow by rememberUpdatedState(rootContentReady)
 
         fun openSetupLink(entry: com.nuvio.app.core.contracts.SetupCodeEntry) {
-            val guest = AuthRepository.state.value.isLocalOnly
             val route = SetupLinkRoutePolicy.decide(
-                isGuest = guest,
                 onTabs = navController.currentRoute is TabsRoute,
                 canPopToTabs = !useNativeNavigation,
             )
-            // A guest sees the code on the entry pane, where they are asked before being taken to sign-in.
-            if (guest) entry.prepareCodeEntryPage()
             // Desktop: the preview / entry is the right pane of the IPTV settings page.
             SettingsPageRequest.request("Iptv")
             activateTab(AppScreenTab.Settings)

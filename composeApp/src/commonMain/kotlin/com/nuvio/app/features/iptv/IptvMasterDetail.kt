@@ -49,6 +49,7 @@ import nuvio.composeapp.generated.resources.provider_managed_row_day
 import nuvio.composeapp.generated.resources.provider_managed_row_days
 import nuvio.composeapp.generated.resources.provider_managed_row_expired
 import nuvio.composeapp.generated.resources.provider_setup_added_other_profile_toast
+import nuvio.composeapp.generated.resources.provider_setup_added_device_toast
 import nuvio.composeapp.generated.resources.provider_setup_added_toast
 import nuvio.composeapp.generated.resources.provider_setup_already_toast
 import nuvio.composeapp.generated.resources.provider_setup_nothing_added_toast
@@ -120,6 +121,7 @@ internal fun IptvMasterDetail(
             CompletionKind.NOTHING_MISSING_LOGIN -> stringResource(Res.string.provider_setup_skipped_login_toast, completion.providerName)
             CompletionKind.NOTHING_INVALID_URL -> stringResource(Res.string.provider_setup_skipped_url_toast, completion.providerName)
             CompletionKind.NOTHING_ADDED -> stringResource(Res.string.provider_setup_nothing_added_toast)
+            CompletionKind.ADDED_ON_DEVICE -> stringResource(Res.string.provider_setup_added_device_toast, completion.providerName)
             CompletionKind.ADDED ->
                 if (completion.profileIndex != profileState.activeProfile?.profileIndex) {
                     stringResource(
