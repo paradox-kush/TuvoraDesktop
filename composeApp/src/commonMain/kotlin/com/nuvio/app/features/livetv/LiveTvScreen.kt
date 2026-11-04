@@ -83,6 +83,7 @@ import com.nuvio.app.features.player.LiveReplayLaunch
 import com.nuvio.app.features.player.onLiveSnapshot
 import com.nuvio.app.features.player.onLiveSnapshotStopped
 import com.nuvio.app.features.player.PlatformPlayerSurface
+import com.nuvio.app.features.player.NativeControlsVisibilityPolicy
 import com.nuvio.app.features.player.PlayerControlsAction
 import com.nuvio.app.features.player.PlayerControlsState
 import com.nuvio.app.features.player.PlayerEngineController
@@ -1144,8 +1145,18 @@ private fun LivePlayerSurface(
     // push a new state on every tick.
     val resizeLabel = stringResource(resizeMode.labelRes)
     // P1: a live channel has no runtime (the bar shows LIVE); a replay keeps its seek bar and times.
-    val controlsState = remember(title, resizeLabel, isCatchUpPlayback) {
-        PlayerControlsState(title = title, resizeModeLabel = resizeLabel, isLive = !isCatchUpPlayback)
+    // B208: the native layer hides ITSELF after its idle timeout and reports `hideChrome`; it asks
+    // to come back with `cursorActivity` (mouse over the video) / `keepChromeVisible`. The host
+    // must mirror that, or it keeps pushing an unchanged `controlsVisible = true` which the engine
+    // drops, and the controls never return on mouse movement.
+    var nativeControlsVisible by remember { mutableStateOf(true) }
+    val controlsState = remember(title, resizeLabel, isCatchUpPlayback, nativeControlsVisible) {
+        PlayerControlsState(
+            title = title,
+            resizeModeLabel = resizeLabel,
+            isLive = !isCatchUpPlayback,
+            controlsVisible = nativeControlsVisible,
+        )
     }
     // Key by url so a channel switch cleanly re-initialises the engine.
     androidx.compose.runtime.key(current.url) {
@@ -1164,6 +1175,11 @@ private fun LivePlayerSurface(
             useNativeController = false,
             playerControlsState = controlsState,
             onPlayerControlsAction = onControlsAction,
+            onPlayerControlsEvent = { type, _ ->
+                NativeControlsVisibilityPolicy.next(nativeControlsVisible, type)
+                    ?.also { nativeControlsVisible = it }
+                    ?: false
+            },
             onControllerReady = onControllerReady,
             onSnapshot = onSnapshot,
             onError = onError,
