@@ -190,6 +190,7 @@ internal class PlayerScreenRuntime(
     var activeEpisodeThumbnail by mutableStateOf(episodeThumbnail)
     var activePauseDescription by mutableStateOf(pauseDescription)
     var activeVideoId by mutableStateOf(videoId)
+    var activeSubtitleExtras by mutableStateOf(args.subtitleExtras)
     var activeInitialPositionMs by mutableStateOf(initialPositionMs)
     // Bumped by "Start from beginning": re-mounts the player surface so the file reopens at 0:00.
     var startOverGeneration by mutableStateOf(0)
@@ -273,6 +274,10 @@ internal class PlayerScreenRuntime(
     var playerMetaVideos by mutableStateOf<List<MetaVideo>>(emptyList())
     var playerMeta by mutableStateOf<MetaDetails?>(null)
     var skipIntervals by mutableStateOf<List<SkipInterval>>(emptyList())
+    var chapterSkipIntervals: List<SkipInterval> = emptyList()
+    var apiSkipIntervals: List<SkipInterval> = emptyList()
+    var skipDetectionChapters: List<PlayerChapter> = emptyList()
+    var skipChaptersComputedForDuration: Long = 0L
     val autoSkippedIntervals = mutableSetOf<SkipInterval>()
     var lastManualSkipSeekPositions by mutableStateOf<Pair<Long, Long>?>(null)
     var activeSkipInterval by mutableStateOf<SkipInterval?>(null)
@@ -353,6 +358,9 @@ internal class PlayerScreenRuntime(
     var autoFetchedAddonSubtitlesForKey by mutableStateOf<String?>(null)
     var trackPreferenceRestoreApplied by mutableStateOf(false)
     var subtitleDelayMs by mutableStateOf(0)
+    var subtitleFontImportToken by mutableStateOf(0)
+    var subtitleFontsRevision by mutableStateOf(0)
+    var subtitleFontImportFailed by mutableStateOf(false)
     var subtitleAutoSyncState by mutableStateOf(SubtitleAutoSyncUiState())
 
     var lastSyncedSettingsResizeMode: PlayerResizeMode? = null

@@ -8,6 +8,7 @@ internal actual object PlayerTrackPreferenceStorage {
     private const val subtitleLanguageKey = "subtitle_language"
     private const val subtitleNameKey = "subtitle_name"
     private const val subtitleTrackIdKey = "subtitle_track_id"
+    private const val subtitleIsForcedKey = "subtitle_is_forced"
     private const val addonSubtitleIdKey = "addon_subtitle_id"
     private const val addonSubtitleUrlKey = "addon_subtitle_url"
     private const val addonSubtitleItemIdKey = "addon_subtitle_item_id"
@@ -16,9 +17,6 @@ internal actual object PlayerTrackPreferenceStorage {
     private const val audioNameKey = "audio_name"
     private const val audioTrackIdKey = "audio_track_id"
     private const val subtitleDelayMsKey = "subtitle_delay_ms"
-    // Same key as the Android/iOS stores. It was never written here, so a remembered FORCED track
-    // came back as an ordinary one of the same language on desktop (F37 forced subs).
-    private const val subtitleIsForcedKey = "subtitle_is_forced"
     private const val resizeModeKey = "resize_mode"
     private const val zoomScaleXKey = "zoom_scale_x"
     private const val zoomScaleYKey = "zoom_scale_y"
@@ -33,6 +31,7 @@ internal actual object PlayerTrackPreferenceStorage {
             subtitleLanguage = loadString(subtitleLanguageKey, id),
             subtitleName = loadString(subtitleNameKey, id),
             subtitleTrackId = loadString(subtitleTrackIdKey, id),
+            subtitleIsForced = loadBoolean(subtitleIsForcedKey, id),
             addonSubtitleId = loadString(addonSubtitleIdKey, id),
             addonSubtitleUrl = loadString(addonSubtitleUrlKey, id),
             addonSubtitleItemId = loadString(addonSubtitleItemIdKey, id),
@@ -40,7 +39,6 @@ internal actual object PlayerTrackPreferenceStorage {
             audioLanguage = loadString(audioLanguageKey, id),
             audioName = loadString(audioNameKey, id),
             audioTrackId = loadString(audioTrackIdKey, id),
-            subtitleIsForced = loadString(subtitleIsForcedKey, id)?.toBooleanStrictOrNull(),
             resizeMode = loadString(resizeModeKey, id),
             zoomScaleX = loadString(zoomScaleXKey, id)?.toFloatOrNull(),
             zoomScaleY = loadString(zoomScaleYKey, id)?.toFloatOrNull(),
@@ -72,6 +70,7 @@ internal actual object PlayerTrackPreferenceStorage {
         putOptionalString(subtitleLanguageKey, id, preference.subtitleLanguage)
         putOptionalString(subtitleNameKey, id, preference.subtitleName)
         putOptionalString(subtitleTrackIdKey, id, preference.subtitleTrackId)
+        putOptionalBoolean(subtitleIsForcedKey, id, preference.subtitleIsForced)
         putOptionalString(addonSubtitleIdKey, id, preference.addonSubtitleId)
         putOptionalString(addonSubtitleUrlKey, id, preference.addonSubtitleUrl)
         putOptionalString(addonSubtitleItemIdKey, id, preference.addonSubtitleItemId)
@@ -79,7 +78,6 @@ internal actual object PlayerTrackPreferenceStorage {
         putOptionalString(audioLanguageKey, id, preference.audioLanguage)
         putOptionalString(audioNameKey, id, preference.audioName)
         putOptionalString(audioTrackIdKey, id, preference.audioTrackId)
-        putOptionalString(subtitleIsForcedKey, id, preference.subtitleIsForced?.toString())
         putOptionalString(resizeModeKey, id, preference.resizeMode)
         putOptionalString(zoomScaleXKey, id, preference.zoomScaleX?.toString())
         putOptionalString(zoomScaleYKey, id, preference.zoomScaleY?.toString())
@@ -102,6 +100,18 @@ internal actual object PlayerTrackPreferenceStorage {
 
     private fun loadString(field: String, contentId: String): String? =
         store.getString(scopedKey(field, contentId))?.takeIf { it.isNotBlank() }
+
+    private fun loadBoolean(field: String, contentId: String): Boolean? =
+        store.getBoolean(scopedKey(field, contentId))
+
+    private fun putOptionalBoolean(field: String, contentId: String, value: Boolean?) {
+        val key = scopedKey(field, contentId)
+        if (value == null) {
+            store.remove(key)
+        } else {
+            store.putBoolean(key, value)
+        }
+    }
 
     private fun putOptionalString(field: String, contentId: String, value: String?) {
         val key = scopedKey(field, contentId)

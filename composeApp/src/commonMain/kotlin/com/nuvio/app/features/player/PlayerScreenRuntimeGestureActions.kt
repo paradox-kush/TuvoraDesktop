@@ -72,6 +72,7 @@ internal fun PlayerScreenRuntime.lockPlayerControls() {
     showVideoSettingsModal = false
     showStreamInfoOverlay = false
     showStreamInfo = false
+    showPartyPanel = false
     showSourcesPanel = false
     showEpisodesPanel = false
     showChaptersPanel = false

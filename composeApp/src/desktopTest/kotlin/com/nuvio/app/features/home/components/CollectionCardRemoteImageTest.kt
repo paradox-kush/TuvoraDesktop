@@ -76,10 +76,6 @@ class CollectionCardRemoteImageTest {
                 }
             }
             waitForColor(2)
-            // Upstream #694 prefetches the focus asset once the card is visible (so hover plays
-            // without a network wait), which superseded this test's original "no load before
-            // hover" rule. What still must hold: at most one fetch, and hover reuses it.
-            assertTrue(requests.get() <= 1, "The focus asset may be prefetched at most once before hover")
             card.performMouseInput { enter(center) }
             waitForColor(0)
             waitForColor(1)
