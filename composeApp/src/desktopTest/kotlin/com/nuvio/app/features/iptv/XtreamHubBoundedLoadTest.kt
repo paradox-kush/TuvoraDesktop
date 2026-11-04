@@ -1,7 +1,9 @@
 package com.nuvio.app.features.iptv
 
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
+import com.nuvio.app.core.journal.StartupJournal
 import com.nuvio.app.core.journal.StartupJournalStore
+import com.nuvio.app.features.iptv.match.XtreamTmdbResolver
 import com.nuvio.app.core.storage.DesktopStorage
 import com.nuvio.app.features.epg.EpgMirrorDbDriver
 import com.nuvio.app.features.iptv.content.IptvContentDbDriver
@@ -77,7 +79,10 @@ class XtreamHubBoundedLoadTest {
     fun setUp() {
         tempDir = Files.createTempDirectory("hub-bounded-load")
         XtreamAccountStorage.storeOverrideForTests = DesktopStorage.Store(tempDir.resolve("nuvio_iptv.properties"))
+        // The journal and resolver latch state process-wide; start from a cold, healthy journal on tempDir.
+        StartupJournal.resetForTests()
         StartupJournalStore.dirOverrideForTests = tempDir
+        runBlocking { XtreamTmdbResolver.resetForTests() }
         BoundedLoad.stallOverrideMsForTests = 400L
         IptvTransport.current = provider
         IptvContentDbDriver.openForTests = { BundledSQLiteDriver().open(":memory:") }
@@ -97,6 +102,8 @@ class XtreamHubBoundedLoadTest {
         XtreamRepository.installAccountsForTest(emptyList())
         XtreamHubRepository.resetForProfile()
         XtreamAccountStorage.storeOverrideForTests = null
+        runBlocking { XtreamTmdbResolver.resetForTests() }
+        StartupJournal.resetForTests()
         StartupJournalStore.dirOverrideForTests = null
         tempDir.toFile().deleteRecursively()
     }

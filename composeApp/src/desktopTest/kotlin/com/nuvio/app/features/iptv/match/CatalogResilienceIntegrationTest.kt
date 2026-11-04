@@ -1,6 +1,7 @@
 package com.nuvio.app.features.iptv.match
 
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
+import com.nuvio.app.core.journal.StartupJournal
 import com.nuvio.app.core.journal.StartupJournalStore
 import com.nuvio.app.features.iptv.IptvTransport
 import com.nuvio.app.features.iptv.InMemoryServerFailoverStateStore
@@ -9,7 +10,6 @@ import com.nuvio.app.features.iptv.XtreamAccount
 import com.nuvio.app.features.iptv.content.IptvContentDbDriver
 import com.nuvio.app.features.tmdb.TmdbTitleBundle
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.AfterTest
@@ -53,7 +53,11 @@ class CatalogResilienceIntegrationTest {
     fun setUp() {
         // Without a healthy StartupJournal the resolver withholds every build (beginAttempt == null), so a
         // hanging download would never be awaited and the test could not tell blocking from not blocking.
+        // The journal latches `initialized`/`healthy` process-wide: any earlier test class that touched it
+        // with no storage left it permanently unhealthy. Reset, then point it at a fresh temp dir.
+        StartupJournal.resetForTests()
         StartupJournalStore.dirOverrideForTests = java.nio.file.Files.createTempDirectory("journal")
+        runBlocking { XtreamTmdbResolver.resetForTests() }
         IptvContentDbDriver.openForTests = { BundledSQLiteDriver().open(":memory:") }
         MatchDbDriver.openForTests = { BundledSQLiteDriver().open(":memory:") }
         PlaylistServerFailover.installForTest(store = InMemoryServerFailoverStateStore(), clock = { 1_000L }, profileId = { 1 })
@@ -65,8 +69,7 @@ class CatalogResilienceIntegrationTest {
         gate.complete(Unit)
         // Let the builds the hung tests leaked finish (they release their global build permit and stop
         // touching the journal) BEFORE the next test swaps in its own storage.
-        runBlocking { withTimeoutOrNull(5_000) { XtreamTmdbResolver.indexing.first { it.isEmpty() } } }
-        XtreamTmdbResolver.deadlineOverrideMsForTests = null
+        runBlocking { withTimeoutOrNull(5_000) { XtreamTmdbResolver.resetForTests() } }
         PlaylistServerFailover.resetForTest()
         StartupJournalStore.dirOverrideForTests = null
         IptvContentDbDriver.openForTests = null
