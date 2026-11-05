@@ -27,7 +27,7 @@ class SingleUseReplayWiringTest {
     @Test
     fun `mpv is told not to reconnect a single-use link`() {
         assertTrue(engine.contains("LiveLinkReconnectPolicy.modeFor(singleUseLink)"))
-        assertTrue(engine.contains("LiveLinkReconnectPolicy.mpvStreamLavfOptions"))
+        assertTrue(engine.contains("LiveLinkReconnectPolicy::mpvStreamLavfOptions"))
     }
 
     @Test
