@@ -65,6 +65,15 @@ jobs:
           MACOS_ARCH: ${{ matrix.arch }}
         run: git lfs pull --include="composeApp/src/desktopMain/native/macos/runtime/${MACOS_ARCH}/**" --exclude=""
 
+      - name: Select newest Xcode
+        # The bridge uses macOS 26 SDK APIs (HDR layer headroom); the runner's default Xcode may be
+        # older. Pick the newest installed Xcode; the source also compiles on older SDKs.
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE/Contents/Developer"; fi
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+
       - name: Set up Java
         uses: actions/setup-java@v5
         with:
