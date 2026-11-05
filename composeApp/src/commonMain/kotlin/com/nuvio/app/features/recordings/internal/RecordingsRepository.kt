@@ -225,10 +225,19 @@ class RecordingsRepository(
         files.delete(partPath(path) + ".meta")
     }
 
-    /** A schedule that is gone (cancelled, removed with its series) leaves no partial behind. */
+    /**
+     * A schedule that is leaving (cancelled, its series stopped) may hold a partial from an earlier attempt
+     * while it waits to retry, with no recording row to name it. The name derives from the schedule and only
+     * the extension depends on the link used, so both are cleared; rows still tied to it are cleared too.
+     */
     private suspend fun dropPartialsOf(scheduleId: String) {
+        val names = mutableSetOf<String>()
+        doc.scheduleValues.firstOrNull { it.id == scheduleId }?.let { s ->
+            for (link in listOf<String?>(null, "x.mp4")) names += fileNameFor(s, link)
+        }
         doc.recordingValues.filter { it.scheduleId == scheduleId && it.status != RecordingStatus.DONE }
-            .forEach { deletePart(files.pathFor(it.fileName)) }
+            .forEach { names += it.fileName }
+        names.forEach { deletePart(files.pathFor(it)) }
     }
 
     // ---- alarms ---------------------------------------------------------------------------
@@ -339,9 +348,9 @@ class RecordingsRepository(
             if (!loaded) loadLocked(clock())
             alarms.disarm(scheduleId)
             if (doc.scheduleValues.any { it.id == scheduleId }) {
+                dropPartialsOf(scheduleId)
                 edit(schedules = { list -> list.filterNot { it.id == scheduleId } })
                 ledger.forget(scheduleId)
-                dropPartialsOf(scheduleId)
                 commit()
             }
             null
