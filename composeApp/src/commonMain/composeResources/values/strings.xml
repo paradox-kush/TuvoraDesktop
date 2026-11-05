@@ -2839,6 +2839,7 @@
     <string name="recordings_action_done">Done</string>
     <string name="recordings_working">Setting it up…</string>
     <string name="recordings_prepare_failed">Couldn’t read this channel’s details. Try again in a moment.</string>
+    <string name="recordings_series_guide_failed">Couldn’t read this channel’s guide, so no episodes were scheduled. Try again in a moment.</string>
     <string name="recordings_unavailable_needs_catch_up">Can’t record this one: the channel doesn’t keep a catch-up archive.</string>
     <string name="recordings_unavailable_over">Can’t record this one: it’s over and the provider no longer has it.</string>
     <string name="recordings_unavailable_bad_times">Can’t record this one: the guide has no start and end time for it.</string>
