@@ -2618,6 +2618,7 @@
     <string name="subtitle_shadow_size">Shadow size</string>
     <string name="subtitle_reset_appearance">Reset appearance</string>
     <string name="compose_player_retry">Retry</string>
+    <string name="player_vod_start_failed">This stream didn't start. It may be slow, offline, or its video output failed to start. Check your connection and retry, or pick another source.</string>
     <string name="player_live_reconnect_failed">The channel stopped streaming and wouldn't reconnect after several tries. Your provider may have closed the connection or hit its connection limit. Try again in a moment.</string>
     <string name="streams_empty_iptv_loading_title">Your playlist is still loading</string>
     <string name="streams_empty_iptv_loading_message">It hasn't finished loading its catalog on this device yet, so this title couldn't be checked. Tap refresh in a minute.</string>
