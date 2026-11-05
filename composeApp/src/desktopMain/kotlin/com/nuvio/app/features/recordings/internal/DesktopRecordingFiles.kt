@@ -10,15 +10,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Desktop storage: state files in [stateDir], recordings in whatever [recordingsDir] answers now
+ * Desktop storage: state files in the folder [stateDirOf] answers, recordings in whatever [recordingsDir] answers now
  * (the app's own folder today; the Settings wave swaps in the user's choice through one setter, so
  * it is read on every use). A state write goes to a temporary file, is fsynced, then moved over the
  * old one, so a crash leaves the old state or the new one and never half of each.
  */
 internal class DesktopRecordingFiles(
-    private val stateDir: File,
+    private val stateDirOf: () -> File,
     private val recordingsDir: () -> File,
 ) : RecordingFiles {
+    private val stateDir: File get() = stateDirOf()
 
     override suspend fun read(name: String): String? = withContext(Dispatchers.IO) {
         File(stateDir, name).takeIf { it.isFile }?.readText()

@@ -87,6 +87,8 @@ fun main(args: Array<String>) {
     AppIconRepository.ensureLoaded()
     AutoSyncPreferencesDesktop.initialize()
     DiscordPresenceManager.start()
+    // Recordings (desktop records while the app is open): recover, re-arm and fire overdue, off the main thread.
+    com.nuvio.app.features.recordings.api.RecordingsDesktop.onAppStart()
 
     application {
         val smokePlayerUrl = (
@@ -142,6 +144,7 @@ fun main(args: Array<String>) {
             onCloseRequest = {
                 P2pStreamingEngine.shutdown()
                 DiscordPresenceManager.shutdown()
+                DesktopAppScope.close() // ends the recording timers and any running capture
                 SentryInitializer.close()
                 exitApplication()
             },

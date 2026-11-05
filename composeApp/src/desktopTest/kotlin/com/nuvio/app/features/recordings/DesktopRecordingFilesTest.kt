@@ -13,7 +13,7 @@ import kotlinx.coroutines.runBlocking
 class DesktopRecordingFilesTest {
     private val root = Files.createTempDirectory("rec-files").toFile()
     private var recDir = File(root, "rec")
-    private val files = DesktopRecordingFiles(File(root, "state")) { recDir }
+    private val files = DesktopRecordingFiles({ File(root, "state") }) { recDir }
 
     @AfterTest
     fun tearDown() { root.deleteRecursively() }
