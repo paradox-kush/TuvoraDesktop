@@ -66,6 +66,14 @@ import com.nuvio.app.core.ui.PlatformBackHandler
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
 import com.nuvio.app.features.iptv.BoundedLoad
+import com.nuvio.app.features.livetv.pause.EnginePort
+import com.nuvio.app.features.livetv.pause.LiveLink
+import com.nuvio.app.features.livetv.pause.LivePauseChannel
+import com.nuvio.app.features.livetv.pause.LivePauseState
+import com.nuvio.app.features.livetv.pause.LivePauseSurface
+import com.nuvio.app.features.livetv.pause.LivePauseUiText
+import com.nuvio.app.features.livetv.pause.livePauseCapabilities
+import com.nuvio.app.features.livetv.pause.rememberLivePauseController
 import com.nuvio.app.features.iptv.CatchUpDialectWalk
 import com.nuvio.app.features.iptv.LoadSurface
 import com.nuvio.app.features.iptv.CatchUpPlayback
@@ -118,6 +126,9 @@ import nuvio.composeapp.generated.resources.compose_livetv_live_badge
 import nuvio.composeapp.generated.resources.compose_livetv_no_programme_info
 import nuvio.composeapp.generated.resources.compose_livetv_play_pause
 import org.jetbrains.compose.resources.stringResource
+
+/** The one player on this screen; multiview gives each tile its own id (state, capture and cache dir are keyed by it). */
+private const val LIVE_TV_PAUSE_INSTANCE = "live-tv-main"
 
 /** Share of the window height the docked player takes when the window is wider than it is tall. */
 private const val DOCKED_PLAYER_HEIGHT_FRACTION = 0.58f
@@ -597,6 +608,91 @@ fun LiveTvScreen(
         nowNextOf(programmes[currentContentId], nowMs)
     }
 
+    // --- Live pause / rewind (one controller per player instance; the screen only renders its state) ------
+    val pause = rememberLivePauseController(
+        instanceId = LIVE_TV_PAUSE_INSTANCE,
+        // Live (and Retry): the ordinary channel open, which also mints a fresh single-use link.
+        onRetune = reResolve,
+        // A long pause on a channel with a provider archive resumes from the archive at the pause instant.
+        onOpenCatchUp = { startMs, endMs ->
+            scope.launch {
+                val request = LiveTvData.catchUpRequest(currentContentId, startMs, endMs)
+                val session = beginLaunchReplay(
+                    walk = dialectWalk,
+                    request = request,
+                    contentId = currentContentId,
+                    programmeTitle = nowNext.now?.title ?: currentTitle,
+                    startMs = startMs,
+                    endMs = endMs,
+                )
+                if (session == null) {
+                    catchUpNotice = CatchUpNotice.NO_RECORDING
+                    controller?.play()   // no archive after all: carry on with the live picture that was paused
+                } else {
+                    catchUpNotice = null
+                    catchUp = session
+                }
+            }
+        },
+        // The same live-resolve path the screen uses, forced to mint (a capture never re-opens a spent link).
+        mint = {
+            val minted = LiveTvData.resolveSource(currentContentId, currentTitle, currentLogo, forceMint = true)
+                ?: error("no link for $currentContentId")
+            LiveLink(minted.url, minted.headers)
+        },
+    )
+    val pauseState by pause.state.collectAsState()
+    val pauseSurface by pause.surface.collectAsState()
+    // A zap or a replay ends the session; a freshly resolved live source (re)opens it.
+    LaunchedEffect(currentContentId, isCatchUp) { pause.reset() }
+    LaunchedEffect(source, isCatchUp) {
+        val live = source ?: return@LaunchedEffect
+        if (isCatchUp) return@LaunchedEffect
+        pause.onLiveSourceOpened(
+            contentId = currentContentId,
+            channel = LivePauseChannel(
+                isLive = true,
+                isCatchUpPlayback = false,
+                hasProviderArchive = channels.firstOrNull { it.contentId == currentContentId }?.let { it.catchUpDays > 0 } ?: false,
+            ),
+            link = LiveLink(live.url, live.headers),
+            singleUseLink = live.singleUseLink,
+        )
+    }
+    LaunchedEffect(channels, currentContentId) {
+        channels.firstOrNull { it.contentId == currentContentId }?.let { pause.onArchiveKnown(it.catchUpDays > 0) }
+    }
+    // What the player surface holds: the live source, nothing (the connection is released while a buffer starts),
+    // or a local growing playlist.
+    val surfaceSource: LiveChannelSource? = when (val held = pauseSurface) {
+        LivePauseSurface.Live -> source
+        LivePauseSurface.Released -> null
+        is LivePauseSurface.Local -> LiveChannelSource(url = held.playlistUrl)
+    }
+    val shiftedPause = pauseState as? LivePauseState.Shifted
+    // The native control layer's presses (Space, the buttons, Left/Right, the "-mm:ss - LIVE" chip) reach the pause
+    // controller through LivePauseNativeControls; a press it does not claim falls through to the engine as before.
+    val runPauseIntent: (LivePauseNativeControls.Intent) -> Boolean = { intent ->
+        when (intent) {
+            LivePauseNativeControls.Intent.Play -> { pause.onPlay(); true }
+            LivePauseNativeControls.Intent.Pause -> { pause.onPause(); true }
+            LivePauseNativeControls.Intent.Toggle -> { pause.togglePlayPause(snapshot.isPlaying); true }
+            LivePauseNativeControls.Intent.GoLive -> { pause.goLive(); true }
+            is LivePauseNativeControls.Intent.Seek -> { pause.seekInWindow(intent.positionMs); true }
+            LivePauseNativeControls.Intent.Unhandled -> false
+        }
+    }
+    val onPlayPause: () -> Unit = {
+        if (pause.handlesPlayPause) pause.togglePlayPause(snapshot.isPlaying)
+        else if (snapshot.isPlaying) controller?.pause() else controller?.play()
+    }
+    val pausePlaying = when (pauseState) {
+        is LivePauseState.Shifted -> !(pauseState as LivePauseState.Shifted).paused
+        is LivePauseState.Preparing, is LivePauseState.Failed -> false
+        LivePauseState.Off -> snapshot.isPlaying
+    }
+    val pauseRewind = LivePauseNativeControls.rewind(pauseState)
+
     androidx.compose.foundation.layout.BoxWithConstraints(
         modifier = modifier.fillMaxSize().background(colors.surface),
     ) {
@@ -616,8 +712,9 @@ fun LiveTvScreen(
         }
         var startupFailed by remember(startupPolicy) { mutableStateOf(false) }
         val lifecycleOwner = LocalLifecycleOwner.current
-        LaunchedEffect(startupPolicy, lifecycleOwner, startupFailed) {
-            if (source == null || isCatchUp || startupFailed) return@LaunchedEffect
+        LaunchedEffect(startupPolicy, lifecycleOwner, startupFailed, pauseSurface) {
+            // A pause owns the surface: no live picture is expected until Live, so the startup deadline stands down.
+            if (source == null || isCatchUp || startupFailed || pauseSurface != LivePauseSurface.Live) return@LaunchedEffect
             lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 delay(LivePlaybackStartupPolicy.TIMEOUT_MS)
                 startupFailed = startupPolicy.sample(
@@ -660,7 +757,8 @@ fun LiveTvScreen(
                 controlsVisible = false
             }
         }
-        val showPlayPause = !hasError && !(snapshot.isLoading && !snapshot.isPlaying)
+        val showPlayPause = !hasError && pauseState !is LivePauseState.Preparing && pauseState !is LivePauseState.Failed &&
+            !(snapshot.isLoading && !snapshot.isPlaying)
 
         Column(
             modifier = Modifier.fillMaxSize().then(
@@ -692,8 +790,10 @@ fun LiveTvScreen(
                 LivePlayerSurface(
                     // Dropping the source also removes the native video layer, which sits ABOVE
                     // Compose on desktop — otherwise it would hide the error pill below.
-                    source = source.takeUnless { startupFailed },
+                    source = surfaceSource.takeUnless { startupFailed },
                     isCatchUpPlayback = isCatchUp,
+                    startAtLiveWindowStart = pauseSurface is LivePauseSurface.Local,
+                    rewind = pauseRewind,
                     title = catchUp?.programmeTitle ?: currentTitle,
                     resizeMode = livePicture.resizeMode,
                     videoZoom = livePicture.zoom,
@@ -702,7 +802,14 @@ fun LiveTvScreen(
                     // only exit a desktop viewer can see. It does nothing unless this screen
                     // answers the action, which is how Live TV became a room with no door on
                     // macOS/Windows. Inert on Android/iOS: they ignore both parameters.
+                    onControlsEvent = { type, value ->
+                        runPauseIntent(LivePauseNativeControls.forEvent(type, value, pause.state.value))
+                    },
+                    onScrubFinished = { positionMs ->
+                        runPauseIntent(LivePauseNativeControls.forScrubFinish(positionMs, pause.state.value))
+                    },
                     onControlsAction = { action ->
+                        runPauseIntent(LivePauseNativeControls.forAction(action, pause.state.value)) ||
                         handleLiveTvPlayerControlsAction(
                             action = action,
                             fullscreen = fullscreen,
@@ -717,11 +824,15 @@ fun LiveTvScreen(
                     },
                     onControllerReady = {
                         controller = it
+                        pause.attachEngine(EnginePort(it), it.livePauseCapabilities())
                         // F47/UX61: live channels get the subtitle style too (was engine defaults).
                         PlayerSettingsRepository.uiState.value.let { settings -> it.applySubtitleStyle(settings.subtitleStyle, settings.useLibass) }
                     },
                     onSnapshot = onLiveSnapshot@{
                         snapshot = it
+                        pause.onSnapshot(it.positionMs, it.isPlaying)
+                        // A local buffer is not a live channel: none of the live recovery below applies to it.
+                        if (pause.surface.value is LivePauseSurface.Local) return@onLiveSnapshot
                         if (!isCatchUp && startupPolicy.sample(it, elapsedMs = 0L)) {
                             startupFailed = true
                             snapshot = it.copy(isLoading = false, isPlaying = false)
@@ -824,6 +935,14 @@ fun LiveTvScreen(
                 // Loading / error indicators (both orientations).
                 when {
                     hasError -> Box(Modifier.fillMaxSize(), Alignment.Center) { ErrorPill(colors.danger, onRetry) }
+                    pauseState is LivePauseState.Preparing || pauseState is LivePauseState.Failed ->
+                        LivePauseStatus(
+                            state = pauseState,
+                            colors = colors,
+                            onRetry = pause::retry,
+                            onGoLive = pause::goLive,
+                            modifier = Modifier.fillMaxSize(),
+                        )
                     snapshot.isLoading && !snapshot.isPlaying ->
                         Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = colors.accent) }
                 }
@@ -832,23 +951,25 @@ fun LiveTvScreen(
                     FullscreenControls(
                         visible = controlsVisible,
                         title = catchUp?.programmeTitle ?: currentTitle,
-                        isPlaying = snapshot.isPlaying,
+                        isPlaying = pausePlaying,
                         showPlayPause = showPlayPause,
                         danger = colors.danger,
                         accent = colors.accent,
                         isCatchUp = isCatchUp,
-                        onPlayPause = { if (snapshot.isPlaying) controller?.pause() else controller?.play() },
+                        onPlayPause = onPlayPause,
                         onExitFullscreen = { setFullscreen(false) },
                         onBack = onBack,
                     )
                 } else {
                     DockedPlayerOverlay(
-                        isPlaying = snapshot.isPlaying,
+                        isPlaying = pausePlaying,
                         showPlayPause = showPlayPause,
                         danger = colors.danger,
                         accent = colors.accent,
                         isCatchUp = isCatchUp,
-                        onPlayPause = { if (snapshot.isPlaying) controller?.pause() else controller?.play() },
+                        behindLiveMs = shiftedPause?.behindLiveMs,
+                        onGoLive = pause::goLive,
+                        onPlayPause = onPlayPause,
                         onEnterFullscreen = { setFullscreen(true) },
                         onBack = if (isCatchUp) ::exitCatchUp else onBack,
                     )
@@ -1060,6 +1181,8 @@ private fun DockedPlayerOverlay(
     danger: Color,
     accent: Color,
     isCatchUp: Boolean,
+    behindLiveMs: Long?,
+    onGoLive: () -> Unit,
     onPlayPause: () -> Unit,
     onEnterFullscreen: () -> Unit,
     onBack: () -> Unit,
@@ -1073,7 +1196,7 @@ private fun DockedPlayerOverlay(
         ) {
             OverlayIconButton(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(Res.string.action_back), onBack)
             Spacer(Modifier.width(NuvioTokens.Space.s8))
-            if (isCatchUp) CatchUpBadge(accent) else LiveBadge(danger)
+            if (isCatchUp) CatchUpBadge(accent) else LiveBadge(danger, behindLiveMs, onGoLive)
             Spacer(Modifier.weight(1f))
             OverlayIconButton(Icons.Filled.Fullscreen, stringResource(Res.string.compose_livetv_fullscreen), onEnterFullscreen)
         }
@@ -1153,9 +1276,13 @@ private fun FullscreenControls(
 private fun LivePlayerSurface(
     source: LiveChannelSource?,
     isCatchUpPlayback: Boolean,
+    startAtLiveWindowStart: Boolean,
+    rewind: LivePauseNativeControls.Rewind,
     title: String,
     resizeMode: PlayerResizeMode,
     videoZoom: VideoZoom,
+    onControlsEvent: (String, Double) -> Boolean,
+    onScrubFinished: (Long) -> Boolean,
     onControlsAction: (PlayerControlsAction) -> Boolean,
     onControllerReady: (PlayerEngineController) -> Unit,
     onSnapshot: (PlayerPlaybackSnapshot) -> Unit,
@@ -1172,12 +1299,16 @@ private fun LivePlayerSurface(
     // must mirror that, or it keeps pushing an unchanged `controlsVisible = true` which the engine
     // drops, and the controls never return on mouse movement.
     var nativeControlsVisible by remember { mutableStateOf(true) }
-    val controlsState = remember(title, resizeLabel, isCatchUpPlayback, nativeControlsVisible) {
+    val controlsState = remember(title, resizeLabel, isCatchUpPlayback, nativeControlsVisible, rewind) {
         PlayerControlsState(
             title = title,
             resizeModeLabel = resizeLabel,
             isLive = !isCatchUpPlayback,
             controlsVisible = nativeControlsVisible,
+            // Live pause / rewind: the native bar spans the window the engine holds while time-shifted.
+            liveRewindActive = rewind.active,
+            liveRewindStartMs = rewind.startMs,
+            liveRewindEndMs = rewind.endMs,
         )
     }
     // Key by url so a channel switch cleanly re-initialises the engine.
@@ -1193,17 +1324,21 @@ private fun LivePlayerSurface(
             // A Stalker create_link is spent after its first open: no in-engine re-open after a drop.
             singleUseLink = current.singleUseLink && !isCatchUpPlayback,
             modifier = Modifier.fillMaxSize(),
-            playWhenReady = true,
+            // The local pause buffer is prepared paused at the start of its window (the controller plays it).
+            playWhenReady = !startAtLiveWindowStart,
+            startAtLiveWindowStart = startAtLiveWindowStart,
             resizeMode = resizeMode,
             videoZoom = videoZoom,
             useNativeController = false,
             playerControlsState = controlsState,
             onPlayerControlsAction = onControlsAction,
-            onPlayerControlsEvent = { type, _ ->
-                NativeControlsVisibilityPolicy.next(nativeControlsVisible, type)
-                    ?.also { nativeControlsVisible = it }
-                    ?: false
+            onPlayerControlsEvent = { type, value ->
+                onControlsEvent(type, value) ||
+                    (NativeControlsVisibilityPolicy.next(nativeControlsVisible, type)
+                        ?.also { nativeControlsVisible = it }
+                        ?: false)
             },
+            onPlayerControlsScrubFinished = onScrubFinished,
             onControllerReady = onControllerReady,
             onSnapshot = onSnapshot,
             onError = onError,
@@ -1211,19 +1346,26 @@ private fun LivePlayerSurface(
     }
 }
 
+/**
+ * The LIVE chip. While time-shifted ([behindLiveMs] set and past the live slack) it reads "-mm:ss - LIVE" and a tap
+ * goes live ([onGoLive]); otherwise it is the plain badge.
+ */
 @Composable
-private fun LiveBadge(danger: Color) {
+private fun LiveBadge(danger: Color, behindLiveMs: Long? = null, onGoLive: (() -> Unit)? = null) {
+    val shifted = behindLiveMs != null && behindLiveMs > LivePauseUiText.AT_LIVE_MS
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(NuvioTokens.Radius.xs))
             .background(danger)
+            .then(if (shifted && onGoLive != null) Modifier.clickable(onClick = onGoLive) else Modifier)
             .padding(horizontal = NuvioTokens.Space.s8, vertical = NuvioTokens.Space.s2),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
     ) {
         Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.White))
         Text(
-            text = stringResource(Res.string.compose_livetv_live_badge),
+            text = (if (shifted) LivePauseUiText.behind(behindLiveMs ?: 0L) + " \u00B7 " else "") +
+                stringResource(Res.string.compose_livetv_live_badge),
             style = MaterialTheme.typography.labelSmall,
             color = Color.White,
             fontWeight = FontWeight.Bold,

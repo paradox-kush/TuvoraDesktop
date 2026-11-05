@@ -967,7 +967,27 @@ const formatTime = milliseconds => {
     : `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 };
 
+const setLiveRewindProgress = (rewind, positionMs) => {
+  const span = rewind.end - rewind.start;
+  const position = Math.max(rewind.start, Math.min(rewind.end, positionMs));
+  const percent = (position - rewind.start) / span * 100;
+  seek.value = Math.round(percent * 10);
+  seek.style.setProperty("--progress", `${percent}%`);
+  seek.style.setProperty("--bufferProgress", "100%");
+  const behindMs = rewind.end - position;
+  if (timeLabel) {
+    timeLabel.textContent = behindMs > LIVE_REWIND_AT_LIVE_MS
+      ? `\u2212${formatTime(behindMs)} \u00B7 LIVE`
+      : "LIVE";
+  }
+};
+
 const setProgress = (positionMs, durationMs, bufferedPositionMs) => {
+  const rewind = liveRewindBounds();
+  if (rewind) {
+    setLiveRewindProgress(rewind, positionMs);
+    return;
+  }
   const percent = durationMs > 0 ? Math.max(0, Math.min(100, positionMs / durationMs * 100)) : 0;
   const bufferPercent = bufferedPositionMs > 0 ?
     Math.max(0, Math.min(100, bufferedPositionMs / durationMs * 100)) : 0;
@@ -1136,7 +1156,25 @@ const normalizedOpeningProgress = () => {
 
 const playbackErrorText = () => String(state.playbackErrorMessage || "").trim();
 
+// Live pause / rewind: Kotlin says the live stream is time-shifted inside [liveRewindStartMs, liveRewindEndMs]
+// (mpv's own clock). The bar then spans that window, positions stay absolute, and the time label reads
+// "-mm:ss · LIVE" (a press goes live). The window's end is never behind what the player reports.
+const liveRewindBounds = () => {
+  if (!state.isLive || !state.liveRewindActive) return null;
+  const start = Math.max(0, Number(state.liveRewindStartMs) || 0);
+  const end = Math.max(
+    Number(state.liveRewindEndMs) || 0,
+    Number(state.bufferedPositionMs) || 0,
+    Number(state.positionMs) || 0,
+  );
+  return end > start ? { start, end } : null;
+};
+
+const LIVE_REWIND_AT_LIVE_MS = 2000;
+
 const rangePositionMs = () => {
+  const rewind = liveRewindBounds();
+  if (rewind) return Math.round(rewind.start + (rewind.end - rewind.start) * Number(seek.value) / 1000);
   const durationMs = Math.max(0, Number(state.durationMs) || 0);
   return durationMs > 0 ? Math.round(durationMs * Number(seek.value) / 1000) : 0;
 };
@@ -2874,6 +2912,7 @@ const renderChrome = () => {
   const showError = renderPlaybackError();
   root.classList.toggle("pip-mode", Boolean(state.isInPip));
   root.classList.toggle("live-mode", Boolean(state.isLive));
+  root.classList.toggle("live-rewind", liveRewindBounds() !== null);
   if (!state.isInPip && isPipLocked) setPipLocked(false);
   root.classList.toggle("chrome-hidden", Boolean(showError || !state.controlsVisible));
   root.classList.toggle("modal-open", Boolean(activeModal));
@@ -3703,6 +3742,11 @@ volumeButton.addEventListener("click", () => {
 
 timeLabel.addEventListener("click", () => {
   noteChromeActivity();
+  if (liveRewindBounds()) {
+    // The "-mm:ss · LIVE" chip: leave the buffer and rejoin the live edge.
+    send("liveGoLive", 0);
+    return;
+  }
   timeLabelShowRemaining = !timeLabelShowRemaining;
   renderChrome();
 });
