@@ -304,10 +304,17 @@ static void applyExtendedRangeLayerState(CALayer *layer, BOOL enabled, double po
     if (@available(macOS 15.0, *)) {
         layer.toneMapMode = enabled ? CAToneMapModeNever : CAToneMapModeAutomatic;
     }
+    // preferredDynamicRange / contentsHeadroom exist only in the macOS 26 SDK. Guard at compile
+    // time too, so a build from an older Xcode (the macos-15 CI runners) still compiles and simply
+    // skips this refinement, exactly as macOS < 26 does at runtime.
+#if defined(__MAC_26_0) && __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_26_0
     if (@available(macOS 26.0, *)) {
         layer.preferredDynamicRange = enabled ? CADynamicRangeHigh : CADynamicRangeStandard;
         layer.contentsHeadroom = enabled ? fmax(potentialHeadroom, 1.0) : 0.0;
     }
+#else
+    (void)potentialHeadroom;
+#endif
 }
 
 static NSString *diagnosticSize(CGSize size) {
