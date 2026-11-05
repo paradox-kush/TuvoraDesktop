@@ -1,5 +1,7 @@
 package com.nuvio.app.features.updater
 
+import com.nuvio.app.core.time.EpisodeReleaseDatePlatform
+import com.nuvio.app.features.addons.RawHttpResponse
 import com.nuvio.app.features.addons.httpRequestRaw
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -8,6 +10,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.updates_github_api_error
+import nuvio.composeapp.generated.resources.updates_github_forbidden
+import nuvio.composeapp.generated.resources.updates_rate_limited
 import org.jetbrains.compose.resources.getString
 
 @Serializable
@@ -30,6 +34,12 @@ internal data class GitHubAssetDto(
 )
 
 internal class NoChannelReleaseException : IllegalStateException()
+
+/** B175: GitHub's unauthenticated limit; do not ask again before [resetAtEpochSeconds]. */
+internal class UpdaterRateLimitedException(
+    val resetAtEpochSeconds: Long,
+    message: String,
+) : IllegalStateException(message)
 
 internal data class AppUpdateAssetCandidate(
     val name: String,
@@ -76,9 +86,7 @@ internal object AppUpdaterRepository {
         )
         currentCoroutineContext().ensureActive()
         if (response.status == 404) throw NoChannelReleaseException()
-        if (response.status !in 200..299) {
-            error(getString(Res.string.updates_github_api_error, response.status))
-        }
+        if (response.status !in 200..299) throw failureFor(response)
         selectUpdate(
             responseBody = response.body,
             channel = channel,
@@ -87,6 +95,29 @@ internal object AppUpdaterRepository {
         )
             ?: throw NoChannelReleaseException()
     }
+
+    /** B175: turns a refusal into a typed failure that keeps the rate-limit evidence. */
+    private suspend fun failureFor(response: RawHttpResponse): Exception {
+        val now = nowEpochSeconds()
+        return when (
+            val outcome = UpdaterHttpErrorPolicy.classify(response.status, response.headers, response.body, now)
+        ) {
+            is UpdaterHttpErrorPolicy.Outcome.RateLimited ->
+                UpdaterRateLimitedException(outcome.resetAtEpochSeconds, rateLimitedMessage(outcome.resetAtEpochSeconds, now))
+            UpdaterHttpErrorPolicy.Outcome.Forbidden ->
+                IllegalStateException(getString(Res.string.updates_github_forbidden))
+            is UpdaterHttpErrorPolicy.Outcome.Other ->
+                IllegalStateException(getString(Res.string.updates_github_api_error, response.status))
+        }
+    }
+
+    internal suspend fun rateLimitedMessage(resetAtEpochSeconds: Long, nowEpochSeconds: Long): String =
+        getString(
+            Res.string.updates_rate_limited,
+            UpdaterHttpErrorPolicy.minutesUntil(resetAtEpochSeconds, nowEpochSeconds),
+        )
+
+    internal fun nowEpochSeconds(): Long = EpisodeReleaseDatePlatform.nowEpochMs() / 1000L
 
     internal fun releasePath(channel: UpdateChannel): String = when (channel) {
         UpdateChannel.STABLE -> "releases/latest"
