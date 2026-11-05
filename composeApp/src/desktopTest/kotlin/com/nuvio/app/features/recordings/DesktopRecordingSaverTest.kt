@@ -4,6 +4,7 @@ import com.nuvio.app.features.recordings.api.RecordingProblem
 import com.nuvio.app.features.recordings.api.SaveOutcome
 import com.nuvio.app.features.recordings.api.SaveRequest
 import com.nuvio.app.features.recordings.internal.DesktopRecordingSaver
+import com.nuvio.app.features.recordings.internal.ResumeMeta
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import java.io.File
@@ -147,6 +148,7 @@ class DesktopRecordingSaverTest {
     @Test
     fun `a partial file resumes with a range request when the server answers 206`() = runBlocking {
         File(dir, "show.ts.part").writeText("01234")
+        ResumeMeta.write(File(dir, "show.ts.part"), server.url("/a.ts"), null, null)
         server.enqueue(ScriptedServer.Reply.Body(206, mapOf("Content-Range" to "bytes 5-9/10"), "56789".toByteArray()))
         val got = saver().save(req("/a.ts", resume = 5)) { }
         assertEquals(SaveOutcome.Done(10), got)
@@ -157,6 +159,7 @@ class DesktopRecordingSaverTest {
     @Test
     fun `a server that ignores the range restarts from zero`() = runBlocking {
         File(dir, "show.ts.part").writeText("01234")
+        ResumeMeta.write(File(dir, "show.ts.part"), server.url("/a.ts"), null, null)
         server.enqueue(body("0123456789"))
         val got = saver().save(req("/a.ts", resume = 5)) { }
         assertEquals(SaveOutcome.Done(10), got)
@@ -164,8 +167,39 @@ class DesktopRecordingSaverTest {
     }
 
     @Test
+    fun `a partial from another link is never resumed`() = runBlocking {
+        File(dir, "show.ts.part").writeText("01234")
+        ResumeMeta.write(File(dir, "show.ts.part"), server.url("/other.ts"), null, null)
+        server.enqueue(body("0123456789"))
+        assertEquals(SaveOutcome.Done(10), saver().save(req("/a.ts", resume = 5)) { })
+        assertNull(server.seen.single().headers["range"])
+        assertEquals("0123456789", File(dir, "show.ts").readText())
+    }
+
+    @Test
+    fun `a resume sends If-Range with the strong etag`() = runBlocking {
+        File(dir, "show.ts.part").writeText("01234")
+        ResumeMeta.write(File(dir, "show.ts.part"), server.url("/a.ts"), "\"v1\"", null)
+        server.enqueue(ScriptedServer.Reply.Body(206, mapOf("Content-Range" to "bytes 5-9/10"), "56789".toByteArray()))
+        assertEquals(SaveOutcome.Done(10), saver().save(req("/a.ts", resume = 5)) { })
+        assertEquals(listOf("\"v1\""), server.seen.single().headers["if-range"])
+    }
+
+    @Test
+    fun `a 206 that starts elsewhere restarts from zero instead of appending`() = runBlocking {
+        File(dir, "show.ts.part").writeText("01234")
+        ResumeMeta.write(File(dir, "show.ts.part"), server.url("/a.ts"), null, null)
+        server.enqueue(ScriptedServer.Reply.Body(206, mapOf("Content-Range" to "bytes 3-9/10"), "3456789".toByteArray()))
+        server.enqueue(body("0123456789"))
+        assertEquals(SaveOutcome.Done(10), saver().save(req("/a.ts", resume = 5)) { })
+        assertNull(server.seen[1].headers["range"])
+        assertEquals("0123456789", File(dir, "show.ts").readText())
+    }
+
+    @Test
     fun `a 416 on resume throws the partial away and starts again`() = runBlocking {
         File(dir, "show.ts.part").writeText("0123456789ABC")
+        ResumeMeta.write(File(dir, "show.ts.part"), server.url("/a.ts"), null, null)
         server.enqueue(status(416))
         server.enqueue(body("0123456789"))
         assertEquals(SaveOutcome.Done(10), saver().save(req("/a.ts", resume = 13)) { })

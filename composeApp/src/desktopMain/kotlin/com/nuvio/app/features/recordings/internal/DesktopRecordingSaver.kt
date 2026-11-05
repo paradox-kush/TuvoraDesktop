@@ -88,8 +88,10 @@ internal class DesktopRecordingSaver(
     }
 
     private suspend fun attempt(url: String, req: SaveRequest, part: File, progress: (Long) -> Unit): Attempt {
-        var offset = if (req.resumeFromBytes > 0) part.length() else 0L
-        if (offset == 0L && part.exists()) part.delete()
+        // Resume only a partial known to come from THIS link; anything else would splice another file's bytes in.
+        val meta = ResumeMeta.read(part)
+        var offset = if (req.resumeFromBytes > 0 && meta?.url == url) part.length() else 0L
+        if (offset == 0L) { part.delete(); ResumeMeta.delete(part) }
         var restartedOnce = false
         while (true) {
             currentCoroutineContext().ensureActive()
@@ -105,7 +107,10 @@ internal class DesktopRecordingSaver(
                             }
                         }
                         header("Accept-Encoding", "identity")
-                        if (offset > 0L) header("Range", "bytes=$offset-")
+                        if (offset > 0L) {
+                            header("Range", "bytes=$offset-")
+                            meta?.validator?.let { header("If-Range", it) }
+                        }
                     }
                     .GET()
                     .build()
@@ -145,8 +150,16 @@ internal class DesktopRecordingSaver(
                         val response = send(request)
                         if (response.statusCode() == 416 && offset > 0L && !restartedOnce) {
                             runCatching { response.body().close() }
-                            part.delete(); offset = 0L; restartedOnce = true
+                            part.delete(); ResumeMeta.delete(part); offset = 0L; restartedOnce = true
                             return@coroutineScope null // go round again from zero
+                        }
+                        if (response.statusCode() == 206 && offset > 0L &&
+                            response.headers().firstValue("Content-Range").orElse(null)?.let(::startOfRange) != offset
+                        ) {
+                            // Bytes that do not start where our partial ends: never append them.
+                            runCatching { response.body().close() }
+                            part.delete(); ResumeMeta.delete(part); offset = 0L
+                            return@coroutineScope null
                         }
                         val input = response.body()
                         open = input
@@ -161,6 +174,13 @@ internal class DesktopRecordingSaver(
                                 response.headers().firstValue("Accept-Ranges").orElse(null)?.contains("bytes", true) == true
                             val length = response.headers().firstValue("Content-Length").orElse(null)?.toLongOrNull()?.takeIf { it >= 0 }
                             val expected = length?.let { if (resumed) offset + it else it }
+                            if (!resumed) {
+                                ResumeMeta.write(
+                                    part, url,
+                                    response.headers().firstValue("ETag").orElse(null),
+                                    response.headers().firstValue("Last-Modified").orElse(null),
+                                )
+                            }
                             var written = if (resumed) offset else 0L
                             var sinceCheck = 0L
                             progress(written)
@@ -193,7 +213,7 @@ internal class DesktopRecordingSaver(
                                     val kind = RecordingSaveClassifier.forIo(null, stalled = true, online = isOnline())
                                     Attempt.Failure(SaveOutcome.Failed(kind.problem, kind.offline, written, rangeSupported))
                                 }
-                                else -> Attempt.Finished
+                                else -> { ResumeMeta.delete(part); Attempt.Finished }
                             }
                         }
                     } finally {
@@ -249,5 +269,34 @@ internal class DesktopRecordingSaver(
         } catch (_: Exception) {
             true
         }
+    }
+}
+
+/**
+ * Where a `.part` came from: the link, and the validators that link answered with, stored beside it as
+ * `<part>.meta`. A resume is only tried against the same link, conditioned on the validator with
+ * If-Range. Missing or unreadable = unknown source = no resume.
+ */
+internal data class ResumeMeta(val url: String, val etag: String?, val lastModified: String?) {
+    /** The strong ETag when there is one, else the Last-Modified date. */
+    val validator: String? get() = etag?.takeIf { !it.startsWith("W/") } ?: lastModified
+
+    companion object {
+        private fun file(part: File) = File(part.path + ".meta")
+
+        fun write(part: File, url: String, etag: String?, lastModified: String?) {
+            val text = listOf(url, etag.orEmpty(), lastModified.orEmpty()).joinToString("\n")
+            val tmp = File(part.path + ".meta.tmp")
+            tmp.writeText(text)
+            if (!tmp.renameTo(file(part))) { file(part).writeText(text); tmp.delete() }
+        }
+
+        fun read(part: File): ResumeMeta? {
+            val lines = try { file(part).takeIf { it.isFile }?.readText()?.split("\n") } catch (e: IOException) { null } ?: return null
+            val url = lines.getOrNull(0)?.takeIf { it.isNotBlank() } ?: return null
+            return ResumeMeta(url, lines.getOrNull(1)?.takeIf { it.isNotBlank() }, lines.getOrNull(2)?.takeIf { it.isNotBlank() })
+        }
+
+        fun delete(part: File) { file(part).delete() }
     }
 }
