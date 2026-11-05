@@ -202,11 +202,12 @@ class DesktopRecordingSaverTest {
     fun `no network is reported offline and stops trying other links`() = runBlocking {
         online = false
         server.enqueue(ScriptedServer.Reply.Drop)
+        server.enqueue(ScriptedServer.Reply.Drop) // the JDK client retries a dropped GET once
         server.enqueue(body("never"))
         val got = saver().save(req("/a.ts", "/b.ts")) { } as SaveOutcome.Failed
         assertEquals(RecordingProblem.NETWORK, got.problem)
         assertEquals(true, got.offline)
-        assertEquals(1, server.requestCount)
+        assertTrue(server.seen.none { it.path == "/b.ts" }, "offline stops before the second link")
     }
 
     @Test

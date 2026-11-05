@@ -11,3 +11,6 @@ val LocalRecordings = staticCompositionLocalOf<RecordingsPort?> { null }
  * actual does nothing; iOS builds it here.
  */
 expect fun installPlatformRecordings()
+
+/** Starts the platform's recordings after install (recover, re-arm, fire overdue), off the main thread. Called once at app start through FeatureWiring. */
+expect fun startPlatformRecordings()

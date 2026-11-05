@@ -88,7 +88,7 @@ fun main(args: Array<String>) {
     AutoSyncPreferencesDesktop.initialize()
     DiscordPresenceManager.start()
     // Recordings (desktop records while the app is open): recover, re-arm and fire overdue, off the main thread.
-    com.nuvio.app.features.recordings.api.RecordingsDesktop.onAppStart()
+    startFeatureServices()
 
     application {
         val smokePlayerUrl = (

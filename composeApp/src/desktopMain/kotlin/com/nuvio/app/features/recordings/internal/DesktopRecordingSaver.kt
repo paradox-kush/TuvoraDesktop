@@ -18,7 +18,7 @@ import java.util.concurrent.CompletableFuture
 import kotlin.time.TimeSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -120,10 +120,16 @@ internal class DesktopRecordingSaver(
             var stalledByWatchdog = false
             // The open body, so the watchdog and a cancellation can close it and unblock a read.
             var open: InputStream? = null
-            val job = currentCoroutineContext()[Job]
-            val handle = job?.invokeOnCompletion { if (it != null) runCatching { open?.close() } }
             try {
                 val outcome = coroutineScope {
+                    // A blocked read cannot see cancellation: when this scope is cancelled, close the body to unblock it.
+                    val closer = launch {
+                        try {
+                            awaitCancellation()
+                        } finally {
+                            runCatching { open?.close() }
+                        }
+                    }
                     val watchdog = launch {
                         while (true) {
                             delay(watchdogTickMs)
@@ -192,6 +198,7 @@ internal class DesktopRecordingSaver(
                         }
                     } finally {
                         watchdog.cancel()
+                        closer.cancel()
                     }
                 }
                 return outcome ?: continue
@@ -202,8 +209,6 @@ internal class DesktopRecordingSaver(
                 currentCoroutineContext().ensureActive()
                 val kind = RecordingSaveClassifier.forIo(e, stalledByWatchdog, isOnline())
                 return Attempt.Failure(SaveOutcome.Failed(kind.problem, kind.offline, part.length(), offset > 0L || part.length() > 0))
-            } finally {
-                handle?.dispose()
             }
         }
     }

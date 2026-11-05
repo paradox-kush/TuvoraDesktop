@@ -26,6 +26,7 @@ import com.nuvio.app.features.announcements.api.AnnouncementsFeature
 import com.nuvio.app.features.recordings.api.LocalRecordings
 import com.nuvio.app.features.recordings.api.RecordingsAccess
 import com.nuvio.app.features.recordings.api.installPlatformRecordings
+import com.nuvio.app.features.recordings.api.startPlatformRecordings
 
 /**
  * THE one firewall exception (rules doc Rule 1 / R2b): the only non-fork file allowed to name fork
@@ -69,6 +70,11 @@ fun registerFeatureContributions() {
     // Recordings: the platform builds its repository once and publishes it (receivers and the service read it there).
     installPlatformRecordings()
     FeatureRegistry.markInitialized()
+}
+
+/** Background work the features start once the process is up (after [registerFeatureContributions]); always off the main thread. */
+fun startFeatureServices() {
+    startPlatformRecordings()
 }
 
 /**
