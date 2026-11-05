@@ -161,7 +161,7 @@ class PlaylistAccountInfoStoreTest {
     }
 
     @Test
-    fun `details inspection plan - turned-on playlists keep the cache, off ones inspect once, portals are not touched`() {
+    fun `details inspection plan keeps the cache for turned-on playlists and never touches an off portal`() {
         val p = DetailsInspectionPolicy
         assertEquals(DetailsInspectionPolicy.Plan.NORMAL, p.plan(SOURCE_TYPE_XTREAM, availableHere = true))
         assertEquals(DetailsInspectionPolicy.Plan.INSPECT, p.plan(SOURCE_TYPE_XTREAM, availableHere = false))
