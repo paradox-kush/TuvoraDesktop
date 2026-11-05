@@ -28,8 +28,7 @@ import com.nuvio.app.features.streams.StreamParser
 import com.nuvio.app.features.streams.StreamsUiState
 import com.nuvio.app.features.streams.asDirectSourceGroup
 import com.nuvio.app.features.streams.SourceLaneGuard
-import com.nuvio.app.features.streams.laneFailureMessage
-import com.nuvio.app.features.streams.runCatchingUnlessCancelled
+import com.nuvio.app.features.streams.resolveAddonGroup
 import com.nuvio.app.features.streams.sortedForGroupedDisplay
 import com.nuvio.app.features.streams.streamAddonInstanceId
 import com.nuvio.app.features.streams.supportsStream
@@ -265,7 +264,7 @@ object PlayerStreamsRepository {
             val job = scope.launch {
                 val needsRegistration = isStalkerSource || streamProvider.needsStreamRegistration(videoId)
                 val rebuilt = if (needsRegistration) {
-                    runCatchingUnlessCancelled {
+                    SourceLaneGuard.run {
                         MetaDetailsRepository.ensureXtreamStreamRegistered(
                             videoId,
                             forceFresh = isStalkerSource,
@@ -490,7 +489,7 @@ object PlayerStreamsRepository {
                     )
 
                     val displayName = addon.addonName
-                    val group = SourceLaneGuard.run {
+                    val group = resolveAddonGroup(displayName, addon.addonId) {
                         log.d { "fetch $panelName request=$requestKey addon=$displayName" }
                         val payload = fetchAddonResponseText(
                             url = url,
@@ -502,16 +501,8 @@ object PlayerStreamsRepository {
                             addonId = addon.addonId,
                             addonLogo = addon.manifest.logoUrl,
                         )
-                    }.fold(
-                        onSuccess = { streams ->
-                            log.d { "fetched $panelName request=$requestKey addon=$displayName streams=${streams.size}" }
-                            AddonStreamGroup(displayName, addon.addonId, streams, isLoading = false)
-                        },
-                        onFailure = { err ->
-                            log.w(err) { "failed $panelName request=$requestKey addon=$displayName" }
-                            AddonStreamGroup(displayName, addon.addonId, emptyList(), isLoading = false, error = err.laneFailureMessage())
-                        },
-                    )
+                    }
+                    group.error?.let { log.w { "Failed to fetch streams from $displayName: $it" } }
                     publishCompletion(StreamLoadCompletion.Addon(group))
                 }
             }
