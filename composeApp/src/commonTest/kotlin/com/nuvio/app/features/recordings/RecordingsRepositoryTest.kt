@@ -675,7 +675,7 @@ class RecordingsRepositoryTest {
         }
     }
 
-    // ---- review round 2: C5 orphaned partials, --------------------
+    // ---- review round 2: C5 orphaned partials, (a) file after a late cancel --------------------
 
     private suspend fun retryWaitingWithPartial(rig: Rig, schedule: com.nuvio.app.features.recordings.api.RecordingSchedule = dueCatchUp()): String {
         rig.saver.next = { req, _ ->
@@ -695,6 +695,19 @@ class RecordingsRepositoryTest {
         rig.repo.cancel("s1")
         assertTrue("$target.part" in rig.files.deleted, "the partial must not outlive its schedule: ${rig.files.deleted}")
         assertTrue("$target.part.meta" in rig.files.deleted, "nor its sidecar: ${rig.files.deleted}")
+    }
+
+    @Test
+    fun `cancelling deletes the partial under the name the saved link gave it - mp4 included`() = runTest {
+        val rig = Rig()
+        val mp4Channel = channel(catchUp = xtream(3).copy(containerExtension = "mp4"))
+        val s = dueCatchUp().copy(channel = mp4Channel)
+        rig.files.texts["recordings.json"] = stateText(s)
+        val target = retryWaitingWithPartial(rig, s)
+        assertTrue(target.endsWith(".mp4"), "the saver was handed an mp4 name: $target")
+        rig.repo.cancel("s1")
+        assertTrue("$target.part" in rig.files.deleted, "partial: ${rig.files.deleted}")
+        assertTrue("$target.part.meta" in rig.files.deleted, "sidecar: ${rig.files.deleted}")
     }
 
     @Test
@@ -748,5 +761,42 @@ class RecordingsRepositoryTest {
         rig.files.deleted.clear()
         rig.repo.deleteRecording(rig.repo.state.value.recordings.single().id)
         assertTrue("$target.part.meta" in rig.files.deleted, "sidecar: ${rig.files.deleted}")
+    }
+
+    @Test
+    fun `a user cancel after the saver already renamed the file deletes the untracked file`() = runTest {
+        val rig = Rig()
+        rig.files.texts["recordings.json"] = stateText(dueCatchUp())
+        val started = CompletableDeferred<Unit>()
+        rig.saver.next = { req, _ ->
+            rig.files.sizes[req.targetPath] = 500L // renamed into place, then the cancel lands
+            started.complete(Unit); CompletableDeferred<Unit>().await(); SaveOutcome.Done(500)
+        }
+        val result = async { rig.repo.fire("s1", NOW) }
+        started.await()
+        rig.repo.cancel("s1")
+        assertEquals(FireResult.Cancelled, result.await())
+        val target = rig.saver.calls.last().targetPath
+        assertTrue(target in rig.files.deleted, "a CANCELLED row must not leave a finished file behind: ${rig.files.deleted}")
+    }
+
+    @Test
+    fun `system teardown after the saver already renamed the file keeps it as a finished recording`() = runTest {
+        val rig = Rig()
+        rig.files.texts["recordings.json"] = stateText(dueCatchUp())
+        val started = CompletableDeferred<Unit>()
+        rig.saver.next = { req, _ ->
+            rig.files.sizes[req.targetPath] = 500L
+            started.complete(Unit); CompletableDeferred<Unit>().await(); SaveOutcome.Done(500)
+        }
+        val job = launch(start = CoroutineStart.UNDISPATCHED) {
+            try { rig.repo.fire("s1", NOW) } catch (e: CancellationException) { throw e }
+        }
+        started.await()
+        job.cancelAndJoin()
+        val row = rig.repo.state.value.recordings.single()
+        assertEquals(RecordingStatus.DONE, row.status, "the finished file is tracked, not orphaned")
+        assertEquals(500L, row.sizeBytes)
+        assertTrue(rig.repo.state.value.schedules.isEmpty(), "nothing left to retry")
     }
 }

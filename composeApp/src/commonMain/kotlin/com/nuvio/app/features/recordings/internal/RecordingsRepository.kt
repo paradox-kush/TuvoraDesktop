@@ -539,6 +539,12 @@ class RecordingsRepository(
                 mutex.withLock {
                     running.remove(run.schedule.id)
                     val partial = files.sizeOf(partPath(run.targetPath))
+                    val finishedBytes = files.sizeOf(run.targetPath)
+                    if (partial == 0L && finishedBytes > 0L) {
+                        // The saver renamed the finished file just before the teardown: track it, do not orphan it.
+                        finishDone(run, SaveOutcome.Done(finishedBytes), nowMs + mark.elapsedNow().inWholeMilliseconds, 0L)
+                        return@withLock
+                    }
                     afterFailureLocked(
                         run.schedule, RecordingProblem.STALLED, offline = false,
                         nowMs = nowMs + mark.elapsedNow().inWholeMilliseconds, written = partial, rangeSupported = true, token = run.token,
@@ -598,6 +604,8 @@ class RecordingsRepository(
         ledger.release(run.token, FireOutcome.FAILED, RecordingProblem.CANCELLED_BY_USER)
         val endedAt = clock()
         deletePart(run.targetPath)
+        // The saver may have renamed the finished file just before the cancel landed: nothing tracks it now.
+        files.delete(run.targetPath)
         alarms.disarm(s.id)
         edit(
             schedules = { list -> list.filterNot { it.id == s.id } },
