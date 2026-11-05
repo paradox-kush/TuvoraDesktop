@@ -24,6 +24,8 @@ import com.nuvio.app.features.livetv.LiveTvContentImpl
 import com.nuvio.app.core.contracts.HomeAnnouncementsSectionAccess
 import com.nuvio.app.features.announcements.api.AnnouncementsFeature
 import com.nuvio.app.features.recordings.api.LocalRecordings
+import com.nuvio.app.features.recordings.api.LocalRecordingsFolder
+import com.nuvio.app.features.recordings.api.RecordingsFolderAccess
 import com.nuvio.app.features.recordings.api.RecordingsAccess
 import com.nuvio.app.features.recordings.api.installPlatformRecordings
 import com.nuvio.app.features.recordings.api.startPlatformRecordings
@@ -92,6 +94,7 @@ fun installFeatures(content: @Composable () -> Unit) {
         LocalRevertFailureSink provides ::onRevertFailure,
         LocalIptvCatalog provides XtreamRepository,   // S3a — stable object, safe in a static local
         LocalRecordings provides RecordingsAccess.current(),
+        LocalRecordingsFolder provides RecordingsFolderAccess.current(),
         // Later seams add their ports here: LocalSportsData, LocalClock, …
     ) { content() }
 }

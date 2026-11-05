@@ -17,6 +17,8 @@ import kotlinx.coroutines.withContext
  */
 internal class DesktopRecordingFiles(
     private val stateDirOf: () -> File,
+    /** Folders recordings were saved to before the user changed it: an older recording stays where it was. */
+    private val earlierDirs: () -> List<File> = { emptyList() },
     private val recordingsDir: () -> File,
 ) : RecordingFiles {
     private val stateDir: File get() = stateDirOf()
@@ -49,7 +51,10 @@ internal class DesktopRecordingFiles(
 
     override fun pathFor(fileName: String): String {
         require(File(fileName).name == fileName && fileName.isNotBlank()) { "not a plain file name" }
-        return File(recordingsDir(), fileName).path
+        val current = File(recordingsDir(), fileName)
+        if (current.exists()) return current.path
+        // Changing the folder moves nothing, so a file already saved elsewhere is still found there.
+        return earlierDirs().map { File(it, fileName) }.firstOrNull { it.exists() }?.path ?: current.path
     }
 
     override fun freeBytes(): Long {

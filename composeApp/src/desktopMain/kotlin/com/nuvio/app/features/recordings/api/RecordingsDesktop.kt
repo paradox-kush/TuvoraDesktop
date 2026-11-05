@@ -5,7 +5,10 @@ import com.nuvio.app.core.storage.DesktopStorage
 import com.nuvio.app.features.recordings.internal.DesktopRecordingAlarms
 import com.nuvio.app.features.recordings.internal.DesktopRecordingFiles
 import com.nuvio.app.features.recordings.internal.DesktopRecordingSaver
+import com.nuvio.app.features.recordings.internal.RecordingsFolderSetting
+import com.nuvio.app.features.recordings.internal.RecordingsFolderStore
 import com.nuvio.app.features.recordings.internal.RecordingsRepository
+import com.nuvio.app.features.recordings.internal.pickRecordingsFolder
 import java.io.File
 import kotlinx.coroutines.launch
 
@@ -29,7 +32,7 @@ object RecordingsDesktop {
     @Volatile
     private var chosenFolder: File? = null
 
-    /** The one seam for "where recordings go". Null (the default) is the app's own folder. The Settings wave calls this. */
+    /** The one seam for "where recordings go". Null (the default) is the app's own folder. The folder picker on the Recordings page calls it through [RecordingsFolderSetting]. */
     fun setRecordingsFolder(folder: File?) {
         chosenFolder = folder
     }
@@ -37,12 +40,35 @@ object RecordingsDesktop {
     private fun recordingsDir(): File =
         chosenFolder ?: DesktopStorage.rootDir.resolve("recordings").toFile()
 
+    /** Remembered in the app's properties store, like the other desktop settings. */
+    private object FolderStore : RecordingsFolderStore {
+        private val store get() = DesktopStorage.store("tuvora_recordings")
+        override fun chosen(): String? = store.getString("folder")?.takeIf { it.isNotBlank() }
+        override fun setChosen(path: String?) = store.putString("folder", path)
+        override fun earlier(): List<String> =
+            store.getString("earlier_folders").orEmpty().split('\n').filter { it.isNotBlank() }
+        override fun setEarlier(paths: List<String>) =
+            store.putString("earlier_folders", paths.takeIf { it.isNotEmpty() }?.joinToString("\n"))
+    }
+
+    private val folderSetting by lazy {
+        RecordingsFolderSetting(
+            store = FolderStore,
+            defaultDir = DesktopStorage.rootDir.resolve("recordings").toFile(),
+            pick = ::pickRecordingsFolder,
+            onApplied = ::setRecordingsFolder,
+        )
+    }
+
     @Synchronized
     fun install() {
         if (RecordingsAccess.current() != null) return
+        folderSetting.restore()
+        RecordingsFolderAccess.register(folderSetting)
         val files = DesktopRecordingFiles(
             stateDirOf = { DesktopStorage.rootDir.resolve("recordings-state").toFile() },
             recordingsDir = ::recordingsDir,
+            earlierDirs = folderSetting::earlierDirs,
         )
         val alarms = DesktopRecordingAlarms(
             scope = DesktopAppScope.scope,

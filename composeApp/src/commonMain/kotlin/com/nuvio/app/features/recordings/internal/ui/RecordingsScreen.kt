@@ -40,6 +40,7 @@ import com.nuvio.app.core.ui.PlatformBackHandler
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.recordings.api.LocalRecordings
+import com.nuvio.app.features.recordings.api.LocalRecordingsFolder
 import com.nuvio.app.features.recordings.api.RecordingAction
 import com.nuvio.app.features.recordings.api.RecordingRow
 import com.nuvio.app.features.recordings.api.RecordingSection
@@ -85,6 +86,8 @@ internal fun RecordingsScreen(
         port?.let { RecordingsController(it, scope, TraktPlatformClock::nowEpochMs) { NuvioToastController.show(actionFailedText) } }
     }
     LaunchedEffect(controller) { controller?.load() }
+    val folderControl = LocalRecordingsFolder.current
+    val folderController = remember(folderControl) { folderControl?.let { RecordingsFolderController(it, scope) } }
 
     if (controller == null) {
         NuvioScreen {
@@ -128,6 +131,7 @@ internal fun RecordingsScreen(
 
     NuvioScreen {
         stickyHeader { NuvioScreenHeader(title = stringResource(Res.string.recordings_title), onBack = onBack) }
+        folderController?.let { fc -> item(key = "folder") { RecordingsFolderCard(fc) } }
         when (view) {
             is RecordingsView.Loading -> item { LoadingBlock() }
             is RecordingsView.Failed -> item { FailedBlock(timedOut = view.timedOut, onRetry = controller::load) }

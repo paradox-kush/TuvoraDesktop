@@ -2798,6 +2798,10 @@
     <string name="recordings_loading">Opening your recordings…</string>
     <string name="recordings_load_failed">Couldn’t read your recordings. Nothing was deleted.</string>
     <string name="recordings_load_timed_out">Reading your recordings is taking too long.</string>
+    <string name="recordings_folder_title">Recordings folder</string>
+    <string name="recordings_folder_note">New recordings go here. Recordings you already have stay where they were saved.</string>
+    <string name="recordings_folder_change">Change folder</string>
+    <string name="recordings_folder_not_writable">Tuvora can’t save into that folder. Pick another one you can write to.</string>
     <string name="recordings_unavailable">Recordings aren’t available on this device.</string>
     <string name="recordings_status_scheduled">Scheduled</string>
     <string name="recordings_status_retrying">Scheduled · trying again later</string>
