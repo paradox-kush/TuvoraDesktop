@@ -36,6 +36,7 @@ import com.nuvio.app.core.ui.NuvioPrimaryButton
 import com.nuvio.app.core.ui.NuvioScreen
 import com.nuvio.app.core.ui.NuvioScreenHeader
 import com.nuvio.app.core.ui.NuvioToastController
+import com.nuvio.app.core.ui.PlatformBackHandler
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.recordings.api.LocalRecordings
@@ -46,6 +47,8 @@ import com.nuvio.app.features.recordings.api.RecordingStatus
 import com.nuvio.app.features.recordings.api.RecordingsLoadPolicy
 import com.nuvio.app.features.recordings.api.RecordingsPagePolicy
 import com.nuvio.app.features.recordings.api.RecordingsView
+import com.nuvio.app.features.recordings.internal.RecordingsBackAction
+import com.nuvio.app.features.recordings.internal.RecordingsBackPolicy
 import com.nuvio.app.features.trakt.TraktPlatformClock
 import kotlinx.coroutines.delay
 import nuvio.composeapp.generated.resources.Res
@@ -111,6 +114,16 @@ internal fun RecordingsScreen(
     // A row that is gone (cancelled, deleted) closes its own sheet.
     LaunchedEffect(selectedId, selected, loaded) {
         if (loaded && selectedId != null && selected == null) selectedId = null
+    }
+
+    // Back (Escape, the mouse Back button) answers on desktop. The page's handler registers first and the
+    // sheet's after it, so the innermost one (the open sheet) wins and closes before the page is left.
+    PlatformBackHandler(enabled = true, onBack = onBack)
+    PlatformBackHandler(enabled = selected != null) {
+        when (RecordingsBackPolicy.actionFor(sheetOpen = selected != null)) {
+            RecordingsBackAction.CLOSE_SHEET -> selectedId = null
+            RecordingsBackAction.LEAVE_PAGE -> onBack()
+        }
     }
 
     NuvioScreen {
