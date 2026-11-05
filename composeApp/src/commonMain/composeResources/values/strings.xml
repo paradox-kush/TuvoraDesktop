@@ -2828,6 +2828,7 @@
     <string name="recordings_problem_live_pending">Live recording isn’t available in this version yet.</string>
     <string name="recordings_action_record">Record</string>
     <string name="recordings_action_record_series">Record series</string>
+    <string name="recordings_action_stop_series">Stop series recording</string>
     <string name="recordings_series_active">Series recording is on for this show.</string>
     <string name="recordings_action_view">View recordings</string>
     <string name="recordings_action_allow_exact">Allow exact alarms</string>
@@ -2838,7 +2839,7 @@
     <string name="recordings_unavailable_over">Can’t record this one: it’s over and the provider no longer has it.</string>
     <string name="recordings_unavailable_bad_times">Can’t record this one: the guide has no start and end time for it.</string>
     <string name="recordings_already_saved">Already recorded. You’ll find it in Recordings.</string>
-    <string name="recordings_confirm_set">Recording set.</string>
+    <string name="recordings_confirm_set">Recording set — keep Tuvora open; it records only while the app is running.</string>
     <string name="recordings_confirm_late">Recording set, but your phone may start it a little late. If Android can’t start it in the background, it saves the next time you open Tuvora. Allow exact alarms and it will be on time.</string>
     <string name="recordings_confirm_next_open">Saves the next time you open Tuvora after the show ends. Force-quitting Tuvora cancels a save in progress.</string>
     <string name="recordings_confirm_already">Already scheduled.</string>
