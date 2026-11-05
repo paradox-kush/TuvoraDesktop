@@ -35,6 +35,33 @@
 // the thread that then calls create (creates are serialized); consumed by that create. Panels with bad certs are the only "no".
 static std::atomic<bool> gNextCreateTlsVerify{true};
 
+// The stream-lavf-o the NEXT player create opens with; empty = this bridge's reconnect defaults below. Set by
+// NativePlayerBridge.setStreamLavfOptionsForNextCreate before EVERY create (Kotlin LiveLinkReconnectPolicy: a single-use
+// Stalker create_link gets reconnect=0, because FFmpeg re-opening a spent link only spends provider requests); consumed by
+// that create, like gNextCreateTlsVerify.
+static std::mutex gNextCreateStreamLavfOptionsLock;
+static std::string gNextCreateStreamLavfOptions;
+
+static std::string takeNextCreateStreamLavfOptions() {
+    std::lock_guard<std::mutex> guard(gNextCreateStreamLavfOptionsLock);
+    std::string options;
+    options.swap(gNextCreateStreamLavfOptions);
+    return options;
+}
+
+static void storeNextCreateStreamLavfOptions(JNIEnv *env, jstring options) {
+    std::string value;
+    if (options != nullptr) {
+        const char *chars = env->GetStringUTFChars(options, nullptr);
+        if (chars != nullptr) {
+            value = chars;
+            env->ReleaseStringUTFChars(options, chars);
+        }
+    }
+    std::lock_guard<std::mutex> guard(gNextCreateStreamLavfOptionsLock);
+    gNextCreateStreamLavfOptions = value;
+}
+
 using Microsoft::WRL::Callback;
 using Microsoft::WRL::ComPtr;
 
@@ -1968,6 +1995,11 @@ private:
                 "stream-lavf-o",
                 "reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_on_http_error=%23%408,429,500,502,503,504,reconnect_delay_max=15"
             );
+            // A single-use link replaces the whole list above (key/value list option: setting it replaces, not merges).
+            {
+                const std::string streamLavfOptions = takeNextCreateStreamLavfOptions();
+                if (!streamLavfOptions.empty()) setMpvOptionStringLocked("stream-lavf-o", streamLavfOptions.c_str());
+            }
             setMpvOptionStringLocked("hr-seek", "no");
             std::string shaderCacheDirectory = mpvShaderCacheDirectory();
             if (!shaderCacheDirectory.empty()) {
@@ -2583,6 +2615,11 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         DisableThreadLibraryCalls(module);
     }
     return TRUE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setStreamLavfOptionsForNextCreate(JNIEnv *env, jobject, jstring options) {
+    storeNextCreateStreamLavfOptions(env, options);
 }
 
 extern "C" JNIEXPORT void JNICALL

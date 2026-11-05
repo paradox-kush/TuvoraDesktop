@@ -97,6 +97,9 @@ internal class NativePlayerController(
     // Lambda, not a bound reference (see nativeSeekTo): a test controller must not load the native library.
     private val applyTlsVerify: (Boolean) -> Unit =
         if (nativeCreate === defaultNativePlayerCreate) { verify -> NativePlayerBridge.setTlsVerifyForNextCreateSafely(verify) } else { _ -> },
+    // Same shape as applyTlsVerify: a test controller must not load the native library.
+    private val applyStreamLavfOptions: (String) -> Unit =
+        if (nativeCreate === defaultNativePlayerCreate) { options -> NativePlayerBridge.setStreamLavfOptionsForNextCreateSafely(options) } else { _ -> },
     private val isHostDisplayable: () -> Boolean = { host.isDisplayable },
     private val resolveHostView: () -> NativePlayerHostTarget = { AwtNativeViewResolver.resolveNativePlayerHost(host) },
     private val createWaitTimeoutMs: Long = 5_000L,
@@ -182,6 +185,8 @@ internal class NativePlayerController(
         nvidiaRtxSuperResolutionEnabled: Boolean,
         // false = an IPTV panel source (PlaybackTlsPolicy.PermissivePanel): its certificate is not verified, as before.
         tlsVerify: Boolean = true,
+        // Non-null = a single-use link's `stream-lavf-o` (LiveLinkReconnectPolicy); null = the bridge's reconnect defaults.
+        streamLavfOptions: String? = null,
         onError: (String?) -> Unit,
     ) {
         val pending = PendingSource(
@@ -192,6 +197,7 @@ internal class NativePlayerController(
             decoderPriority = decoderPriority,
             nvidiaRtxSuperResolutionEnabled = nvidiaRtxSuperResolutionEnabled,
             tlsVerify = tlsVerify,
+            streamLavfOptions = streamLavfOptions,
             onError = onError,
         )
         var terminalFailure: String? = null
@@ -358,6 +364,8 @@ internal class NativePlayerController(
             try {
                 runCatching {
                     applyTlsVerify(pending.tlsVerify)
+                    // Set before EVERY create (empty = defaults), so a previous source's value never leaks.
+                    applyStreamLavfOptions(pending.streamLavfOptions.orEmpty())
                     nativeCreate(
                         hostTarget,
                         resolvedSource,
@@ -1104,6 +1112,8 @@ internal class NativePlayerController(
             initialPositionMs = 0L,
             decoderPriority = pending.decoderPriority,
             nvidiaRtxSuperResolutionEnabled = pending.nvidiaRtxSuperResolutionEnabled,
+            // The re-created player must open the same way: a reconnect of a single-use link stays reconnect=0.
+            streamLavfOptions = pending.streamLavfOptions,
             onError = pending.onError,
         )
     }
@@ -1117,6 +1127,8 @@ internal class NativePlayerController(
             initialPositionMs = pending.initialPositionMs,
             decoderPriority = pending.decoderPriority,
             nvidiaRtxSuperResolutionEnabled = pending.nvidiaRtxSuperResolutionEnabled,
+            // The re-created player must open the same way: a reconnect of a single-use link stays reconnect=0.
+            streamLavfOptions = pending.streamLavfOptions,
             onError = pending.onError,
         )
     }
@@ -1397,6 +1409,7 @@ private data class PendingSource(
     val decoderPriority: Int,
     val nvidiaRtxSuperResolutionEnabled: Boolean,
     val tlsVerify: Boolean,
+    val streamLavfOptions: String?,
     val onError: (String?) -> Unit,
 )
 

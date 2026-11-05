@@ -1176,6 +1176,8 @@ private fun LivePlayerSurface(
             // it, which every live-only behaviour reads.
             streamType = "live",
             isCatchUpPlayback = isCatchUpPlayback,
+            // A Stalker create_link is spent after its first open: no in-engine re-open after a drop.
+            singleUseLink = current.singleUseLink && !isCatchUpPlayback,
             modifier = Modifier.fillMaxSize(),
             playWhenReady = true,
             resizeMode = resizeMode,

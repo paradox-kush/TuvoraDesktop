@@ -482,6 +482,12 @@ expect fun PlatformPlayerSurface(
      * `live && !isCatchUpPlayback` — see CatchUpPlayback.
      */
     isCatchUpPlayback: Boolean = false,
+    /**
+     * The URL is spent after its first open (a live Stalker `create_link`). The engine then makes no
+     * re-open of its own after a drop (mpv `stream-lavf-o reconnect=0`), and the app-level recovery
+     * mints a fresh link. See [LiveLinkReconnectPolicy].
+     */
+    singleUseLink: Boolean = false,
     useYoutubeChunkedPlayback: Boolean = false,
     modifier: Modifier = Modifier,
     playWhenReady: Boolean = true,
