@@ -61,6 +61,7 @@ actual fun PlatformPlayerSurface(
     externalSubtitles: List<com.nuvio.app.features.streams.StreamSubtitle>,
     streamType: String?,
     isCatchUpPlayback: Boolean,
+    singleUseLink: Boolean,
     useYoutubeChunkedPlayback: Boolean,
     modifier: Modifier,
     playWhenReady: Boolean,
@@ -107,6 +108,10 @@ actual fun PlatformPlayerSurface(
         NativePlayerSurface(
             sourceUrl = sourceUrl,
             tlsVerify = tlsVerify,
+            // A spent-after-first-open link (Stalker create_link): libmpv must not re-open it after a drop.
+            streamLavfOptions = LiveLinkReconnectPolicy.modeFor(singleUseLink)
+                .takeIf { it == LiveLinkReconnectPolicy.Mode.SINGLE_USE }
+                ?.let(LiveLinkReconnectPolicy::mpvStreamLavfOptions),
             sourceAvailable = sourceAvailable,
             isLiveStream = LivePlaybackRejoinPolicy.rejoinsLiveEdge(streamType, isCatchUpPlayback),
             sourceHeaders = sourceHeaders,
@@ -149,6 +154,7 @@ actual fun PlatformPlayerSurface(
 private fun NativePlayerSurface(
     sourceUrl: String,
     tlsVerify: Boolean,
+    streamLavfOptions: String?,
     sourceAvailable: Boolean,
     isLiveStream: Boolean,
     sourceHeaders: Map<String, String>,
@@ -262,6 +268,7 @@ private fun NativePlayerSurface(
         playbackHeaders,
         decoderPriority,
         nvidiaRtxSuperResolutionEnabled,
+        streamLavfOptions,
         hostFirstFullSizePaintComplete.value,
         initialPositionMs,
         initialPositionRequestKey,
@@ -278,6 +285,7 @@ private fun NativePlayerSurface(
             decoderPriority = decoderPriority,
             nvidiaRtxSuperResolutionEnabled = nvidiaRtxSuperResolutionEnabled,
             tlsVerify = tlsVerify,
+            streamLavfOptions = streamLavfOptions,
             onError = { message -> latestOnError.value(message) },
         )
         initialPositionRequestKey?.let { key ->

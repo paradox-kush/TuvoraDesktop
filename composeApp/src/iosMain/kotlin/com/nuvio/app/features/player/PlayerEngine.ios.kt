@@ -50,6 +50,9 @@ actual fun PlatformPlayerSurface(
     externalSubtitles: List<com.nuvio.app.features.streams.StreamSubtitle>,
     streamType: String?,
     isCatchUpPlayback: Boolean,
+    // Accepted for signature parity: this repo ships desktop only; the iOS app's single-use handling
+    // lives in NuvioMobile (LiveLinkReconnectPolicy via NuvioPlayerLinkReconnectBridge).
+    @Suppress("UNUSED_PARAMETER") singleUseLink: Boolean,
     useYoutubeChunkedPlayback: Boolean,
     modifier: Modifier,
     playWhenReady: Boolean,

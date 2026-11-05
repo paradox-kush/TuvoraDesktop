@@ -50,6 +50,33 @@ static bool nuvioDebug() {
 // the thread that then calls create (creates are serialized); consumed by that create. Panels with bad certs are the only "no".
 static std::atomic<bool> gNextCreateTlsVerify{true};
 
+// The stream-lavf-o the NEXT player create opens with; empty = this bridge's reconnect defaults below. Set by
+// NativePlayerBridge.setStreamLavfOptionsForNextCreate before EVERY create (Kotlin LiveLinkReconnectPolicy: a single-use
+// Stalker create_link gets reconnect=0, because FFmpeg re-opening a spent link only spends provider requests); consumed by
+// that create, like gNextCreateTlsVerify.
+static std::mutex gNextCreateStreamLavfOptionsLock;
+static std::string gNextCreateStreamLavfOptions;
+
+static std::string takeNextCreateStreamLavfOptions() {
+    std::lock_guard<std::mutex> guard(gNextCreateStreamLavfOptionsLock);
+    std::string options;
+    options.swap(gNextCreateStreamLavfOptions);
+    return options;
+}
+
+static void storeNextCreateStreamLavfOptions(JNIEnv *env, jstring options) {
+    std::string value;
+    if (options != nullptr) {
+        const char *chars = env->GetStringUTFChars(options, nullptr);
+        if (chars != nullptr) {
+            value = chars;
+            env->ReleaseStringUTFChars(options, chars);
+        }
+    }
+    std::lock_guard<std::mutex> guard(gNextCreateStreamLavfOptionsLock);
+    gNextCreateStreamLavfOptions = value;
+}
+
 namespace {
 
 JavaVM *gVm = nullptr;
@@ -1552,6 +1579,10 @@ JNIEXPORT jboolean JNICALL NP(initGtkEarly)(JNIEnv *, jobject) {
     return JNI_TRUE;
 }
 
+JNIEXPORT void JNICALL NP(setStreamLavfOptionsForNextCreate)(JNIEnv *env, jobject, jstring options) {
+    storeNextCreateStreamLavfOptions(env, options);
+}
+
 JNIEXPORT void JNICALL NP(setTlsVerifyForNextCreate)(JNIEnv *, jobject, jboolean verify) {
     gNextCreateTlsVerify.store(verify == JNI_TRUE);
 }
@@ -1602,6 +1633,8 @@ JNIEXPORT jlong JNICALL NP(create)(
         if (!headers.empty()) headerFields = joinHeaderFields(headers);
     }
 
+    // Taken once, outside configure(): it runs per init attempt, and a retry attempt must open the same way.
+    const std::string nextStreamLavfOptions = takeNextCreateStreamLavfOptions();
     auto configure = [&](mpv_handle *m, const char *gpuCtx, const char *hwdec) {
         // Surface mpv's own diagnostics (drained by the event thread).
         mpv_request_log_messages(m, nuvioDebug() ? "v" : "no");
@@ -1625,6 +1658,8 @@ JNIEXPORT jlong JNICALL NP(create)(
         mpv_set_option_string(m, "network-timeout", "15");
         mpv_set_option_string(m, "stream-lavf-o",
             "reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=5");
+        // A single-use link replaces the whole list above (key/value list option: setting it replaces, not merges).
+        if (!nextStreamLavfOptions.empty()) mpv_set_option_string(m, "stream-lavf-o", nextStreamLavfOptions.c_str());
         mpv_set_option_string(m, "ytdl", "no");
         mpv_set_option_string(m, "vo", "gpu");
         // Bring the VO/OSD up immediately (before the first decoded frame) so the

@@ -49,6 +49,33 @@ static constexpr double kMaxVolumePercent = 200.0;
 // the thread that then calls create; consumed (reset to "verify") by that create. Panels with bad certs are the only "no".
 static std::atomic<bool> gNextCreateTlsVerify{true};
 
+// The stream-lavf-o the NEXT player create opens with; empty = this bridge's reconnect defaults below. Set by
+// NativePlayerBridge.setStreamLavfOptionsForNextCreate before EVERY create (Kotlin LiveLinkReconnectPolicy: a single-use
+// Stalker create_link gets reconnect=0, because FFmpeg re-opening a spent link only spends provider requests); consumed by
+// that create, like gNextCreateTlsVerify.
+static std::mutex gNextCreateStreamLavfOptionsLock;
+static std::string gNextCreateStreamLavfOptions;
+
+static std::string takeNextCreateStreamLavfOptions() {
+    std::lock_guard<std::mutex> guard(gNextCreateStreamLavfOptionsLock);
+    std::string options;
+    options.swap(gNextCreateStreamLavfOptions);
+    return options;
+}
+
+static void storeNextCreateStreamLavfOptions(JNIEnv *env, jstring options) {
+    std::string value;
+    if (options != nullptr) {
+        const char *chars = env->GetStringUTFChars(options, nullptr);
+        if (chars != nullptr) {
+            value = chars;
+            env->ReleaseStringUTFChars(options, chars);
+        }
+    }
+    std::lock_guard<std::mutex> guard(gNextCreateStreamLavfOptionsLock);
+    gNextCreateStreamLavfOptions = value;
+}
+
 @class PlayerMetalView;
 @class MpvWebPlayer;
 @class NuvioPlayerOpenGLLayer;
@@ -1659,6 +1686,11 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
         "stream-lavf-o",
         "reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_on_http_error=%23%408,429,500,502,503,504,reconnect_delay_max=15"
     );
+    // A single-use link replaces the whole list above (key/value list option: setting it replaces, not merges).
+    {
+        const std::string streamLavfOptions = takeNextCreateStreamLavfOptions();
+        if (!streamLavfOptions.empty()) setMpvOptionString(_mpv, "stream-lavf-o", streamLavfOptions.c_str());
+    }
     setMpvOptionString(_mpv, "hr-seek", "no");
     // TLS: libmpv's own default is tls-verify=no (proved with the bundled libmpv: a self-signed https stream loads). Verify
     // by default; the Kotlin side asks for "no" only for an IPTV panel source (PlaybackTlsPolicy), see setTlsVerifyForNextCreate.
@@ -3286,6 +3318,15 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setMacosWindowFull
             [window toggleFullScreen:nil];
         }
     });
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setStreamLavfOptionsForNextCreate(
+    JNIEnv *env,
+    jobject /* bridge */,
+    jstring options
+) {
+    storeNextCreateStreamLavfOptions(env, options);
 }
 
 extern "C" JNIEXPORT void JNICALL

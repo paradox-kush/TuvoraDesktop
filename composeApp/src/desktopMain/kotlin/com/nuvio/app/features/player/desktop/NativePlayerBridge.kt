@@ -111,6 +111,18 @@ internal object NativePlayerBridge {
     fun setTlsVerifyForNextCreateSafely(verify: Boolean): Boolean =
         runCatching { setTlsVerifyForNextCreate(verify) }.isSuccess
 
+    /**
+     * The `stream-lavf-o` the NEXT [create] opens with; empty = the bridge's own reconnect defaults. A single-use
+     * Stalker link gets reconnect=0 ([com.nuvio.app.features.player.LiveLinkReconnectPolicy]). Consumed by that
+     * create. Use [setStreamLavfOptionsForNextCreateSafely]: an older native library without the symbol must degrade
+     * to its defaults (the old behaviour), not crash.
+     */
+    private external fun setStreamLavfOptionsForNextCreate(options: String)
+
+    /** True when the native library took the setting. */
+    fun setStreamLavfOptionsForNextCreateSafely(options: String): Boolean =
+        runCatching { setStreamLavfOptionsForNextCreate(options) }.isSuccess
+
     fun setStringPropertiesSafely(handle: Long, properties: List<Pair<String, String>>) {
         if (handle == 0L || properties.isEmpty()) return
         runCatching {
