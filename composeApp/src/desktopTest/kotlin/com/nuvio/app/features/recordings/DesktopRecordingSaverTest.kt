@@ -36,6 +36,9 @@ private class ScriptedServer {
         /** Declares [declared] bytes, sends [bytes], then drops the connection. */
         class Truncated(val declared: Long, val bytes: ByteArray) : Reply
 
+        /** Sends [bytes] chunked: no Content-Length, so the end cannot be checked against a declared size. */
+        class Chunked(val bytes: ByteArray) : Reply
+
         /** Closes the connection without answering. */
         data object Drop : Reply
 
@@ -74,6 +77,10 @@ private class ScriptedServer {
                         ex.sendResponseHeaders(reply.code, reply.bytes.size.toLong())
                         ex.responseBody.use { it.write(reply.bytes) }
                     }
+                }
+                is Reply.Chunked -> {
+                    ex.sendResponseHeaders(200, 0)
+                    ex.responseBody.use { it.write(reply.bytes) }
                 }
                 is Reply.Truncated -> {
                     ex.sendResponseHeaders(200, reply.declared)
@@ -115,10 +122,10 @@ class DesktopRecordingSaverTest {
         dir.deleteRecursively()
     }
 
-    private fun req(vararg paths: String, resume: Long = 0, headers: Map<String, String> = emptyMap(), check: (suspend (Long) -> RecordingProblem?)? = null) =
+    private fun req(vararg paths: String, resume: Long = 0, headers: Map<String, String> = emptyMap(), estimated: Long = 0, check: (suspend (Long) -> RecordingProblem?)? = null) =
         SaveRequest(
             candidates = paths.map { server.url(it) }, headers = headers,
-            targetPath = File(dir, "show.ts").path, resumeFromBytes = resume, estimatedBytes = 0, spaceCheck = check,
+            targetPath = File(dir, "show.ts").path, resumeFromBytes = resume, estimatedBytes = estimated, spaceCheck = check,
         )
 
     private fun saver(stallMs: Long = 30_000, tickMs: Long = 5_000) =
@@ -251,6 +258,21 @@ class DesktopRecordingSaverTest {
         assertEquals(false, got.offline)
         assertTrue(File(dir, "show.ts.part").exists())
         assertTrue(!File(dir, "show.ts").exists())
+    }
+
+    @Test
+    fun `an early clean end with no length and far below the estimate is a retryable stall not a finished save`() = runBlocking {
+        server.enqueue(ScriptedServer.Reply.Chunked("0123456789".toByteArray()))
+        val got = saver().save(req("/a.ts", estimated = 2_000_000_000L)) { } as SaveOutcome.Failed
+        assertEquals(RecordingProblem.STALLED, got.problem)
+        assertTrue(File(dir, "show.ts.part").exists(), "the partial is kept for a resume")
+        assertTrue(!File(dir, "show.ts").exists(), "a truncated stream is never presented as the recording")
+    }
+
+    @Test
+    fun `a clean end with no length and no estimate is still a finished save`() = runBlocking {
+        server.enqueue(ScriptedServer.Reply.Chunked("0123456789".toByteArray()))
+        assertEquals(SaveOutcome.Done(10), saver().save(req("/a.ts")) { })
     }
 
     @Test
