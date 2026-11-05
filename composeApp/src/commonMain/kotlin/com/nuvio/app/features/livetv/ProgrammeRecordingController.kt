@@ -89,9 +89,8 @@ internal class ProgrammeRecordingController(
             _work.value = try {
                 val now = clock()
                 val days = channel.catchUp?.days ?: 0
-                val stored = runCatching {
-                    LiveTvData.historyProgrammes(channel.key, now - days * DAY_MS, now + SERIES_LOOKAHEAD_MS)
-                }.getOrDefault(emptyList())
+                // A failed guide read must say so, not quietly schedule fewer airings; cancellation passes through.
+                val stored = LiveTvData.historyProgrammes(channel.key, now - days * DAY_MS, now + SERIES_LOOKAHEAD_MS)
                 val created = port.addSeriesRule(
                     channel = channel, title = programme.title, keepLast = 0,
                     listings = (stored + shown + programme).toListings(), nowMs = now,
@@ -146,8 +145,7 @@ internal class ProgrammeRecordingController(
             try {
                 val now = clock()
                 for (rule in port.state.value.series) {
-                    val stored = runCatching { LiveTvData.historyProgrammes(rule.channel.key, now, now + SERIES_LOOKAHEAD_MS) }
-                        .getOrDefault(emptyList())
+                    val stored = LiveTvData.historyProgrammes(rule.channel.key, now, now + SERIES_LOOKAHEAD_MS)
                     if (stored.isNotEmpty()) port.expandSeries(rule.id, stored.toListings(), now)
                 }
             } catch (e: CancellationException) {

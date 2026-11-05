@@ -219,6 +219,18 @@ class RecordingsRepository(
 
     private fun partPath(path: String) = "$path.part"
 
+    /** The partial and its resume sidecar (`.part.meta`): a stale pair must never outlive the schedule it served. */
+    private suspend fun deletePart(path: String) {
+        files.delete(partPath(path))
+        files.delete(partPath(path) + ".meta")
+    }
+
+    /** A schedule that is gone (cancelled, removed with its series) leaves no partial behind. */
+    private suspend fun dropPartialsOf(scheduleId: String) {
+        doc.recordingValues.filter { it.scheduleId == scheduleId && it.status != RecordingStatus.DONE }
+            .forEach { deletePart(files.pathFor(it.fileName)) }
+    }
+
     // ---- alarms ---------------------------------------------------------------------------
 
     private fun armAt(s: RecordingSchedule, nowMs: Long): ArmKind {
@@ -310,7 +322,7 @@ class RecordingsRepository(
             }
             val hadRule = doc.seriesValues.any { it.id == ruleId }
             if (!hadRule && waiting.isEmpty()) return@locked
-            waiting.forEach { alarms.disarm(it); ledger.forget(it) }
+            waiting.forEach { alarms.disarm(it); ledger.forget(it); dropPartialsOf(it) }
             edit(
                 schedules = { list -> list.filterNot { it.id in waiting } },
                 series = { list -> list.filterNot { it.id == ruleId } },
@@ -329,6 +341,7 @@ class RecordingsRepository(
             if (doc.scheduleValues.any { it.id == scheduleId }) {
                 edit(schedules = { list -> list.filterNot { it.id == scheduleId } })
                 ledger.forget(scheduleId)
+                dropPartialsOf(scheduleId)
                 commit()
             }
             null
@@ -352,7 +365,7 @@ class RecordingsRepository(
     private suspend fun deleteFilesOf(row: Recording) {
         val path = files.pathFor(row.fileName)
         files.delete(path)
-        if (row.status != RecordingStatus.DONE) files.delete(partPath(path))
+        if (row.status != RecordingStatus.DONE) deletePart(path)
     }
 
     override suspend fun retry(recordingId: String, nowMs: Long) {
@@ -361,7 +374,7 @@ class RecordingsRepository(
             val source = row.retrySource ?: return@locked
             if (row.status != RecordingStatus.FAILED && row.status != RecordingStatus.CANCELLED) return@locked
             if (doc.scheduleValues.any { it.id == source.id }) return@locked
-            files.delete(partPath(files.pathFor(row.fileName)))
+            deletePart(files.pathFor(row.fileName))
             removeRecordingRow(recordingId)
             ledger.forget(source.id)
             val again = source.copy(attempts = 0, nextTryMs = nowMs)
@@ -575,7 +588,7 @@ class RecordingsRepository(
         running.remove(s.id)
         ledger.release(run.token, FireOutcome.FAILED, RecordingProblem.CANCELLED_BY_USER)
         val endedAt = clock()
-        files.delete(partPath(run.targetPath))
+        deletePart(run.targetPath)
         alarms.disarm(s.id)
         edit(
             schedules = { list -> list.filterNot { it.id == s.id } },
@@ -608,7 +621,7 @@ class RecordingsRepository(
                 removeRecordingRow(recordingId)
                 edit(schedules = { list -> list.map { if (it.id == schedule.id) d.schedule else it } })
                 // Resume only if the server will honour it; otherwise a stale partial would just be rewritten.
-                if (target != null && !(written > 0 && rangeSupported)) files.delete(partPath(target))
+                if (target != null && !(written > 0 && rangeSupported)) deletePart(target)
                 armAt(d.schedule, nowMs)
                 commit()
                 FireResult.Retrying(d.schedule.nextTryMs)
@@ -635,7 +648,7 @@ class RecordingsRepository(
     private suspend fun terminalRow(schedule: RecordingSchedule, problem: RecordingProblem, nowMs: Long, target: String?) {
         val id = recordingIdFor(schedule.id)
         alarms.disarm(schedule.id)
-        if (target != null) files.delete(partPath(target))
+        if (target != null) deletePart(target)
         val previous = doc.recordingValues.firstOrNull { it.id == id }
         val row = (previous ?: Recording(
             id = id, scheduleId = schedule.id, channelKey = schedule.channel.key, channelName = schedule.channel.name,
