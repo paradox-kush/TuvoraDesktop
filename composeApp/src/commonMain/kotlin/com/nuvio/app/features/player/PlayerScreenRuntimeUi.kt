@@ -61,7 +61,9 @@ import com.nuvio.app.features.servers.ServerStreams
 import com.nuvio.app.features.streams.ExternalPlayerAvailability
 import com.nuvio.app.features.streams.streamAddonInstanceId
 import com.nuvio.app.isIos
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.time.TimeSource
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import nuvio.composeapp.generated.resources.*
@@ -652,6 +654,33 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
             )
         }
         val resolvedAutoEngine = resolvedAutoEngineState.value
+
+        // B214/B217: a VOD start that never shows a frame ends in Failed + Retry (the engine's own
+        // watchdogs cannot cover a native open that never returns). The clock restarts on a new
+        // source, "Start from beginning" and Retry, never on an engine failover. Desktop has no
+        // automatic engine failover, so only the Failed + Retry end applies.
+        val vodStartFailedMessage = stringResource(Res.string.player_vod_start_failed)
+        LaunchedEffect(activePlaybackKey, startOverGeneration, vodStartRetryGeneration) {
+            val startedAt = TimeSource.Monotonic.markNow()
+            while (true) {
+                delay(VodStartDeadlinePolicy.POLL_INTERVAL_MS)
+                val action = VodStartDeadlinePolicy.decide(
+                    elapsedMs = startedAt.elapsedNow().inWholeMilliseconds,
+                    started = resumePlaybackStarted,
+                    isLive = isLiveStream,
+                    isTorrent = activeTorrentInfoHash != null,
+                    suspended = !shouldPlay,
+                    hasError = errorMessage != null,
+                    canFailover = false,
+                )
+                if (action == VodStartDeadlinePolicy.Action.Fail) {
+                    vodStartFailed = true
+                    errorMessage = vodStartFailedMessage
+                    controlsVisible = !playerControlsLocked
+                    return@LaunchedEffect
+                }
+            }
+        }
 
         if (renderPlayerSurface) {
             val surfaceSource = currentPlayerSurfaceSource
@@ -2098,7 +2127,14 @@ private fun BoxScope.RenderPlaybackOverlays(
             },
             errorMessage = errorMessage,
             onDismissError = { requestBack() },
-            onRetryError = if (liveReconnectFailed) {
+            onRetryError = if (vodStartFailed) {
+                {
+                    vodStartFailed = false
+                    errorMessage = null
+                    vodStartRetryGeneration++
+                    playerController?.retry()
+                }
+            } else if (liveReconnectFailed) {
                 {
                     liveReconnectFailed = false
                     errorMessage = null
