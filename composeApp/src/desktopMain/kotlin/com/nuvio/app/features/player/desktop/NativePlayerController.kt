@@ -1435,6 +1435,7 @@ private fun String.toPlayerControlsAction(): PlayerControlsAction? =
     when (this) {
         "toggleChrome" -> PlayerControlsAction.ToggleChrome
         "back" -> PlayerControlsAction.Back
+        "retryPlayback" -> PlayerControlsAction.RetryPlayback
         "toggleFullscreen" -> PlayerControlsAction.ToggleFullscreen
         "toggle" -> PlayerControlsAction.TogglePlayback
         "keyboardToggle" -> PlayerControlsAction.KeyboardTogglePlayback
@@ -1529,6 +1530,8 @@ internal fun PlayerControlsState.toControlsJson(isFullscreen: Boolean, onImageRe
         appendJsonField("playbackErrorMessage", playbackErrorMessage)
         append(',')
         appendJsonField("playbackErrorActionLabel", playbackErrorActionLabel)
+        append(',')
+        appendJsonField("playbackErrorRetryLabel", playbackErrorRetryLabel)
         append(',')
         appendJsonField("sourcesPanelTitle", sourcesPanelTitle)
         append(',')

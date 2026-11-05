@@ -106,6 +106,8 @@ enum class PlayerControlsAction {
     VideoSettings,
     DoubleTapSeekBack,
     DoubleTapSeekForward,
+    /** The native error panel's Retry (a failed VOD start or an exhausted live reconnect). */
+    RetryPlayback,
 }
 
 data class PlayerControlSubtitleFont(
@@ -170,6 +172,8 @@ data class PlayerControlsState(
     val playbackErrorTitle: String = "Playback error",
     val playbackErrorMessage: String = "",
     val playbackErrorActionLabel: String = "Go back",
+    /** Empty = the error panel offers no Retry. */
+    val playbackErrorRetryLabel: String = "",
     val sourcesPanelTitle: String = "Sources",
     val episodesPanelTitle: String = "Episodes",
     val streamsPanelTitle: String = "Streams",

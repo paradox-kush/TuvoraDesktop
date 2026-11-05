@@ -359,6 +359,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
         playbackErrorTitle = stringResource(Res.string.compose_player_playback_error),
         playbackErrorMessage = errorMessage.orEmpty(),
         playbackErrorActionLabel = stringResource(Res.string.compose_player_go_back),
+        playbackErrorRetryLabel = if (vodStartFailed || liveReconnectFailed) stringResource(Res.string.compose_player_retry) else "",
         sourcesPanelTitle = stringResource(Res.string.compose_player_panel_sources),
         episodesPanelTitle = stringResource(Res.string.compose_player_panel_episodes),
         streamsPanelTitle = stringResource(Res.string.compose_player_panel_streams),
@@ -1165,6 +1166,7 @@ internal fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerContro
         }
         PlayerControlsAction.RevealLockedOverlay -> revealLockedOverlay()
         PlayerControlsAction.Back -> requestBack()
+        PlayerControlsAction.RetryPlayback -> retryAfterPlaybackError()
         // The regular player keeps the desktop control's existing whole-window fullscreen
         // fallback. Surfaces with their own layout fullscreen (Live TV) may consume this action.
         PlayerControlsAction.ToggleFullscreen -> return false
@@ -2143,26 +2145,8 @@ private fun BoxScope.RenderPlaybackOverlays(
             },
             errorMessage = errorMessage,
             onDismissError = { requestBack() },
-            onRetryError = if (vodStartFailed) {
-                {
-                    vodStartFailed = false
-                    errorMessage = null
-                    shouldPlay = true
-                    vodStartRetryGeneration++
-                    playerController?.retry()
-                }
-            } else if (liveReconnectFailed) {
-                {
-                    liveReconnectFailed = false
-                    errorMessage = null
-                    // The viewer's Retry gets fresh, still bounded, budgets: the freeze ladder and the
-                    // re-mint cap. Without this a Retry after the cap could only replay the dead link
-                    // and land on an error with no Retry at all.
-                    credentialRefreshAttempts = 0
-                    credentialRefreshBaselinePositionMs = 0L
-                    liveUserRetryGeneration++
-                    playerController?.retry()
-                }
+            onRetryError = if (vodStartFailed || liveReconnectFailed) {
+                { retryAfterPlaybackError() }
             } else null,
         )
     }
@@ -2398,5 +2382,27 @@ private fun PlayerScreenRuntime.RenderPlayerModals(displayedPositionMs: Long) {
             },
             onDismiss = { showSwitchEngineConfirm = false },
         )
+    }
+}
+
+/** Retry on the error modal / native error panel: a failed VOD start, or an exhausted live reconnect. */
+internal fun PlayerScreenRuntime.retryAfterPlaybackError() {
+    if (vodStartFailed) {
+        vodStartFailed = false
+        errorMessage = null
+        shouldPlay = true
+        vodStartRetryGeneration++
+        // No engine yet (the open never produced a controller): remount the surface so Retry reopens it.
+        playerController?.retry() ?: run { startOverGeneration += 1 }
+    } else if (liveReconnectFailed) {
+        liveReconnectFailed = false
+        errorMessage = null
+        // The viewer's Retry gets fresh, still bounded, budgets: the freeze ladder and the
+        // re-mint cap. Without this a Retry after the cap could only replay the dead link
+        // and land on an error with no Retry at all.
+        credentialRefreshAttempts = 0
+        credentialRefreshBaselinePositionMs = 0L
+        liveUserRetryGeneration++
+        playerController?.retry() ?: run { startOverGeneration += 1 }
     }
 }
