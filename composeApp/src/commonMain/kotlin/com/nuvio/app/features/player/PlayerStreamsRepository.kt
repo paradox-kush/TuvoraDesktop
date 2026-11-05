@@ -15,6 +15,7 @@ import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.plugins.PluginsUiState
 import com.nuvio.app.features.plugins.pluginContentId
 import com.nuvio.app.features.servers.ServerStreams
+import com.nuvio.app.features.servers.loadBounded
 import com.nuvio.app.features.streams.AddonStreamGroup
 import com.nuvio.app.features.streams.InstalledStreamAddonTarget
 import com.nuvio.app.features.streams.IptvMatchSourceLane
@@ -26,6 +27,7 @@ import com.nuvio.app.features.streams.StreamLoadCompletion
 import com.nuvio.app.features.streams.StreamParser
 import com.nuvio.app.features.streams.StreamsUiState
 import com.nuvio.app.features.streams.asDirectSourceGroup
+import com.nuvio.app.features.streams.SourceLaneGuard
 import com.nuvio.app.features.streams.runCatchingUnlessCancelled
 import com.nuvio.app.features.streams.sortedForGroupedDisplay
 import com.nuvio.app.features.streams.streamAddonInstanceId
@@ -487,7 +489,7 @@ object PlayerStreamsRepository {
                     )
 
                     val displayName = addon.addonName
-                    val group = runCatchingUnlessCancelled {
+                    val group = SourceLaneGuard.run {
                         log.d { "fetch $panelName request=$requestKey addon=$displayName" }
                         val payload = fetchAddonResponseText(
                             url = url,
@@ -523,7 +525,7 @@ object PlayerStreamsRepository {
             }
 
             serverSources.forEach { source ->
-                launch { publishCompletion(StreamLoadCompletion.Addon(source.load())) }
+                launch { publishCompletion(StreamLoadCompletion.Addon(source.loadBounded())) }
             }
 
             pluginProviderGroups.forEach { providerGroup ->
@@ -531,7 +533,8 @@ object PlayerStreamsRepository {
                 providerGroup.scrapers.forEach { scraper ->
                     nonIptvLoads += launch {
                         log.d { "fetch $panelName request=$requestKey plugin=${scraper.name}" }
-                        val completion = PluginRepository.executeScraper(
+                        val completion = SourceLaneGuard.run {
+                            PluginRepository.executeScraper(
                             scraper = scraper,
                             tmdbId = pluginContentId(
                                 videoId = videoId,
@@ -541,7 +544,8 @@ object PlayerStreamsRepository {
                             mediaType = type,
                             season = season,
                             episode = episode,
-                        ).fold(
+                        ).getOrThrow()
+                        }.fold(
                             onSuccess = { results ->
                                 log.d { "fetched $panelName request=$requestKey plugin=${scraper.name} streams=${results.size}" }
                                 StreamLoadCompletion.PluginScraper(
