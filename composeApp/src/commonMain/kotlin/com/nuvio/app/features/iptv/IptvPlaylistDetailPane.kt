@@ -73,6 +73,7 @@ import nuvio.composeapp.generated.resources.provider_details_enabled
 import nuvio.composeapp.generated.resources.provider_details_enabled_hint
 import nuvio.composeapp.generated.resources.provider_details_expired
 import nuvio.composeapp.generated.resources.provider_details_expiry_check_failed
+import nuvio.composeapp.generated.resources.iptv_details_turn_on_to_check
 import nuvio.composeapp.generated.resources.provider_details_expiry_not_reported
 import nuvio.composeapp.generated.resources.provider_details_locked_title
 import nuvio.composeapp.generated.resources.provider_details_locked_value
@@ -147,14 +148,15 @@ internal fun IptvPlaylistDetailPane(
                 Text(it, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             val statusLine = when {
+                live.hasPanel && live.inspectionSkipped && live.info == null -> stringResource(Res.string.iptv_details_turn_on_to_check)
                 live.hasPanel && live.loading && live.info == null -> stringResource(Res.string.provider_details_status_loading)
-                live.hasPanel && !live.loading && live.info == null -> stringResource(Res.string.provider_details_status_unreachable)
+                live.hasPanel && !live.loading && !live.inspectionSkipped && live.info == null -> stringResource(Res.string.provider_details_status_unreachable)
                 else -> model.statusText
             }
             statusLine?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = tokens.colors.textMuted) }
 
             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                ExpiryTile(model.expiry, loading = live.loading)
+                ExpiryTile(model.expiry, loading = live.loading, inspectionSkipped = live.inspectionSkipped)
                 model.connections?.let { c ->
                     StatTile(Modifier.widthIn(min = 200.dp)) {
                         Text(
@@ -249,7 +251,7 @@ internal fun IptvPlaylistDetailPane(
 }
 
 @Composable
-private fun ExpiryTile(expiry: ExpiryDisplay, loading: Boolean) {
+private fun ExpiryTile(expiry: ExpiryDisplay, loading: Boolean, inspectionSkipped: Boolean = false) {
     val tokens = MaterialTheme.nuvio
     val text: String? = when (expiry) {
         is ExpiryDisplay.DaysLeft ->
@@ -258,7 +260,7 @@ private fun ExpiryTile(expiry: ExpiryDisplay, loading: Boolean) {
         ExpiryDisplay.NeverExpires -> stringResource(Res.string.provider_details_never_expires)
         is ExpiryDisplay.Text -> expiry.text
         // While the panel has not answered there is nothing to say yet.
-        ExpiryDisplay.NotReported -> if (loading) null else stringResource(Res.string.provider_details_expiry_not_reported)
+        ExpiryDisplay.NotReported -> if (loading) null else if (inspectionSkipped) stringResource(Res.string.iptv_details_turn_on_to_check) else stringResource(Res.string.provider_details_expiry_not_reported)
         ExpiryDisplay.CheckFailed -> stringResource(Res.string.provider_details_expiry_check_failed)
     }
     if (text == null) return

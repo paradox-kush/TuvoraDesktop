@@ -110,7 +110,7 @@ internal fun IptvMasterDetail(
     LaunchedEffect(selected?.id) { selected?.let { detailsController.load(it) } }
     // "N days left" on managed rows: one panel question per managed playlist per freshness window.
     LaunchedEffect(managed.keys, accounts) {
-        accounts.filter { it.id in managed }.forEach { PlaylistAccountInfoStore.shared.infoFor(it) }
+        PlaylistAccountInfoStore.shared.refreshManaged(accounts, managed.keys)
     }
 
     // A finished redeem: say what happened, then land on the new playlist (or the list when it is another profile's).
@@ -208,7 +208,7 @@ internal fun IptvMasterDetail(
                     val model = ManagedDetailsModel.build(
                         account = selected, info = info, accountInfo = live.info, counts = live.counts, nowEpochSec = nowSec,
                         addressLine = ServerFailoverPolicy.backupLabel(activeServers[selected.id] ?: 0) ?: PlaylistAddress.hostOnly(selected.baseUrl),
-                        panelCheckFailed = live.hasPanel && !live.loading && live.info == null,
+                        panelCheckFailed = live.hasPanel && !live.loading && !live.inspectionSkipped && live.info == null,
                     )
                     IptvPlaylistDetailPane(
                         model = model, live = live, account = selected,
