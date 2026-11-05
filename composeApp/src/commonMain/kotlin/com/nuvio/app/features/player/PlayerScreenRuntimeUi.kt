@@ -602,6 +602,12 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
         val isLiveStream = activeStreamType.equals("live", ignoreCase = true)
         val freezeReporter = remember { LivePlaybackFreezeReporter() }
         val freezeReconnector = remember { LivePlaybackReconnector(freezeReporter) }
+        // The ladder belongs to the channel: a zap or the viewer's Retry starts it over; the
+        // pipeline's own reconnects and re-mints (a new URL every time) never do.
+        LaunchedEffect(activeVideoId) { freezeReconnector.onChannelChanged() }
+        LaunchedEffect(liveUserRetryGeneration) {
+            if (liveUserRetryGeneration > 0) freezeReconnector.onUserRetry()
+        }
         val singleUseLink = remember(activeVideoId, isLiveStream) {
             LiveLinkReconnectPolicy.modeFor(
                 isStalkerSource = activeVideoId?.let {
@@ -2096,6 +2102,12 @@ private fun BoxScope.RenderPlaybackOverlays(
                 {
                     liveReconnectFailed = false
                     errorMessage = null
+                    // The viewer's Retry gets fresh, still bounded, budgets: the freeze ladder and the
+                    // re-mint cap. Without this a Retry after the cap could only replay the dead link
+                    // and land on an error with no Retry at all.
+                    credentialRefreshAttempts = 0
+                    credentialRefreshBaselinePositionMs = 0L
+                    liveUserRetryGeneration++
                     playerController?.retry()
                 }
             } else null,
