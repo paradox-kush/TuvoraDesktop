@@ -3753,6 +3753,16 @@ svg {
   letter-spacing: 0.06em;
 }
 
+/* Live pause / rewind: while time-shifted the bar spans the window the player holds and the chip is a Go live button. */
+.player.live-mode.live-rewind #seek {
+  visibility: visible;
+}
+
+.player.live-mode.live-rewind #timeLabel {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
 .stream-info-modal {
   display: flex;
   align-items: flex-end;

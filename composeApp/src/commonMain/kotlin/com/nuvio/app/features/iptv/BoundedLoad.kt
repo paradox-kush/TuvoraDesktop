@@ -58,6 +58,8 @@ enum class LoadSurface(val key: String, val stallMs: Long, val reportsEveryOutco
      * titles still being fetched land in the background. Only failures are reported.
      */
     CALENDAR("calendar", 30_000L, reportsEveryOutcome = false),
+    /** Live pause/rewind starting its buffer: first playable piece or Failed. Every start is worth a report. */
+    LIVE_PAUSE("live_pause", 20_000L, reportsEveryOutcome = true),
 }
 
 sealed interface LoadStatus {
