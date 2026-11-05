@@ -28,6 +28,7 @@ import com.nuvio.app.features.streams.StreamParser
 import com.nuvio.app.features.streams.StreamsUiState
 import com.nuvio.app.features.streams.asDirectSourceGroup
 import com.nuvio.app.features.streams.SourceLaneGuard
+import com.nuvio.app.features.streams.laneFailureMessage
 import com.nuvio.app.features.streams.runCatchingUnlessCancelled
 import com.nuvio.app.features.streams.sortedForGroupedDisplay
 import com.nuvio.app.features.streams.streamAddonInstanceId
@@ -508,7 +509,7 @@ object PlayerStreamsRepository {
                         },
                         onFailure = { err ->
                             log.w(err) { "failed $panelName request=$requestKey addon=$displayName" }
-                            AddonStreamGroup(displayName, addon.addonId, emptyList(), isLoading = false, error = err.message)
+                            AddonStreamGroup(displayName, addon.addonId, emptyList(), isLoading = false, error = err.laneFailureMessage())
                         },
                     )
                     publishCompletion(StreamLoadCompletion.Addon(group))
@@ -533,7 +534,7 @@ object PlayerStreamsRepository {
                 providerGroup.scrapers.forEach { scraper ->
                     nonIptvLoads += launch {
                         log.d { "fetch $panelName request=$requestKey plugin=${scraper.name}" }
-                        val completion = SourceLaneGuard.run {
+                        val completion = SourceLaneGuard.run(deadlineMs = null) {
                             PluginRepository.executeScraper(
                             scraper = scraper,
                             tmdbId = pluginContentId(
