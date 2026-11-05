@@ -64,6 +64,8 @@ import com.nuvio.app.isIos
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.time.TimeSource
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import nuvio.composeapp.generated.resources.*
@@ -656,28 +658,42 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
         val resolvedAutoEngine = resolvedAutoEngineState.value
 
         // B214/B217: a VOD start that never shows a frame ends in Failed + Retry (the engine's own
-        // watchdogs cannot cover a native open that never returns). The clock restarts on a new
-        // source, "Start from beginning" and Retry, never on an engine failover. Desktop has no
-        // automatic engine failover, so only the Failed + Retry end applies.
+        // watchdogs cannot cover a native open that never returns). The clock counts only active
+        // time (not paused or backgrounded), restarts on a new source, Retry and "Start from
+        // beginning", and is kept across an engine failover (keyed on the source, not the engine).
         val vodStartFailedMessage = stringResource(Res.string.player_vod_start_failed)
-        LaunchedEffect(activePlaybackKey, startOverGeneration, vodStartRetryGeneration) {
-            val startedAt = TimeSource.Monotonic.markNow()
+        val startLifecycle = LocalLifecycleOwner.current.lifecycle
+        LaunchedEffect(sourcePlaybackKey, startOverGeneration, vodStartRetryGeneration) {
+            vodStartFailed = false
+            val clock = StartDeadlineClock()
+            clock.reset(0L)
+            val origin = TimeSource.Monotonic.markNow()
             while (true) {
                 delay(VodStartDeadlinePolicy.POLL_INTERVAL_MS)
-                val action = VodStartDeadlinePolicy.decide(
-                    elapsedMs = startedAt.elapsedNow().inWholeMilliseconds,
-                    started = resumePlaybackStarted,
-                    isLive = isLiveStream,
-                    isTorrent = activeTorrentInfoHash != null,
-                    suspended = !shouldPlay,
-                    hasError = errorMessage != null,
-                    canFailover = false,
-                )
-                if (action == VodStartDeadlinePolicy.Action.Fail) {
-                    vodStartFailed = true
-                    errorMessage = vodStartFailedMessage
-                    controlsVisible = !playerControlsLocked
-                    return@LaunchedEffect
+                val inForeground = startLifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+                val elapsedMs = clock.tick(origin.elapsedNow().inWholeMilliseconds, suspended = !shouldPlay || !inForeground)
+                when (
+                    VodStartDeadlinePolicy.decide(
+                        elapsedMs = elapsedMs,
+                        started = resumePlaybackStarted,
+                        isLive = isLiveStream,
+                        isTorrent = activeTorrentInfoHash != null,
+                        suspended = !shouldPlay || !inForeground,
+                        hasError = errorMessage != null,
+                        canFailover = false,
+                    )
+                ) {
+                    // Desktop has no automatic engine failover (canFailover is always false).
+                    VodStartDeadlinePolicy.Action.Wait, VodStartDeadlinePolicy.Action.FailOver -> Unit
+                    VodStartDeadlinePolicy.Action.Fail -> {
+                        vodStartFailed = true
+                        errorMessage = vodStartFailedMessage
+                        controlsVisible = !playerControlsLocked
+                        // Park the engine so a late-completing open cannot play behind the dialog;
+                        // Retry sets shouldPlay again.
+                        shouldPlay = false
+                        return@LaunchedEffect
+                    }
                 }
             }
         }
@@ -2131,6 +2147,7 @@ private fun BoxScope.RenderPlaybackOverlays(
                 {
                     vodStartFailed = false
                     errorMessage = null
+                    shouldPlay = true
                     vodStartRetryGeneration++
                     playerController?.retry()
                 }
