@@ -131,6 +131,7 @@ class RecordingsRepository(
             }
         }
         reconcileRecordingRowsLocked(nowMs)
+        reconcileImplausibleDoneLocked()
         if (persistState() && migrating) files.keepAside(LEDGER_FILE)
     }
 
@@ -159,6 +160,24 @@ class RecordingsRepository(
                 edit(recordings = { list -> list.map { if (it.id == row.id) it.copy(status = RecordingStatus.FAILED, problem = RecordingProblem.STALLED, endedAtMs = row.endedAtMs ?: nowMs) else it } })
             }
         }
+    }
+
+    /**
+     * A catch-up save that finished under 64 KiB for a programme of a minute or more is not footage (an
+     * HLS playlist or an error page saved as the file, as older builds did). It reads as FAILED
+     * (UNSUPPORTED_FORMAT) from now on, never retried, and the file is left alone.
+     */
+    private fun reconcileImplausibleDoneLocked() {
+        val bad = doc.recordingValues.filter {
+            it.status == RecordingStatus.DONE && it.mode == CaptureMode.CATCH_UP && it.problem == null &&
+                RecordingSizeSanity.implausiblySmall(it.sizeBytes, it.programmeEndMs - it.programmeStartMs)
+        }.map { it.id }.toSet()
+        if (bad.isEmpty()) return
+        edit(recordings = { list ->
+            list.map {
+                if (it.id in bad) it.copy(status = RecordingStatus.FAILED, problem = RecordingProblem.UNSUPPORTED_FORMAT, retrySource = null) else it
+            }
+        })
     }
 
     private suspend fun readLegacyLedger(): FireLedgerState {

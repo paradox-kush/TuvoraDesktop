@@ -50,6 +50,7 @@ internal class DesktopRecordingSaver(
         val part = File(req.targetPath + ".part")
         part.parentFile?.mkdirs()
         var best: SaveOutcome.Failed? = null
+        var sawHls = false
         for (url in req.candidates) {
             ensureActive()
             when (val r = attempt(url, req, part, progress)) {
@@ -73,6 +74,7 @@ internal class DesktopRecordingSaver(
                     }
                     return@withContext f
                 }
+                is Attempt.Playlist -> sawHls = true // an HLS playlist is not a file: nothing was written, try the next link
                 is Attempt.Failure -> {
                     val f = r.failure
                     if (best == null || f.writtenBytes >= best.writtenBytes) best = f
@@ -80,6 +82,10 @@ internal class DesktopRecordingSaver(
                     if (f.offline) break
                 }
             }
+        }
+        // Every link was an HLS playlist or a plain refusal: this provider only replays as HLS.
+        if (sawHls && (best == null || (!best.offline && best.problem in UNUSABLE_LINK_PROBLEMS))) {
+            return@withContext SaveOutcome.Failed(RecordingProblem.UNSUPPORTED_FORMAT, offline = false, writtenBytes = 0, rangeSupported = false)
         }
         best ?: SaveOutcome.Failed(RecordingProblem.NO_CATCH_UP, offline = false, writtenBytes = part.length(), rangeSupported = false)
     }
@@ -98,6 +104,8 @@ internal class DesktopRecordingSaver(
     private sealed interface Attempt {
         data object Finished : Attempt
         data class Failure(val failure: SaveOutcome.Failed) : Attempt
+        /** The link answered with an HLS playlist (content type or first bytes): not saved, nothing written. */
+        data object Playlist : Attempt
         data class Stopped(val failure: SaveOutcome.Failed) : Attempt
     }
 
@@ -182,6 +190,11 @@ internal class DesktopRecordingSaver(
                                 val kind = RecordingSaveClassifier.forHttp(response.statusCode(), isOnline())
                                 return@coroutineScope Attempt.Failure(SaveOutcome.Failed(kind.problem, kind.offline, part.length(), false))
                             }
+                            // Peek before anything is written: an HLS playlist answers 200 too, and is text, not footage.
+                            val contentType = response.headers().firstValue("Content-Type").orElse(null)
+                            val peeked = java.io.BufferedInputStream(input, DownloadSniff.PEEK_BYTES)
+                            val head = if (contentType?.contains("mpegurl", ignoreCase = true) == true) null else peekHead(peeked)
+                            if (DownloadSniff.isHlsPlaylist(contentType, head)) return@coroutineScope Attempt.Playlist
                             val contentRange = response.headers().firstValue("Content-Range").orElse(null)
                             val resumed = response.statusCode() == 206 && offset > 0L && contentRange?.let(::startOfRange) == offset
                             val rangeSupported = resumed ||
@@ -217,7 +230,7 @@ internal class DesktopRecordingSaver(
                                 val buffer = ByteArray(64 * 1024)
                                 while (true) {
                                     ensureActive()
-                                    val n = input.read(buffer)
+                                    val n = peeked.read(buffer)
                                     if (n == -1) break
                                     out.write(buffer, 0, n)
                                     written += n
@@ -236,6 +249,13 @@ internal class DesktopRecordingSaver(
                             }
                             when {
                                 written == 0L -> Attempt.Failure(SaveOutcome.Failed(RecordingProblem.PROVIDER_REFUSED, false, 0, rangeSupported))
+                                RecordingSizeSanity.implausiblySmall(written, req.programmeMs) -> {
+                                    // "Finished" but far too small for the programme: a stub or an error page, never a recording.
+                                    val hls = startsWithPlaylist(part)
+                                    part.delete(); ResumeMeta.delete(part)
+                                    val problem = if (hls) RecordingProblem.UNSUPPORTED_FORMAT else RecordingProblem.NETWORK
+                                    Attempt.Failure(SaveOutcome.Failed(problem, offline = false, writtenBytes = 0, rangeSupported = false))
+                                }
                                 (expected != null && written != expected) ||
                                     RecordingCompletenessPolicy.endedTooEarly(written, expected, req.estimatedBytes) -> {
                                     val kind = RecordingSaveClassifier.forIo(null, stalled = true, online = isOnline())
@@ -277,11 +297,43 @@ internal class DesktopRecordingSaver(
             }
         }
 
+    /** Up to [DownloadSniff.PEEK_BYTES] bytes without consuming them (the stream is a mark-supporting buffer). */
+    private fun peekHead(input: java.io.BufferedInputStream): ByteArray {
+        input.mark(DownloadSniff.PEEK_BYTES)
+        val buf = ByteArray(DownloadSniff.PEEK_BYTES)
+        var n = 0
+        while (n < buf.size) {
+            val r = input.read(buf, n, buf.size - n)
+            if (r == -1) break
+            n += r
+            if (cannotBePlaylist(buf, n)) break // media: decided on the first bytes, do not wait for more
+        }
+        input.reset()
+        return buf.copyOf(n)
+    }
+
+    /** True once the first meaningful byte is known and is not `#`: nothing more to wait for. */
+    private fun cannotBePlaylist(buf: ByteArray, n: Int): Boolean {
+        var i = if (n >= 3 && buf[0] == 0xEF.toByte() && buf[1] == 0xBB.toByte() && buf[2] == 0xBF.toByte()) 3 else 0
+        while (i < n && (buf[i] == ' '.code.toByte() || buf[i] == '\n'.code.toByte() || buf[i] == '\r'.code.toByte() || buf[i] == '\t'.code.toByte())) i++
+        return i < n && buf[i] != '#'.code.toByte()
+    }
+
+    private fun startsWithPlaylist(file: File): Boolean = try {
+        file.inputStream().use { DownloadSniff.isHlsPlaylist(null, it.readNBytes(DownloadSniff.PEEK_BYTES)) }
+    } catch (_: IOException) {
+        false
+    }
+
     private fun startOfRange(header: String): Long? =
         Regex("bytes (\\d+)-").find(header.trim())?.groupValues?.get(1)?.toLongOrNull()
 
     internal companion object {
         const val WATCHDOG_TICK_MS = 5_000L
+        /** Failures that only say "this link gave nothing usable" (as opposed to a network problem worth retrying). */
+        private val UNUSABLE_LINK_PROBLEMS = setOf(
+            RecordingProblem.PROVIDER_REFUSED, RecordingProblem.NO_CATCH_UP, RecordingProblem.UNSUPPORTED_FORMAT, RecordingProblem.UNKNOWN,
+        )
         const val SPACE_CHECK_BYTES = 16L * 1024 * 1024
 
         private val defaultClient: HttpClient = HttpClient.newBuilder()

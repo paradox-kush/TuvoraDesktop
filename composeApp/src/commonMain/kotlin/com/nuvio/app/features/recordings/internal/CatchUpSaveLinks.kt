@@ -34,7 +34,9 @@ object CatchUpSaveLinks {
             if (isProgressive(url)) listOf(url) else listOfNotNull(url, M3uCatchUp.tsFallback(url))
         }.distinct()
         val (progressive, hls) = expanded.partition(::isProgressive)
-        return progressive + hls
+        // A link whose format the panel picks (timeshift.php with no extension) often answers with an HLS playlist: last resort.
+        val (unknown, known) = progressive.partition(::isUnknownFormat)
+        return known + hls + unknown
     }
 
     /** The rest of a save that was cut off after [doneMs] of footage: from a little before where it got to. */
@@ -52,7 +54,13 @@ object CatchUpSaveLinks {
     }
 
     /** True for a Xtream `timeshift.php` link with no `extension` param: the panel picks the format, often an HLS playlist. */
-    fun isUnknownFormat(url: String): Boolean = false
+    fun isUnknownFormat(url: String): Boolean {
+        val lower = url.lowercase()
+        val path = lower.substringBefore('?')
+        if (!path.endsWith("timeshift.php")) return false
+        val params = lower.substringAfter('?', "").split('&')
+        return params.none { it.startsWith("extension=") && it.length > "extension=".length }
+    }
 
     /** Why [candidates] cannot be saved, or null when at least one link can: no catch-up at all, or HLS only. */
     fun problemFor(candidates: List<String>): RecordingProblem? = when {

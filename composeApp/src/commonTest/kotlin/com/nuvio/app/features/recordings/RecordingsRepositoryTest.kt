@@ -195,7 +195,7 @@ class RecordingsRepositoryTest {
     }
 
     private fun leftover(id: String, size: Long, programmeMs: Long) =
-        recording(id, size = size).let { it.copy(programmeEndMs = it.programmeStartMs + programmeMs) }
+        recording(id, size = size).let { it.copy(mode = com.nuvio.app.features.recordings.api.CaptureMode.CATCH_UP, programmeEndMs = it.programmeStartMs + programmeMs) }
 
     private fun loadWith(vararg rows: com.nuvio.app.features.recordings.api.Recording): Pair<Rig, FakeFiles> {
         val files = FakeFiles()

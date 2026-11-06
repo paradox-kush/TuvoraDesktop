@@ -62,7 +62,7 @@ class CatchUpSaveLinksTest {
         assertTrue(got.isNotEmpty())
         val firstHls = got.indexOfFirst { !L.isProgressive(it) }
         assertTrue(firstHls > 0, "a progressive link comes first: $got")
-        assertTrue(got.drop(firstHls).none(L::isProgressive), "no progressive link after the first playlist: $got")
+        assertTrue(got.drop(firstHls).none { L.isProgressive(it) && !L.isUnknownFormat(it) }, "no known progressive link after the first playlist: $got")
     }
 
     @Test
