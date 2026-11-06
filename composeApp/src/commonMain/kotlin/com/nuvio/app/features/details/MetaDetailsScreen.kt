@@ -1833,9 +1833,13 @@ fun MetaDetailsScreen(
                             )
                         }
 
+                        // Fork: the Calendar reminder row of the + menu (features/calendar, through its port).
+                        val calendarReminder = com.nuvio.app.core.contracts.DetailsCalendarBellAccess.current()
+                            ?.reminder(meta.imdbId?.takeIf { it.startsWith("tt") } ?: meta.id, meta.type, meta.name, meta.poster)
                         TrackingListPickerDialog(
                             visible = showLibraryListPicker,
                             title = meta.name,
+                            reminder = calendarReminder,
                             tabs = pickerTabs,
                             membership = pickerMembership,
                             isPending = pickerPending,

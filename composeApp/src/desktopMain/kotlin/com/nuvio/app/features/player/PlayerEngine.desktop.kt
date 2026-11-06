@@ -67,6 +67,8 @@ actual fun PlatformPlayerSurface(
     playWhenReady: Boolean,
     initialPositionMs: Long?,
     initialPositionRequestKey: String?,
+    // Accepted for signature parity; the desktop engine plays a live pause from mpv's own back buffer, never a local playlist.
+    @Suppress("UNUSED_PARAMETER") startAtLiveWindowStart: Boolean,
     resizeMode: PlayerResizeMode,
     videoZoom: VideoZoom,
     playbackEngine: com.nuvio.app.features.player.AndroidPlaybackEngine?,
