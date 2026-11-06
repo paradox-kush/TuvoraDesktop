@@ -1,32 +1,45 @@
 package com.nuvio.app.features.recordings.internal
 
-/** Tells an HLS playlist apart from a media file by what the response says it is, before a byte is saved. */
-internal object DownloadSniff {
-    /** Bytes to peek when the content type does not settle it. */
-    const val PEEK_BYTES = 32
+import com.nuvio.app.features.recordings.api.RecordingProblem
 
-    /** True when the response is an HLS playlist: an `mpegurl` content type, or a body that starts with `#EXTM3U`. */
-    fun isHlsPlaylist(contentType: String?, firstBytes: ByteArray?): Boolean {
-        if (contentType?.contains("mpegurl", ignoreCase = true) == true) return true
-        if (firstBytes == null) return false
-        var i = 0
-        // A UTF-8 byte order mark and leading whitespace are allowed before the tag.
-        if (firstBytes.size >= 3 && firstBytes[0] == 0xEF.toByte() && firstBytes[1] == 0xBB.toByte() && firstBytes[2] == 0xBF.toByte()) i = 3
-        while (i < firstBytes.size && (firstBytes[i] == ' '.code.toByte() || firstBytes[i] == '\n'.code.toByte() || firstBytes[i] == '\r'.code.toByte() || firstBytes[i] == '\t'.code.toByte())) i++
-        val tag = EXTM3U
-        if (firstBytes.size - i < tag.size) return false
-        return tag.indices.all { firstBytes[i + it] == tag[it] }
+/** Tells an HLS playlist (text) from a media file by what the server said and the first bytes. */
+internal object DownloadSniff {
+    /** Bytes to peek at; enough for `#EXTM3U` (UTF-8 BOM and leading whitespace tolerated). */
+    const val PEEK_BYTES = 16
+
+    fun isHlsPlaylist(contentType: String?, firstBytes: ByteArray): Boolean {
+        if (contentType != null && contentType.contains("mpegurl", ignoreCase = true)) return true
+        return startsWithExtM3u(firstBytes)
     }
 
-    private val EXTM3U = "#EXTM3U".encodeToByteArray()
+    private val MAGIC = "#EXTM3U".encodeToByteArray()
+
+    private fun startsWithExtM3u(bytes: ByteArray): Boolean {
+        var i = 0
+        // A UTF-8 byte order mark, then any blank space, may come before the tag.
+        if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) i = 3
+        while (i < bytes.size && (bytes[i] == ' '.code.toByte() || bytes[i] == '\n'.code.toByte() || bytes[i] == '\r'.code.toByte() || bytes[i] == '\t'.code.toByte())) i++
+        if (bytes.size - i < MAGIC.size) return false
+        for (k in MAGIC.indices) if (bytes[i + k] != MAGIC[k]) return false
+        return true
+    }
 }
 
-/** A "finished" save that is far too small for the programme it claims to hold. */
-internal object RecordingSizeSanity {
+/**
+ * Belt and braces for a "finished" save: a programme of a minute or more that came to a few KiB is not a media file.
+ */
+internal object RecordingSanityGuard {
     const val MIN_PROGRAMME_MS = 60_000L
-    const val MIN_BYTES = 64L * 1024
+    const val MIN_PLAUSIBLE_BYTES = 64L * 1024
 
-    /** True when [bytes] is under 64 KiB for a programme of at least 60 s: that is a stub or an error page, not footage. */
-    fun implausiblySmall(bytes: Long, programmeMs: Long): Boolean =
-        programmeMs >= MIN_PROGRAMME_MS && bytes < MIN_BYTES
+    /** True when [sizeBytes] is implausibly small for a programme [programmeMs] long. */
+    fun implausiblyTiny(programmeMs: Long, sizeBytes: Long): Boolean =
+        programmeMs >= MIN_PROGRAMME_MS && sizeBytes < MIN_PLAUSIBLE_BYTES
+
+    /** Why a finished save must not be Done: UNSUPPORTED_FORMAT for a playlist, NETWORK (retryable) otherwise; null when plausible. */
+    fun verdict(programmeMs: Long, sizeBytes: Long, firstBytes: ByteArray): RecordingProblem? = when {
+        !implausiblyTiny(programmeMs, sizeBytes) -> null
+        DownloadSniff.isHlsPlaylist(null, firstBytes) -> RecordingProblem.UNSUPPORTED_FORMAT
+        else -> RecordingProblem.NETWORK
+    }
 }

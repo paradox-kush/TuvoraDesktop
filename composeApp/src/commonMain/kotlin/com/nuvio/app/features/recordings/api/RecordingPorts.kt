@@ -41,10 +41,10 @@ data class SaveRequest(
      */
     val onKnownTotal: (suspend (totalBytes: Long, onDiskBytes: Long) -> KnownSizeDecision)? = null,
     /**
-     * How long the programme is (0 = unknown). A save that "finishes" under 64 KiB for a programme of
-     * a minute or more is never Done: it is a playlist or an error page, not footage.
+     * Length of the programme in ms (0 = unknown). A finished save of a programme of a minute or more
+     * that is only a few KiB is not a recording (an HLS playlist saved as a file): the saver refuses it.
      */
-    val programmeMs: Long = 0,
+    val programmeMs: Long = 0L,
 )
 
 /** The repository's answer to [SaveRequest.onKnownTotal]. */

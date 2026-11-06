@@ -194,7 +194,7 @@ internal class DesktopRecordingSaver(
                             val contentType = response.headers().firstValue("Content-Type").orElse(null)
                             val peeked = java.io.BufferedInputStream(input, DownloadSniff.PEEK_BYTES)
                             val head = if (contentType?.contains("mpegurl", ignoreCase = true) == true) null else peekHead(peeked)
-                            if (DownloadSniff.isHlsPlaylist(contentType, head)) return@coroutineScope Attempt.Playlist
+                            if (DownloadSniff.isHlsPlaylist(contentType, head ?: ByteArray(0))) return@coroutineScope Attempt.Playlist
                             val contentRange = response.headers().firstValue("Content-Range").orElse(null)
                             val resumed = response.statusCode() == 206 && offset > 0L && contentRange?.let(::startOfRange) == offset
                             val rangeSupported = resumed ||
@@ -249,11 +249,10 @@ internal class DesktopRecordingSaver(
                             }
                             when {
                                 written == 0L -> Attempt.Failure(SaveOutcome.Failed(RecordingProblem.PROVIDER_REFUSED, false, 0, rangeSupported))
-                                RecordingSizeSanity.implausiblySmall(written, req.programmeMs) -> {
+                                RecordingSanityGuard.implausiblyTiny(req.programmeMs, written) -> {
                                     // "Finished" but far too small for the programme: a stub or an error page, never a recording.
-                                    val hls = startsWithPlaylist(part)
+                                    val problem = RecordingSanityGuard.verdict(req.programmeMs, written, headOf(part)) ?: RecordingProblem.NETWORK
                                     part.delete(); ResumeMeta.delete(part)
-                                    val problem = if (hls) RecordingProblem.UNSUPPORTED_FORMAT else RecordingProblem.NETWORK
                                     Attempt.Failure(SaveOutcome.Failed(problem, offline = false, writtenBytes = 0, rangeSupported = false))
                                 }
                                 (expected != null && written != expected) ||
@@ -319,10 +318,10 @@ internal class DesktopRecordingSaver(
         return i < n && buf[i] != '#'.code.toByte()
     }
 
-    private fun startsWithPlaylist(file: File): Boolean = try {
-        file.inputStream().use { DownloadSniff.isHlsPlaylist(null, it.readNBytes(DownloadSniff.PEEK_BYTES)) }
+    private fun headOf(file: File): ByteArray = try {
+        file.inputStream().use { it.readNBytes(DownloadSniff.PEEK_BYTES) }
     } catch (_: IOException) {
-        false
+        ByteArray(0)
     }
 
     private fun startOfRange(header: String): Long? =

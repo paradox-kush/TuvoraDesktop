@@ -170,7 +170,7 @@ class RecordingsRepository(
     private fun reconcileImplausibleDoneLocked() {
         val bad = doc.recordingValues.filter {
             it.status == RecordingStatus.DONE && it.mode == CaptureMode.CATCH_UP && it.problem == null &&
-                RecordingSizeSanity.implausiblySmall(it.sizeBytes, it.programmeEndMs - it.programmeStartMs)
+                RecordingSanityGuard.implausiblyTiny(it.programmeEndMs - it.programmeStartMs, it.sizeBytes)
         }.map { it.id }.toSet()
         if (bad.isEmpty()) return
         edit(recordings = { list ->
@@ -514,6 +514,7 @@ class RecordingsRepository(
             resumeFromBytes = resumeFrom, estimatedBytes = estimate,
             spaceCheck = { expected -> checkSpaceDuringCapture(expected) },
             onKnownTotal = { total, onDisk -> checkKnownSize(total, onDisk) },
+            programmeMs = schedule.programmeEndMs - schedule.programmeStartMs,
         )
         return Begin.Go(Run(schedule, token, request, target, d.fromMs, d.toMs, cancelJob, recordingId))
     }

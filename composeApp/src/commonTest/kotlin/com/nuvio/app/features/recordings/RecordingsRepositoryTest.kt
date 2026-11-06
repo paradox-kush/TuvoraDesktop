@@ -204,6 +204,20 @@ class RecordingsRepositoryTest {
     }
 
     @Test
+    fun `a saver that found only HLS playlists fails the row as unsupported without a retry and is told the programme length`() = runTest {
+        val rig = Rig()
+        rig.files.texts["recordings.json"] = stateText(dueCatchUp())
+        rig.saver.next = { _, _ -> SaveOutcome.Failed(RecordingProblem.UNSUPPORTED_FORMAT, offline = false, writtenBytes = 0, rangeSupported = false) }
+        val res = rig.repo.fire("s1", NOW)
+        assertEquals(FireResult.Failed(RecordingProblem.UNSUPPORTED_FORMAT), res)
+        assertEquals(HOUR, rig.saver.calls.single().programmeMs)
+        assertTrue(rig.repo.state.value.schedules.isEmpty(), "no retry is armed")
+        val row = rig.repo.state.value.recordings.single()
+        assertEquals(RecordingStatus.FAILED, row.status)
+        assertEquals(RecordingProblem.UNSUPPORTED_FORMAT, row.problem)
+    }
+
+    @Test
     fun `a 1 KB done recording of a 30 minute programme loads as failed unsupported format and its file is kept`() = runTest {
         val (rig, files) = loadWith(leftover("r1", 1_024, 30 * 60_000L))
         rig.repo.start(NOW)
