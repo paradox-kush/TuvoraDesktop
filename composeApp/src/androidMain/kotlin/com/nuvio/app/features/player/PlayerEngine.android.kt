@@ -786,6 +786,7 @@ private fun ExoPlayerSurface(
 
         fun reportPlayerError(error: PlaybackException) {
             if (
+                allowDecoderFallback &&
                 playerSettings.decoderPriority == DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON &&
                 effectiveDecoderPriority != DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER &&
                 error.isDecoderFailure()

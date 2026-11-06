@@ -293,6 +293,7 @@ object StalkerClient : IptvClient {
         epgChannelId = tvgId,
         categoryId = categoryId,
         hasArchive = hasArchive,
+        catchUpDays = archiveDays,
         streamUrl = ""   // create_link resolves the real single-use URL at play time
     )
 
@@ -357,6 +358,7 @@ object StalkerClient : IptvClient {
             ext = null,
             cmd = item.str("cmd"),
             hasArchive = (item.int("tv_archive") ?: 0) > 0,
+            archiveDays = StalkerArchiveDepth.days(item.int("tv_archive"), item.int("tv_archive_duration")),
             // Stored as plain booleans (false = flag absent OR panel said false — the
             // column cannot tell them apart), so reads treat only TRUE as evidence.
             useHttpTmpLink = item.flag("use_http_tmp_link") ?: false,
@@ -646,6 +648,12 @@ object StalkerClient : IptvClient {
     }
 
     /**
+     * Awaits the bulk guide on disk (single-flight, TTL-gated) - what the guide's window read waits on, because
+     * a Stalker portal's aired programmes and their archive ids exist only in that one fetch.
+     */
+    suspend fun ensureGuide(acc: XtreamAccount) { ensureBulkEpg(acc) }
+
+    /**
      * Ensures a fresh (≤[EPG_TTL_MS]) bulk guide for [acc] is stored in [IptvContentDb], fetching
      * `get_epg_info&period=3` when stale. The response is STREAMED through
      * [StalkerEpgStreamParser] and chunk-inserted — it used to be read into one String plus a full
@@ -716,6 +724,8 @@ object StalkerClient : IptvClient {
                     endMs = prog.endMs,
                     title = prog.title,
                     desc = prog.description.takeIf { it.isNotBlank() },
+                    programmeId = prog.programmeId,
+                    hasArchive = prog.hasArchive == true,
                 )
             )
             count++
@@ -1038,14 +1048,7 @@ object StalkerClient : IptvClient {
         cmd: String,
         extraParams: Map<String, String> = emptyMap()
     ): String? {
-        val params = buildMap {
-            put("type", type)
-            put("action", "create_link")
-            put("cmd", cmd)
-            put("forced_storage", "undefined")
-            put("disable_ad", "0")
-            putAll(extraParams)
-        }
+        val params = StalkerArchiveLink.createLinkParams(type, cmd, extraParams)
         // Playback: the ACTIVE portal only — a create_link failure never walks to a backup (Step 0.3).
         val js = try { playbackSession(acc).request(params) as? JsonObject }
             catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
@@ -1062,6 +1065,23 @@ object StalkerClient : IptvClient {
         return StalkerProtocol.extractStreamUrl(js.str("cmd")).also {
             if (it == null) playbackLog.w { "create_link failed: no playable command" }
         }
+    }
+
+    /**
+     * The playback link of one archived programme, minted from the portal's own EPG [programmeId]
+     * (`type=tv_archive`). Answers what came back - a link, or which refusal (the session cap, "nothing to
+     * play", a link fault) - so the viewer is told the real reason. A transport failure THROWS: the caller runs
+     * this under [com.nuvio.app.features.iptv.BoundedLoad], where a throw or a hang ends as "no answer", never
+     * as "no recording". Like every create_link the result is single-use: never probe it, never re-open it,
+     * and Retry mints a new one. The ACTIVE portal only - a create_link failure never walks to a backup.
+     */
+    suspend fun createArchiveLink(acc: XtreamAccount, programmeId: String): StalkerArchiveAnswer {
+        val js = playbackSession(acc).request(StalkerArchiveLink.params(programmeId)) as? JsonObject
+        val url = StalkerProtocol.extractStreamUrl(js?.str("cmd"))
+        if (url != null) return StalkerArchiveAnswer(url, StalkerArchiveLink.LinkError.NONE)
+        playbackLog.w { "create_link (archive) failed: no playable command" }
+        // The raw answer is only read for the error field; it is never logged (it can echo play tokens).
+        return StalkerArchiveAnswer(null, StalkerArchiveLink.linkErrorOf(js?.toString()))
     }
 
     // --- cmd lookup (browse-time cmd needed for create_link) ------------------
