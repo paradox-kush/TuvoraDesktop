@@ -58,6 +58,8 @@ actual fun PlatformPlayerSurface(
     playWhenReady: Boolean,
     initialPositionMs: Long?,
     initialPositionRequestKey: String?,
+    // Accepted for signature parity; the iOS engine has no local-window start yet.
+    @Suppress("UNUSED_PARAMETER") startAtLiveWindowStart: Boolean,
     resizeMode: PlayerResizeMode,
     // Accepted for signature parity: the iOS player has no manual-zoom stage.
     videoZoom: VideoZoom,

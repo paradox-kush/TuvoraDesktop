@@ -32,9 +32,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -236,13 +238,30 @@ private fun PlaylistRow(
                 }
             }
         }
-        PlaylistRowMenu(
-            expanded = menuOpen,
-            account = row.account,
-            managed = row.managed,
-            onDismiss = { menuOpen = false },
-            onAction = { menuOpen = false; onMenuAction(it) },
-        )
+        // B225: a picked action is delivered only after the menu has LEFT composition. Several actions (Edit
+        // playlist, Content & categories) open another settings page, which tears down this page — and with it
+        // the menu's popup. Run inside the popup's click, the action raced the popup's own teardown: the popup
+        // (still composed during its exit animation) could be disposed in the middle of a layout pass and then
+        // laid out, which Compose Desktop answers with "RootNodeOwner is already disposed" and a dead app.
+        // So the click only closes the menu and records the pick; the menu is composed only while open (no exit
+        // animation keeps it alive), and the effect below — which runs after the composition that removed the
+        // popup was applied — hands the action on.
+        var pickedAction by remember { mutableStateOf<PlaylistMenuAction?>(null) }
+        val currentOnMenuAction by rememberUpdatedState(onMenuAction)
+        LaunchedEffect(pickedAction) {
+            val action = pickedAction ?: return@LaunchedEffect
+            pickedAction = null
+            currentOnMenuAction(action)
+        }
+        if (menuOpen) {
+            PlaylistRowMenu(
+                expanded = true,
+                account = row.account,
+                managed = row.managed,
+                onDismiss = { menuOpen = false },
+                onAction = { menuOpen = false; pickedAction = it },
+            )
+        }
         if (pending != null) {
             DestructivePopover(
                 action = pending.action,

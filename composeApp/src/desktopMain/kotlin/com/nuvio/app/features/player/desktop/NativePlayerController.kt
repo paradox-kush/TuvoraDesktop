@@ -3,6 +3,8 @@ package com.nuvio.app.features.player.desktop
 import androidx.compose.ui.graphics.Color
 import co.touchlab.kermit.Logger
 import com.nuvio.app.features.player.LivePlaybackStartupPolicy
+import com.nuvio.app.features.player.LiveSeekWindow
+import com.nuvio.app.features.player.MpvLiveCache
 import com.nuvio.app.features.player.PlayerControlAddonSubtitleItem
 import com.nuvio.app.features.player.PlayerControlEpisodeItem
 import com.nuvio.app.features.player.PlayerControlFilterItem
@@ -47,6 +49,11 @@ import java.awt.Component
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
 import javax.swing.SwingUtilities
 import kotlin.concurrent.Volatile
 
@@ -112,6 +119,12 @@ internal class NativePlayerController(
 
         /** Cap on waiting for the previous player's teardown so a hung one cannot block playback. */
         const val TEARDOWN_WAIT_MS = 5_000L
+
+        /** How often the live pause worker refreshes the seekable window shadow. */
+        const val LIVE_WINDOW_POLL_MS = 500L
+
+        /** Longest a live pause native call waits for the lock, and a release waits for one in flight. */
+        const val LIVE_NATIVE_LOCK_WAIT_MS = 500L
 
         @Volatile
         var rememberedVolumeLevel: Float = DesktopPlayerVolumeStorage.loadVolumeLevel() ?: 1f
@@ -629,6 +642,84 @@ internal class NativePlayerController(
         }
     }
 
+    // --- Live pause / rewind: mpv's own demuxer back buffer ---------------------------------------------------------
+    // No disk buffer on desktop: the past of a live stream is whatever mpv's demuxer keeps behind the playhead, so a
+    // pause raises `demuxer-max-bytes` / `cache-secs` (read-ahead) and a rewind reads `demuxer-cache-state`. ALL of
+    // that mpv traffic runs on ONE daemon thread, never the UI thread: the budget is queued, and the seekable window
+    // is a shadow refreshed there and read lock-free by [liveSeekWindow].
+
+    private val liveStateLock = Any()
+    private val liveNativeLock = ReentrantLock()
+    private var liveWorker: ScheduledExecutorService? = null
+    private var liveWindowPoll: ScheduledFuture<*>? = null
+
+    @Volatile
+    private var liveWindowShadow: LiveSeekWindow? = null
+
+    override val supportsLiveBackBuffer: Boolean get() = true
+
+    override fun setLiveCacheBudget(maxBytes: Long, maxBackBytes: Long, cacheSecs: Long) {
+        val properties = MpvLiveCache.properties(maxBytes, maxBackBytes, cacheSecs)
+        val worker = ensureLiveWorker() ?: return
+        worker.execute {
+            withLiveHandle { current -> NativePlayerBridge.setStringPropertiesSafely(current, properties) }
+            log.d { "live cache budget fwd=$maxBytes back=$maxBackBytes secs=$cacheSecs" }
+        }
+        startLiveWindowPolling(worker)
+    }
+
+    override fun liveSeekWindow(): LiveSeekWindow? {
+        ensureLiveWorker()?.let(::startLiveWindowPolling)
+        return liveWindowShadow
+    }
+
+    private fun ensureLiveWorker(): ScheduledExecutorService? = synchronized(liveStateLock) {
+        if (releaseRequested) return null
+        liveWorker ?: Executors.newSingleThreadScheduledExecutor { task ->
+            Thread(task, "nuvio-live-pause").apply { isDaemon = true }
+        }.also { liveWorker = it }
+    }
+
+    private fun startLiveWindowPolling(worker: ScheduledExecutorService) = synchronized(liveStateLock) {
+        if (liveWindowPoll != null || liveWorker !== worker) return@synchronized
+        liveWindowPoll = worker.scheduleWithFixedDelay(::refreshLiveWindow, 0L, LIVE_WINDOW_POLL_MS, TimeUnit.MILLISECONDS)
+    }
+
+    private fun refreshLiveWindow() {
+        withLiveHandle { current ->
+            val state = NativePlayerBridge.stringProperty(current, "demuxer-cache-state")
+            val positionMs = NativePlayerBridge.positionMs(current)
+            liveWindowShadow = MpvLiveCache.window(MpvLiveCache.parseSeekableRanges(state), positionMs)
+        }
+    }
+
+    /**
+     * Runs [block] with the native handle on the live worker, holding [liveNativeLock] so a release can wait out a
+     * call already in flight ([stopLiveWindow]). Skipped when the player is going away or the lock is busy.
+     */
+    private inline fun withLiveHandle(block: (Long) -> Unit) {
+        if (!liveNativeLock.tryLock(LIVE_NATIVE_LOCK_WAIT_MS, TimeUnit.MILLISECONDS)) return
+        try {
+            val current = handle
+            if (releaseRequested || current == 0L) return
+            runCatching { block(current) }.onFailure { error -> log.d(error) { "live pause native call failed" } }
+        } finally {
+            liveNativeLock.unlock()
+        }
+    }
+
+    /** Stops the worker and waits (bounded) for a native call it already started: called before the handle is torn down. */
+    private fun stopLiveWindow() {
+        val worker = synchronized(liveStateLock) {
+            liveWindowPoll?.cancel(false)
+            liveWindowPoll = null
+            liveWorker.also { liveWorker = null }
+        }
+        liveWindowShadow = null
+        worker?.shutdownNow()
+        if (liveNativeLock.tryLock(LIVE_NATIVE_LOCK_WAIT_MS, TimeUnit.MILLISECONDS)) liveNativeLock.unlock()
+    }
+
     private fun handlePlayerEvent(type: String, value: Double) {
         if (type.shouldLogNativeControlEvent()) {
             log.d { "event received handle=$handle type=$type value=$value" }
@@ -854,6 +945,7 @@ internal class NativePlayerController(
         }
         host.resetCursorVisibility()
         invalidateForRelease()
+        stopLiveWindow()
         val callback = ReleaseCallback(onReleased, onReleaseFailed)
         var shouldStart = false
         var immediateFailure: String? = null
@@ -968,6 +1060,7 @@ internal class NativePlayerController(
         }
         if (!accepted) return
         host.onPeerReady = null
+        stopLiveWindow()
         disposePlayerHandle()
     }
 
@@ -1435,6 +1528,7 @@ private fun String.toPlayerControlsAction(): PlayerControlsAction? =
     when (this) {
         "toggleChrome" -> PlayerControlsAction.ToggleChrome
         "back" -> PlayerControlsAction.Back
+        "retryPlayback" -> PlayerControlsAction.RetryPlayback
         "toggleFullscreen" -> PlayerControlsAction.ToggleFullscreen
         "toggle" -> PlayerControlsAction.TogglePlayback
         "keyboardToggle" -> PlayerControlsAction.KeyboardTogglePlayback
@@ -1498,6 +1592,12 @@ internal fun PlayerControlsState.toControlsJson(isFullscreen: Boolean, onImageRe
         append(',')
         appendJsonField("isLive", isLive)
         append(',')
+        appendJsonField("liveRewindActive", liveRewindActive)
+        append(',')
+        appendJsonField("liveRewindStartMs", liveRewindStartMs)
+        append(',')
+        appendJsonField("liveRewindEndMs", liveRewindEndMs)
+        append(',')
         appendJsonField("volumeLevel", volumeLevel)
         append(',')
         appendJsonField("subtitlesLabel", subtitlesLabel)
@@ -1529,6 +1629,8 @@ internal fun PlayerControlsState.toControlsJson(isFullscreen: Boolean, onImageRe
         appendJsonField("playbackErrorMessage", playbackErrorMessage)
         append(',')
         appendJsonField("playbackErrorActionLabel", playbackErrorActionLabel)
+        append(',')
+        appendJsonField("playbackErrorRetryLabel", playbackErrorRetryLabel)
         append(',')
         appendJsonField("sourcesPanelTitle", sourcesPanelTitle)
         append(',')

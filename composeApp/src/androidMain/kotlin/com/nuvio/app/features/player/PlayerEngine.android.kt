@@ -150,6 +150,8 @@ actual fun PlatformPlayerSurface(
     playWhenReady: Boolean,
     initialPositionMs: Long?,
     initialPositionRequestKey: String?,
+    // Accepted for signature parity; this fork's Android target is dead and has no local-window start.
+    @Suppress("UNUSED_PARAMETER") startAtLiveWindowStart: Boolean,
     resizeMode: PlayerResizeMode,
     videoZoom: VideoZoom,
     playbackEngine: AndroidPlaybackEngine?,
