@@ -188,6 +188,8 @@ fun NuvioScreenHeader(
             verticalAlignment = Alignment.Bottom,
         ) {
             Row(
+                // Let a long title yield to the action icons (Library now carries up to five) instead of pushing them off a narrow window.
+                modifier = Modifier.weight(1f, fill = false),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
             ) {
@@ -207,6 +209,8 @@ fun NuvioScreenHeader(
                 ) { currentTitle ->
                     Text(
                         text = currentTitle,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.displayLarge,
                         color = tokens.colors.textPrimary,
                     )
