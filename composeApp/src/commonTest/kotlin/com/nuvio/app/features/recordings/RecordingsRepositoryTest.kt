@@ -194,6 +194,52 @@ class RecordingsRepositoryTest {
         assertEquals(RecordingStatus.DONE, doc.recordingValues.single().status)
     }
 
+    private fun leftover(id: String, size: Long, programmeMs: Long) =
+        recording(id, size = size).let { it.copy(programmeEndMs = it.programmeStartMs + programmeMs) }
+
+    private fun loadWith(vararg rows: com.nuvio.app.features.recordings.api.Recording): Pair<Rig, FakeFiles> {
+        val files = FakeFiles()
+        files.texts["recordings.json"] = RecordingsCodec.encode(RecordingsDocument(recordings = rows.map { StoredRow.of(it) }))
+        return Rig(files = files) to files
+    }
+
+    @Test
+    fun `a 1 KB done recording of a 30 minute programme loads as failed unsupported format and its file is kept`() = runTest {
+        val (rig, files) = loadWith(leftover("r1", 1_024, 30 * 60_000L))
+        rig.repo.start(NOW)
+        val rec = rig.repo.state.value.recordings.single()
+        assertEquals(RecordingStatus.FAILED, rec.status)
+        assertEquals(RecordingProblem.UNSUPPORTED_FORMAT, rec.problem)
+        assertTrue(files.deleted.isEmpty(), "the file is never deleted")
+        assertTrue(rig.repo.state.value.schedules.isEmpty(), "and never retried")
+        assertTrue(rig.alarms.armed.isEmpty())
+    }
+
+    @Test
+    fun `a 1 KB done recording of a 30 second programme stays done`() = runTest {
+        val (rig, _) = loadWith(leftover("r1", 1_024, 30_000L))
+        rig.repo.start(NOW)
+        assertEquals(RecordingStatus.DONE, rig.repo.state.value.recordings.single().status)
+    }
+
+    @Test
+    fun `a 200 MB done recording of a 30 minute programme stays done`() = runTest {
+        val (rig, _) = loadWith(leftover("r1", 200L * 1024 * 1024, 30 * 60_000L))
+        rig.repo.start(NOW)
+        val rec = rig.repo.state.value.recordings.single()
+        assertEquals(RecordingStatus.DONE, rec.status)
+        assertNull(rec.problem)
+    }
+
+    @Test
+    fun `a failed unsupported format leftover stays failed on the next load`() = runTest {
+        val (rig, files) = loadWith(leftover("r1", 1_024, 30 * 60_000L))
+        rig.repo.start(NOW)
+        val again = Rig(files = files)
+        again.repo.start(NOW)
+        assertEquals(RecordingStatus.FAILED, again.repo.state.value.recordings.single().status)
+    }
+
     @Test
     fun `a RECORDING row whose ledger entry says DONE is finished from the file on load`() = runTest {
         val files = FakeFiles()

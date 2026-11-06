@@ -26,8 +26,34 @@ class CatchUpSaveLinksTest {
     fun `xtream links are the panel's candidates with the ts form first`() {
         val expected = XtreamCatchUp.candidateUrls("http://p.example:8080", "user", "pass", 42, from, to, null, null)
         val got = L.candidates(xt(null), from, to, NOW)
-        assertEquals(expected, got)
+        assertEquals(expected.filterNot(L::isUnknownFormat) + expected.filter(L::isUnknownFormat), got)
         assertTrue(got.all(L::isProgressive))
+    }
+
+    @Test
+    fun `timeshift php without an extension is an unknown format and sorts last`() {
+        val got = L.candidates(xt(null), from, to, NOW)
+        val unknown = got.filter(L::isUnknownFormat)
+        assertEquals(2, unknown.size, "streaming/timeshift.php and timeshift.php without extension: $got")
+        assertEquals(unknown, got.takeLast(2), "unknown formats come after everything else: $got")
+        assertTrue(got.take(3).none(L::isUnknownFormat))
+        assertTrue(got.any { "timeshift.php" in it && "extension=ts" in it && !L.isUnknownFormat(it) })
+    }
+
+    @Test
+    fun `unknown format sorts after the hls playlists too`() {
+        val got = L.candidates(xt("m3u8"), from, to, NOW)
+        val firstUnknown = got.indexOfFirst(L::isUnknownFormat)
+        assertTrue(firstUnknown >= 0)
+        assertTrue(got.drop(firstUnknown).all(L::isUnknownFormat), "$got")
+    }
+
+    @Test
+    fun `isUnknownFormat looks at the extension param of a timeshift php link only`() {
+        assertTrue(L.isUnknownFormat("http://a/streaming/timeshift.php?stream=1&start=2"))
+        assertFalse(L.isUnknownFormat("http://a/streaming/timeshift.php?stream=1&extension=ts"))
+        assertFalse(L.isUnknownFormat("http://a/timeshift/u/p/60/2026/1.ts"))
+        assertFalse(L.isUnknownFormat("http://a/live/u/p/1"))
     }
 
     @Test

@@ -40,6 +40,11 @@ data class SaveRequest(
      * is never a reason to refuse.
      */
     val onKnownTotal: (suspend (totalBytes: Long, onDiskBytes: Long) -> KnownSizeDecision)? = null,
+    /**
+     * How long the programme is (0 = unknown). A save that "finishes" under 64 KiB for a programme of
+     * a minute or more is never Done: it is a playlist or an error page, not footage.
+     */
+    val programmeMs: Long = 0,
 )
 
 /** The repository's answer to [SaveRequest.onKnownTotal]. */

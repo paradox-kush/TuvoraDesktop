@@ -123,10 +123,10 @@ class DesktopRecordingSaverTest {
         dir.deleteRecursively()
     }
 
-    private fun req(vararg paths: String, resume: Long = 0, headers: Map<String, String> = emptyMap(), estimated: Long = 0, check: (suspend (Long) -> RecordingProblem?)? = null, known: (suspend (Long, Long) -> KnownSizeDecision)? = null) =
+    private fun req(vararg paths: String, resume: Long = 0, headers: Map<String, String> = emptyMap(), estimated: Long = 0, check: (suspend (Long) -> RecordingProblem?)? = null, known: (suspend (Long, Long) -> KnownSizeDecision)? = null, programmeMs: Long = 0) =
         SaveRequest(
             candidates = paths.map { server.url(it) }, headers = headers,
-            targetPath = File(dir, "show.ts").path, resumeFromBytes = resume, estimatedBytes = estimated, spaceCheck = check, onKnownTotal = known,
+            targetPath = File(dir, "show.ts").path, resumeFromBytes = resume, estimatedBytes = estimated, spaceCheck = check, onKnownTotal = known, programmeMs = programmeMs,
         )
 
     private fun saver(stallMs: Long = 30_000, tickMs: Long = 5_000) =
@@ -144,6 +144,55 @@ class DesktopRecordingSaverTest {
         assertEquals("0123456789", File(dir, "show.ts").readText())
         assertTrue(!File(dir, "show.ts.part").exists())
         assertEquals(10L, written.last())
+    }
+
+    private val hlsText = "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nseg1.ts\n#EXT-X-ENDLIST\n"
+    private val thirtyMin = 30L * 60_000
+
+    @Test
+    fun `a 404 then an hls playlist is unsupported format and nothing is written`() = runBlocking {
+        server.enqueue(status(404))
+        server.enqueue(ScriptedServer.Reply.Body(headers = mapOf("Content-Type" to "application/vnd.apple.mpegurl"), bytes = hlsText.toByteArray()))
+        val got = saver().save(req("/a.ts", "/b", programmeMs = thirtyMin)) { }
+        val failed = got as SaveOutcome.Failed
+        assertEquals(RecordingProblem.UNSUPPORTED_FORMAT, failed.problem)
+        assertEquals(0L, failed.writtenBytes)
+        assertTrue(!File(dir, "show.ts.part").exists() && !File(dir, "show.ts").exists())
+    }
+
+    @Test
+    fun `a text plain body that starts with EXTM3U is sniffed as a playlist`() = runBlocking {
+        server.enqueue(ScriptedServer.Reply.Body(headers = mapOf("Content-Type" to "text/plain"), bytes = hlsText.toByteArray()))
+        val got = saver().save(req("/b", programmeMs = thirtyMin)) { }
+        assertEquals(RecordingProblem.UNSUPPORTED_FORMAT, (got as SaveOutcome.Failed).problem)
+        assertTrue(!File(dir, "show.ts.part").exists() && !File(dir, "show.ts").exists())
+    }
+
+    @Test
+    fun `an hls playlist is skipped and the next good ts is saved`() = runBlocking {
+        server.enqueue(status(404))
+        server.enqueue(ScriptedServer.Reply.Body(headers = mapOf("Content-Type" to "audio/mpegurl"), bytes = hlsText.toByteArray()))
+        val good = ByteArray(200_000) { (it % 251).toByte() }
+        server.enqueue(ScriptedServer.Reply.Body(headers = mapOf("Content-Type" to "video/mp2t"), bytes = good))
+        val got = saver().save(req("/a.ts", "/b", "/c.ts", programmeMs = thirtyMin)) { }
+        assertEquals(SaveOutcome.Done(200_000), got)
+        assertTrue(good.contentEquals(File(dir, "show.ts").readBytes()))
+        assertTrue(!File(dir, "show.ts.part").exists())
+    }
+
+    @Test
+    fun `a tiny non-playlist body for a long programme is never done`() = runBlocking {
+        server.enqueue(body("<html>error</html>"))
+        val got = saver().save(req("/a.ts", programmeMs = thirtyMin)) { }
+        val failed = got as SaveOutcome.Failed
+        assertEquals(RecordingProblem.NETWORK, failed.problem)
+        assertTrue(!File(dir, "show.ts").exists())
+    }
+
+    @Test
+    fun `a tiny body for a 30 second programme is still done`() = runBlocking {
+        server.enqueue(body("0123456789"))
+        assertEquals(SaveOutcome.Done(10), saver().save(req("/a.ts", programmeMs = 30_000)) { })
     }
 
     @Test
