@@ -1,5 +1,6 @@
 package com.nuvio.app.features.recordings
 
+import com.nuvio.app.features.recordings.api.KnownSizeDecision
 import com.nuvio.app.features.recordings.api.RecordingProblem
 import com.nuvio.app.features.recordings.api.SaveOutcome
 import com.nuvio.app.features.recordings.api.SaveRequest
@@ -122,10 +123,10 @@ class DesktopRecordingSaverTest {
         dir.deleteRecursively()
     }
 
-    private fun req(vararg paths: String, resume: Long = 0, headers: Map<String, String> = emptyMap(), estimated: Long = 0, check: (suspend (Long) -> RecordingProblem?)? = null) =
+    private fun req(vararg paths: String, resume: Long = 0, headers: Map<String, String> = emptyMap(), estimated: Long = 0, check: (suspend (Long) -> RecordingProblem?)? = null, known: (suspend (Long, Long) -> KnownSizeDecision)? = null) =
         SaveRequest(
             candidates = paths.map { server.url(it) }, headers = headers,
-            targetPath = File(dir, "show.ts").path, resumeFromBytes = resume, estimatedBytes = estimated, spaceCheck = check,
+            targetPath = File(dir, "show.ts").path, resumeFromBytes = resume, estimatedBytes = estimated, spaceCheck = check, onKnownTotal = known,
         )
 
     private fun saver(stallMs: Long = 30_000, tickMs: Long = 5_000) =
@@ -279,9 +280,58 @@ class DesktopRecordingSaverTest {
     fun `the space check is asked every 16 MB and can stop the save`() = runBlocking {
         server.enqueue(ScriptedServer.Reply.Body(bytes = ByteArray(17 * 1024 * 1024)))
         var asked = 0
-        val got = saver().save(req("/a.ts", check = { asked++; RecordingProblem.NO_SPACE })) { } as SaveOutcome.Failed
-        assertEquals(RecordingProblem.NO_SPACE, got.problem)
+        val got = saver().save(req("/a.ts", check = { asked++; RecordingProblem.NO_SPACE })) { } as SaveOutcome.Done
+        assertEquals(RecordingProblem.NO_SPACE, got.stoppedFor, "bytes were written, so they are kept (was Failed before the space-policy change)")
         assertEquals(1, asked)
+    }
+
+    @Test
+    fun `a declared size that will not fit is refused before any byte is written`() = runBlocking {
+        server.enqueue(body("0123456789"))
+        var seen: Pair<Long, Long>? = null
+        val got = saver().save(req("/a.ts", known = { total, onDisk ->
+            seen = total to onDisk
+            KnownSizeDecision.Refuse(needBytes = total, freeBytes = 4L)
+        })) { }
+        assertEquals(10L to 0L, seen)
+        val failed = got as SaveOutcome.Failed
+        assertEquals(RecordingProblem.NO_SPACE, failed.problem)
+        assertEquals(10L, failed.needBytes)
+        assertEquals(4L, failed.freeBytes)
+        assertTrue(!File(dir, "show.ts").exists(), "nothing was kept")
+        assertEquals(0L, File(dir, "show.ts.part").length(), "no body byte reached the disk")
+    }
+
+    @Test
+    fun `a declared size that fits downloads normally and a resume reports the bytes already held`() = runBlocking {
+        File(dir, "show.ts.part").writeText("01234")
+        ResumeMeta.write(File(dir, "show.ts.part"), server.url("/a.ts"), null, null)
+        server.enqueue(ScriptedServer.Reply.Body(206, mapOf("Content-Range" to "bytes 5-9/10"), "56789".toByteArray()))
+        var seen: Pair<Long, Long>? = null
+        val got = saver().save(req("/a.ts", resume = 5, known = { t, d -> seen = t to d; KnownSizeDecision.Continue })) { }
+        assertEquals(SaveOutcome.Done(10), got)
+        assertEquals(10L to 5L, seen, "total is the whole file, onDisk what the partial holds")
+    }
+
+    @Test
+    fun `no declared size never asks the known-size question`() = runBlocking {
+        server.enqueue(ScriptedServer.Reply.Chunked("0123456789".toByteArray()))
+        var asked = 0
+        val got = saver().save(req("/a.ts", known = { _, _ -> asked++; KnownSizeDecision.Refuse(1, 0) })) { }
+        assertEquals(SaveOutcome.Done(10), got)
+        assertEquals(0, asked)
+    }
+
+    @Test
+    fun `running out of space mid-save keeps the written bytes as a playable file named as the target`() = runBlocking {
+        val big = ByteArray(20 * 1024 * 1024) { 7 }
+        server.enqueue(ScriptedServer.Reply.Body(bytes = big))
+        val got = saver().save(req("/a.ts", check = { RecordingProblem.NO_SPACE })) { }
+        val done = got as SaveOutcome.Done
+        assertEquals(RecordingProblem.NO_SPACE, done.stoppedFor)
+        assertTrue(done.bytes >= 16L * 1024 * 1024 && done.bytes < big.size, "stopped part-way: ${done.bytes}")
+        assertEquals(done.bytes, File(dir, "show.ts").length())
+        assertTrue(!File(dir, "show.ts.part").exists() && !File(dir, "show.ts.part.meta").exists(), "no partial left to clean up")
     }
 
     @Test

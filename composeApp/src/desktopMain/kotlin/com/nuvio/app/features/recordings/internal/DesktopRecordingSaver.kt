@@ -1,5 +1,6 @@
 package com.nuvio.app.features.recordings.internal
 
+import com.nuvio.app.features.recordings.api.KnownSizeDecision
 import com.nuvio.app.features.recordings.api.RecordingProblem
 import com.nuvio.app.features.recordings.api.RecordingSaver
 import com.nuvio.app.features.recordings.api.SaveOutcome
@@ -58,7 +59,20 @@ internal class DesktopRecordingSaver(
                     }
                     return@withContext SaveOutcome.Done(target.length())
                 }
-                is Attempt.Stopped -> return@withContext r.failure // out of space: no other link will help
+                is Attempt.Stopped -> {
+                    val f = r.failure
+                    // Out of space mid-save after bytes were written: keep what is there, as a playable
+                    // truncated file under the final name. (needBytes != null is a refusal of a KNOWN size
+                    // before any download: nothing new to keep.) No other link would help either way.
+                    if (f.problem == RecordingProblem.NO_SPACE && f.needBytes == null && part.length() > 0L) {
+                        if (target.exists()) target.delete()
+                        if (moveIntoPlace(part, target)) {
+                            ResumeMeta.delete(part)
+                            return@withContext SaveOutcome.Done(target.length(), stoppedFor = RecordingProblem.NO_SPACE)
+                        }
+                    }
+                    return@withContext f
+                }
                 is Attempt.Failure -> {
                     val f = r.failure
                     if (best == null || f.writtenBytes >= best.writtenBytes) best = f
@@ -180,6 +194,19 @@ internal class DesktopRecordingSaver(
                                     response.headers().firstValue("ETag").orElse(null),
                                     response.headers().firstValue("Last-Modified").orElse(null),
                                 )
+                            }
+                            // A declared size that will not fit is refused now, before a body byte is written.
+                            if (expected != null) {
+                                val onDisk = if (resumed) offset else 0L
+                                val verdict = req.onKnownTotal?.invoke(expected, onDisk)
+                                if (verdict is KnownSizeDecision.Refuse) {
+                                    return@coroutineScope Attempt.Stopped(
+                                        SaveOutcome.Failed(
+                                            RecordingProblem.NO_SPACE, false, part.length(), rangeSupported,
+                                            needBytes = verdict.needBytes, freeBytes = verdict.freeBytes,
+                                        ),
+                                    )
+                                }
                             }
                             var written = if (resumed) offset else 0L
                             var sinceCheck = 0L
