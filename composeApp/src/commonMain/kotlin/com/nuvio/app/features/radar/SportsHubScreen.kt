@@ -5,6 +5,10 @@ import com.nuvio.app.core.contracts.SportsReplay
 import co.touchlab.kermit.Logger
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -211,7 +215,22 @@ fun SportsHubScreen(
 
     detailFixture?.let { fx ->
         fx.toGameRef()?.let { gameRef ->
-            Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+            // Opaque to the pointer: a mouse click or wheel on an empty area must not reach the fixture cards underneath.
+            val overlayFocus = remember { FocusRequester() }
+            LaunchedEffect(Unit) { runCatching { overlayFocus.requestFocus() } }
+            Box(
+                Modifier.fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Final).changes.forEach { it.consume() }
+                            }
+                        }
+                    }
+                    .focusRequester(overlayFocus)
+                    .focusable(),
+            ) {
                 com.nuvio.app.features.sportsdetail.api.GameDetailScreen(
                     ref = gameRef,
                     onBack = { detailFixture = null },

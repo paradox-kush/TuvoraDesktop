@@ -107,7 +107,10 @@ internal class EspnAssembler(private val m: SportsMapping) {
         when (type) {
             BlockType.LINESCORE -> spec?.let { linescore(it, profile, event, root(it)) }
             BlockType.STATS -> spec?.let { stats(it, event, root(it)) }
-            BlockType.LEADERS -> spec?.let { leaders(it, event, root(it)) }
+            BlockType.LEADERS -> spec?.let { sp ->
+                // Per-game summary first (follows the live game); the scoreboard snapshot when the summary has none.
+                leaders(sp, event, root(sp)) ?: sp.fallback()?.let { fb -> leaders(fb, event, root(fb)) }
+            }
             BlockType.TIMELINE -> spec?.let { timeline(it, profile, event, root(it)) }
             BlockType.WIN_PROBABILITY -> spec?.let { winProbability(it, root(it)) }
             BlockType.SITUATION -> spec?.let { situation(it, root(it)) }
@@ -226,9 +229,16 @@ internal class EspnAssembler(private val m: SportsMapping) {
         val (ownersPath, rest) = splitStar(spec.path ?: return null) ?: return null
         val owners = orderedOwners(event, SportsPath.read(root, ownersPath))
         if (owners.isEmpty()) return null
-        val perOwner = owners.map { o -> SportsPath.read(o, rest).mapNotNull(::cell) }
+        // Read per period ELEMENT, so a missing score stays a "-" in its column instead of shifting the row left.
+        val star = rest.lastIndexOf("[*]")
+        val periodsPath = if (star >= 0) rest.substring(0, star + 3) else rest
+        val leaf = if (star >= 0) rest.substring(star + 3).trimStart('.') else ""
+        val perOwner = owners.map { o ->
+            if (star < 0) SportsPath.read(o, rest).mapNotNull(::cell)
+            else SportsPath.read(o, periodsPath).map { el -> (if (leaf.isEmpty()) cell(el) else SportsPath.read(el, leaf).firstOrNull()?.let(::cell)) ?: "-" }
+        }
         val n = perOwner.maxOfOrNull { it.size } ?: 0
-        if (n == 0) return null
+        if (n == 0 || perOwner.all { cells -> cells.all { it == "-" } }) return null
         val periodLabel = profile.periodLabel
         val labels = (0 until n).map { i -> periodColumn(profile.key, periodLabel, i) }.toMutableList()
         val extras = spec.strings("extra")
