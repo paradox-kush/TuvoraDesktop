@@ -1,6 +1,5 @@
 package com.nuvio.app.features.sportsdetail
 
-import com.nuvio.app.features.sportsdetail.api.BroadcastBlock
 import com.nuvio.app.features.sportsdetail.api.DetailLoad
 import com.nuvio.app.features.sportsdetail.api.GameBlock
 import com.nuvio.app.features.sportsdetail.api.GameDetail
@@ -63,7 +62,7 @@ class GameDetailSessionTest {
     ) = SourceResult.Ok(
         GameDetail(
             gameId = "tsdb:2601", sport = "Basketball", leagueId = "4387", leagueName = "NBA", venue = "State Farm Arena",
-            startsAt = "2026-11-07T00:00:00Z", state = state, header = TeamsHeader(Side(home, score = hs), Side(away, score = aws)),
+            startsAt = "2026-11-07T00:00:00Z", state = state, header = TeamsHeader(Side(home, score = hs, badgeUrl = "https://b/h.png"), Side(away, score = aws)),
             blocks = blocks, sources = blocks.associate { (blockTypeOf(it)?.id ?: "?") to "tsdb" },
         ),
     )
@@ -106,28 +105,75 @@ class GameDetailSessionTest {
         assertNotNull(d.asOf["tsdb"])
     }
 
-    @Test fun `a mislinked ESPN event can never change the score in the header`() = runBlocking<Unit> {
-        val wrongScores = SportsFixtures.espn_nba_event.replace("\"score\":\"139\"", "\"score\":\"1\"")
-        val espn = FakeEspn(scoreboardOf(wrongScores), SourceResult.Ok(parse(SportsFixtures.espn_nba_summary)))
-        val d = loaded(session(FakeTsdb(tsdbEvent()), espn).tick())
-        assertEquals("139", assertIs<TeamsHeader>(d.header).home.score)
+    @Test fun `a stale backend score yields to the fresh ESPN score when the team names agree`() = runBlocking<Unit> {
+        // backend lags: 1-2 and still LIVE; ESPN (same two teams) says 139-132, final.
+        val espn = FakeEspn(scoreboardOf(SportsFixtures.espn_nba_event), SourceResult.Ok(parse(SportsFixtures.espn_nba_summary)))
+        val d = loaded(session(FakeTsdb(tsdbEvent(hs = "1", aws = "2", state = GameState.LIVE)), espn).tick())
+        val h = assertIs<TeamsHeader>(d.header)
+        assertEquals("139", h.home.score)
+        assertEquals("132", h.away.score)
+        assertEquals("Atlanta Hawks", h.home.name, "names, badges and venue stay the primary's")
+        assertEquals("https://b/h.png", h.home.badgeUrl)
+        assertEquals("ATL", h.home.short, "a missing short name is filled from ESPN so rows can carry a team tag")
+        assertEquals(GameState.FINAL, d.state, "state comes from the fresher ESPN too")
+        assertEquals("Final", d.live?.detail)
+        assertEquals("tsdb", d.sources["header"])
+        assertEquals("State Farm Arena", d.venue)
     }
 
-    @Test fun `TheSportsDB blocks win the chain and ESPN fills the rest from one backend call per tick`() = runBlocking<Unit> {
-        val tv = BroadcastBlock(mapOf("United Kingdom" to listOf("TNT Sports")), source = "tsdb")
-        val tsdb = FakeTsdb(tsdbEvent(blocks = listOf(tv)))
+    @Test fun `when the ESPN event is for different teams the primary header stays untouched`() = runBlocking<Unit> {
+        val espn = FakeEspn(scoreboardOf(SportsFixtures.espn_nba_event), SourceResult.Ok(parse(SportsFixtures.espn_nba_summary)))
+        val pinned = ref.copy(espnEventId = "401909287")      // a bad pin: ESPN's Hawks game for a Celtics game
+        val d = loaded(session(FakeTsdb(tsdbEvent(home = "Boston Celtics", away = "Miami Heat", hs = "50", aws = "40", state = GameState.LIVE)), espn, r = pinned).tick())
+        val h = assertIs<TeamsHeader>(d.header)
+        assertEquals("50", h.home.score)
+        assertEquals("40", h.away.score)
+        assertEquals(GameState.LIVE, d.state)
+        assertNull(h.home.short)
+    }
+
+    @Test fun `each tick leaves a debug line with the cumulative request counts - no URLs`() = runBlocking<Unit> {
+        val lines = mutableListOf<String>()
+        val espn = FakeEspn(scoreboardOf(SportsFixtures.espn_nba_event), SourceResult.Ok(parse(SportsFixtures.espn_nba_summary)))
+        val tsdb = FakeTsdb(tsdbEvent(state = GameState.LIVE))
+        val s = GameDetailSession(ref, { SportsMappingStore(MemStorage(), bundledMapping()).current }, tsdb, espn, nowMs = { now }, report = {}, debug = { lines += it })
+        s.tick()
+        s.tick(fetchEvent = true, fetchSummary = false)
+        s.tick(fetchEvent = true, fetchSummary = false)
+        s.tick(fetchEvent = true, fetchSummary = true)
+        assertEquals(4, lines.size)
+        assertTrue(lines[0].contains("backend=1") && lines[0].contains("summary=1") && lines[0].contains("scoreboard="), lines[0])
+        assertTrue(lines[2].contains("backend=1") && lines[2].contains("summary=3"), "live ticks hit the summary only: ${lines[2]}")
+        assertTrue(lines[3].contains("backend=2") && lines[3].contains("summary=4"), lines[3])
+        assertTrue(lines.none { it.contains("http") })
+    }
+
+    @Test fun `TheSportsDB blocks win the chain and ESPN fills the rest from one backend call per slow tick`() = runBlocking<Unit> {
+        val hl = com.nuvio.app.features.sportsdetail.api.HighlightsBlock("https://youtu.be/x", source = "tsdb")
+        val tsdb = FakeTsdb(tsdbEvent(blocks = listOf(hl)))
         val espn = FakeEspn(scoreboardOf(SportsFixtures.espn_nba_event), SourceResult.Ok(parse(SportsFixtures.espn_nba_summary)))
         val s = session(tsdb, espn)
         val d = loaded(s.tick())
-        assertEquals("tsdb", d.blocks.filterIsInstance<BroadcastBlock>().single().source)
-        assertEquals("tsdb", d.sources["broadcast"])
+        assertEquals("tsdb", d.blocks.filterIsInstance<com.nuvio.app.features.sportsdetail.api.HighlightsBlock>().single().source)
+        assertEquals("tsdb", d.sources["highlights"])
         assertEquals("espn", d.sources["stats"], "the backend had no stats for basketball -> ESPN")
-        assertEquals(listOf<Set<String>?>(null), tsdb.requests, "first tick asks for everything")
+        val ask = setOf("stats", "timeline", "highlights", "next")
+        assertEquals(listOf<Set<String>?>(ask), tsdb.requests, "only the blocks the profile shows and the backend may supply are requested - never broadcast")
         s.tick(fetchEvent = true, fetchSummary = false)
         assertEquals(1, tsdb.requests.size, "a live tick never calls the backend")
-        assertTrue(loaded(s.tick(fetchEvent = false, fetchSummary = false)).blocks.any { it is BroadcastBlock }, "slow blocks survive fast ticks")
+        assertTrue(loaded(s.tick(fetchEvent = false, fetchSummary = false)).blocks.any { it is com.nuvio.app.features.sportsdetail.api.HighlightsBlock }, "slow blocks survive fast ticks")
         s.tick(fetchEvent = true, fetchSummary = true)
-        assertEquals(listOf<Set<String>?>(null, null), tsdb.requests, "the slow cadence refreshes everything")
+        assertEquals(listOf<Set<String>?>(ask, ask), tsdb.requests, "the slow cadence refreshes them")
+    }
+
+    @Test fun `a broadcast block from the backend or an old mapping is never shown`() = runBlocking<Unit> {
+        val tv = com.nuvio.app.features.sportsdetail.api.BroadcastBlock(mapOf("UK" to listOf("TNT")), source = "tsdb")
+        assertTrue(loaded(session(FakeTsdb(tsdbEvent(blocks = listOf(tv))), null).tick()).blocks.none { it is com.nuvio.app.features.sportsdetail.api.BroadcastBlock })
+        val store = SportsMappingStore(MemStorage(), bundledMapping())
+        store.offer(editedMappingJson("\"blocks\": [\"header\", \"situation\", \"watch\", \"linescore\"", "\"blocks\": [\"header\", \"situation\", \"watch\", \"broadcast\", \"linescore\""), "x")
+        val d = loaded(session(FakeTsdb(tsdbEvent(blocks = listOf(tv))), null, store).tick())
+        assertTrue(d.blocks.none { it is com.nuvio.app.features.sportsdetail.api.BroadcastBlock })
+        assertNull(d.sources["broadcast"])
     }
 
     @Test fun `backend kill switch falls back to an ESPN-primary game`() = runBlocking<Unit> {
@@ -282,7 +328,8 @@ class GameDetailSessionTest {
     @Test fun `live game shows situation and win probability and the live clock`() = runBlocking<Unit> {
         val liveEvent = SportsFixtures.espn_nba_event
             .replace("\"state\":\"post\"", "\"state\":\"in\"")
-        val espn = FakeEspn(scoreboardOf(liveEvent), SourceResult.Ok(parse(SportsFixtures.espn_nba_summary)))
+        val liveSummary = SportsFixtures.espn_nba_summary.replace("\"state\":\"post\"", "\"state\":\"in\"")
+        val espn = FakeEspn(scoreboardOf(liveEvent), SourceResult.Ok(parse(liveSummary)))
         val d = loaded(session(FakeTsdb(tsdbEvent(state = GameState.LIVE)), espn).tick())
         assertEquals(GameState.LIVE, d.state)
         assertTrue(d.blocks.any { it is WinProbabilityBlock })
@@ -309,7 +356,7 @@ class GameDetailSessionTest {
         val store = SportsMappingStore(MemStorage(), bundledMapping())
         val broken = editedMappingJson("\"path\": \"boxscore.teams[*].statistics[*]\", \"label\": \"label\", \"value\": \"displayValue\",\n        \"allow\": [\"Field Goal %\"",
             "\"path\": \"boxscore.teamz[*].statistics[*]\", \"label\": \"label\", \"value\": \"displayValue\",\n        \"allow\": [\"Field Goal %\"")
-            .replace("\"2026-11-08.1\"", "\"2026-11-07.2\"")
+            .replace("\"2026-11-08.2\"", "\"2026-11-07.2\"")
         assertIs<com.nuvio.app.features.sportsdetail.internal.AdoptResult.Adopted>(store.offer(broken, "b"))
         val espn = FakeEspn(scoreboardOf(SportsFixtures.espn_nba_event), SourceResult.Ok(parse(SportsFixtures.espn_nba_summary)))
         val s = session(FakeTsdb(tsdbEvent()), espn, store)

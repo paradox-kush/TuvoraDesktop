@@ -1,6 +1,11 @@
 package com.nuvio.app.features.sportsdetail.internal
 
 import com.nuvio.app.features.sportsdetail.api.BroadcastBlock
+import com.nuvio.app.features.sportsdetail.api.GameState
+import com.nuvio.app.features.sportsdetail.api.Header
+import com.nuvio.app.features.sportsdetail.api.LiveInfo
+import com.nuvio.app.features.sportsdetail.api.TeamsHeader
+import com.nuvio.app.features.sportsdetail.api.VersusHeader
 import com.nuvio.app.features.sportsdetail.api.FormBlock
 import com.nuvio.app.features.sportsdetail.api.GameBlock
 import com.nuvio.app.features.sportsdetail.api.HighlightsBlock
@@ -37,12 +42,45 @@ internal object GameDetailUiPolicy {
         return u.startsWith("https://") || u.startsWith("http://")
     }
 
+    /** The live line under the score: "2nd · 5:12", or the break wording (Halftime / Intermission) instead of a stopped clock. */
+    fun liveStatusText(live: LiveInfo?): String {
+        val detail = live?.detail?.lowercase().orEmpty()
+        return when {
+            "halftime" in detail || "half-time" in detail -> "Halftime"
+            "intermission" in detail || "end of" in detail || "break" in detail -> "Intermission"
+            else -> listOfNotNull(live?.periodLabel, live?.clock?.takeIf { it.isNotBlank() }).joinToString(" · ").ifBlank { "LIVE" }
+        }
+    }
+
+    private val TOTAL_COLUMNS = setOf("T", "R", "H", "E")
+
+    /** While live, periods after the current one have not started: hide their columns (totals stay). */
+    fun trimUnstartedPeriods(b: LinescoreBlock, state: GameState, livePeriod: Int?): LinescoreBlock {
+        if (state != GameState.LIVE || livePeriod == null || livePeriod < 1) return b
+        val tail = b.columns.takeLastWhile { it in TOTAL_COLUMNS }.size
+        val periods = b.columns.size - tail
+        if (livePeriod >= periods) return b
+        val keep = (0 until livePeriod) + (periods until b.columns.size)
+        return b.copy(columns = keep.map { b.columns[it] }, rows = b.rows.map { r -> keep.mapNotNull { r.getOrNull(it) } })
+    }
+
+    /** "WSH" for a row's side; the full name when the provider gave no short name; null for no side / no teams. */
+    fun teamTag(side: String?, header: Header): String? {
+        val s = when (header) {
+            is TeamsHeader -> if (side == "home") header.home else if (side == "away") header.away else null
+            is VersusHeader -> if (side == "home") header.a else if (side == "away") header.b else null
+            else -> null
+        } ?: return null
+        return s.short?.takeIf { it.isNotBlank() } ?: s.name
+    }
+
     fun isWide(widthDp: Int): Boolean = widthDp >= WIDE_MIN_DP
 
-    /** "Updated 40s ago" once the OLDEST source is older than 20 s; null while fresh. */
+    /** "Updated 40s ago" once even the freshest source fetch is older than 20 s; null while fresh. */
     fun staleLabel(asOf: Map<String, Long>, nowMs: Long): String? {
-        val oldest = asOf.values.minOrNull() ?: return null
-        val ageMs = nowMs - oldest
+        // The FRESHEST fetch of any source: the chip says how stale the screen really is, not how stale its laggiest part is.
+        val newest = asOf.values.maxOrNull() ?: return null
+        val ageMs = nowMs - newest
         if (ageMs <= STALE_AFTER_MS) return null
         val s = ageMs / 1000
         return when {
@@ -58,7 +96,7 @@ internal object GameDetailUiPolicy {
         is LinescoreBlock -> b.rows.isEmpty() || b.columns.isEmpty()
         is TimelineBlock -> b.items.isEmpty()
         is LeadersBlock -> b.items.isEmpty()
-        is BroadcastBlock -> b.byRegion.values.all { it.isEmpty() }
+        is BroadcastBlock -> true   // owner decision: the broadcast block is never shown
         is FormBlock -> b.home.isEmpty() && b.away.isEmpty()
         is SituationBlock -> b.line.isBlank()
         is HighlightsBlock -> b.url.isBlank()

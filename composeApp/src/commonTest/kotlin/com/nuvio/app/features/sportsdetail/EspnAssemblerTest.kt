@@ -50,6 +50,13 @@ class EspnAssemblerTest {
         assertEquals("State Farm Arena", h.venue)
     }
 
+    @Test fun `a live hockey header carries the ordinal period and the period number`() {
+        val live = SportsFixtures.espn_nhl_event.replace("\"state\":\"post\"", "\"state\":\"in\"").replace("\"period\":3", "\"period\":2")
+        val h = assertNotNull(asm.header("hockey", ev(live)))
+        assertEquals("2nd", h.live?.periodLabel)
+        assertEquals(2, h.live?.period)
+    }
+
     @Test fun `EPL header carries form and soccer clock`() {
         val h = assertNotNull(asm.header("soccer", ev(SportsFixtures.espn_epl_event)))
         val t = assertIs<TeamsHeader>(h.header)
@@ -284,10 +291,11 @@ class EspnAssemblerTest {
 
     // ---- broadcast, form, lineup ------------------------------------------------------------------------------
 
-    @Test fun `broadcast names come from the scoreboard under region US`() {
-        val b = assertNotNull(block<BroadcastBlock>(BlockType.BROADCAST, "soccer", SportsFixtures.espn_epl_event, null))
-        assertEquals(listOf("USA Net", "Universo"), b.byRegion["US"])
-        assertNull(asm.assemble(BlockType.BROADCAST, "soccer", ev("""{"competitions":[{"broadcasts":[]}]}"""), null))
+    @Test fun `broadcast is gone - never assembled even when a mapping still lists it`() {
+        assertNull(asm.assemble(BlockType.BROADCAST, "soccer", ev(SportsFixtures.espn_epl_event), null))
+        val old = EspnAssembler(mappingOf(editedMappingJson("\"blocks\": [\"header\", \"watch\", \"stats\"", "\"blocks\": [\"header\", \"watch\", \"broadcast\", \"stats\"")))
+        assertTrue(old.assembleAll("soccer", ev(SportsFixtures.espn_epl_event), parse(SportsFixtures.espn_epl_summary)).none { it is BroadcastBlock })
+        assertNull(asm.rootNeeded(BlockType.BROADCAST, "soccer"))
     }
 
     @Test fun `form splits the result string per side`() {
@@ -315,8 +323,8 @@ class EspnAssemblerTest {
         // v1 reads linescores[*].displayValue; ESPN tennis sets carry `value`. This is the "unverified" gap in the contract.
         assertNull(asm.assemble(BlockType.LINESCORE, "tennis", ev(SportsFixtures.espn_atp_event), null))
         val fixed = EspnAssembler(mappingOf(editedMappingJson(
-            "\"tennis\": { \"blocks\": [\"header\", \"situation\", \"watch\", \"broadcast\", \"linescore\", \"next\"], \"linescore\": { \"from\": \"scoreboard\", \"path\": \"competitions[0].competitors[*].linescores[*].displayValue\" } }",
-            "\"tennis\": { \"blocks\": [\"header\", \"situation\", \"watch\", \"broadcast\", \"linescore\", \"next\"], \"linescore\": { \"from\": \"scoreboard\", \"path\": \"competitions[0].competitors[*].linescores[*].value\" } }",
+            "\"tennis\": { \"blocks\": [\"header\", \"situation\", \"watch\", \"linescore\", \"next\"], \"linescore\": { \"from\": \"scoreboard\", \"path\": \"competitions[0].competitors[*].linescores[*].displayValue\" } }",
+            "\"tennis\": { \"blocks\": [\"header\", \"situation\", \"watch\", \"linescore\", \"next\"], \"linescore\": { \"from\": \"scoreboard\", \"path\": \"competitions[0].competitors[*].linescores[*].value\" } }",
         )))
         val b = assertNotNull(fixed.assemble(BlockType.LINESCORE, "tennis", ev(SportsFixtures.espn_atp_event), null)) as LinescoreBlock
         assertEquals(2, b.rows.size)

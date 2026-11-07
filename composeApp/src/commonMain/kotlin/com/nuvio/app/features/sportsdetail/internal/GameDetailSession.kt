@@ -7,8 +7,11 @@ import com.nuvio.app.features.sportsdetail.api.GameDetailSource
 import com.nuvio.app.features.sportsdetail.api.GameRef
 import com.nuvio.app.features.sportsdetail.api.GameState
 import com.nuvio.app.features.sportsdetail.api.LiveInfo
+import com.nuvio.app.features.sportsdetail.api.Header
+import com.nuvio.app.features.sportsdetail.api.Side
 import com.nuvio.app.features.sportsdetail.api.TeamsHeader
 import com.nuvio.app.features.sportsdetail.api.VersusHeader
+import co.touchlab.kermit.Logger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -32,6 +35,8 @@ internal class GameDetailSession(
     private val espn: EspnSource?,
     private val nowMs: () -> Long = { Clock.System.now().toEpochMilliseconds() },
     private val report: (Map<String, Any>) -> Unit = SportsDetailTelemetry::send,
+    /** One line per tick (cumulative request counts, never URLs) — the evidence that live ticks hit the summary only. */
+    private val debug: (String) -> Unit = { line -> runCatching { debugLog.d { line } } },
 ) : GameDetailSource {
 
     private val lock = Mutex()
@@ -49,6 +54,9 @@ internal class GameDetailSession(
     private var tsdbAsOf: Long? = null
     /** ESPN failed recently: skip it until then (the backend may be perfectly healthy). */
     private var espnBackoffUntilMs = 0L
+    private var backendCalls = 0
+    private var summaryCalls = 0
+    private var scoreboardCalls = 0
     private var espnAsOf: Long? = null
 
     // Negative cache + telemetry de-dup.
@@ -93,7 +101,8 @@ internal class GameDetailSession(
         //    first load and on the slow (summary) cadence ONLY — a live tick is the ESPN per-game summary alone.
         if (tsdb != null && ref.tsdbEventId != null && !tsdbDisabled && (fetchSummary || tsdbAnswer == null)) {
             val t0 = nowMs()
-            val r = tsdb.detail(ref.tsdbEventId, ref.leagueId, null)
+            backendCalls++
+            val r = tsdb.detail(ref.tsdbEventId, ref.leagueId, backendBlocks(mapping, profile))
             durations["tsdb"] = nowMs() - t0
             tsdbAnswer = r
             when (r) {
@@ -119,7 +128,7 @@ internal class GameDetailSession(
         val espnCallable = espnOn && nowMs() >= espnBackoffUntilMs
         if (espnCallable && (needResolve || needScoreboardRefresh)) {
             val t0 = nowMs()
-            val failure = resolveEspnEvent(mapping, league!!, ::miss)
+            val failure = resolveEspnEvent(mapping, league!!, ::miss) { scoreboardCalls++ }
             durations["espn"] = nowMs() - t0
             espnEventFailed = failure
             if (failure != null) espnBackoffUntilMs = nowMs() + ESPN_BACKOFF_MS
@@ -148,6 +157,7 @@ internal class GameDetailSession(
             (provisional != GameState.UPCOMING || "lineup" in profile.blocks) && provisional != GameState.POSTPONED
         if (wantsSummary && espnCallable && (fetchEvent || fetchSummary || espnSummary == null) && !isMissed("espn|summary")) {
             val t0 = nowMs()
+            summaryCalls++
             when (val r = espn!!.summary(league!!.espn!!, espnEventId!!)) {
                 is SourceResult.Ok -> { espnSummary = r.value; espnEventRoot = EspnLiveOverlay.apply(espnBase!!, r.value); espnAsOf = nowMs() }
                 is SourceResult.Empty, is SourceResult.Disabled -> miss("espn|summary")
@@ -173,10 +183,13 @@ internal class GameDetailSession(
             primary = "espn"
             note("header", "espn", "loaded")
         }
-        val state = hdr.state
-
-        // The live line may come from ESPN (richer clock) only when ESPN agrees on the score — never across a mislink.
-        val live: LiveInfo? = if (primary == "tsdb" && espnHdr != null && sameScore(hdr, espnHdr)) espnHdr.live else hdr.live
+        // ESPN is fresher than the backend's ~1-2 min cache. When it resolved THIS game (both teams agree by name),
+        // score, state and the live line come from ESPN; names, badges and venue stay the primary's. A name
+        // mismatch (a bad pin) leaves the primary header untouched and ignores ESPN's score.
+        val merged = if (primary == "tsdb" && espnHdr != null) mergeFreshEspn(hdr, espnHdr, mapping.aliases) else null
+        val shownHeader = merged?.header ?: hdr.header
+        val state = merged?.state ?: hdr.state
+        val live: LiveInfo? = merged?.live ?: hdr.live
 
         // 6. Blocks along the chain.
         val blocks = ArrayList<GameBlock>()
@@ -184,10 +197,11 @@ internal class GameDetailSession(
         sources["header"] = primary
         // Profiles list the screen's blocks, but some (winProbability) only appear as a path spec: those join at the end.
         val order = profile?.let { p -> p.blocks + p.specs.keys.filter { it !in p.blocks && BlockType.byId(it) != null } }
-            ?: listOf("broadcast", "stats", "timeline", "highlights")
+            ?: listOf("stats", "timeline", "highlights")
         for (id in order) {
             val type = BlockType.byId(id) ?: continue
-            if (type == BlockType.WATCH || !visible(type, state)) continue
+            // Owner decision: no broadcast block. A mapping or backend that still lists/sends one is simply ignored.
+            if (type == BlockType.WATCH || type == BlockType.BROADCAST || !visible(type, state)) continue
             for (source in mapping.chainFor(type)) {
                 val block: GameBlock? = when (source) {
                     "tsdb" -> if (tsdbD != null) tsdbBlocks[type].also { note(type.id, "tsdb", if (it == null) "empty" else "loaded") } else null
@@ -198,6 +212,7 @@ internal class GameDetailSession(
             }
         }
 
+        debug("tick fetchEvent=$fetchEvent fetchSummary=$fetchSummary | backend=$backendCalls summary=$summaryCalls scoreboard=$scoreboardCalls")
         return DetailLoad.Loaded(
             GameDetail(
                 gameId = ref.gameId,
@@ -208,7 +223,7 @@ internal class GameDetailSession(
                 venue = hdr.venue ?: tsdbD?.venue,
                 startsAt = hdr.startsAt ?: Iso.format(ref.startsAtMs),
                 state = state,
-                header = hdr.header,
+                header = shownHeader,
                 live = live,
                 blocks = blocks,
                 sources = sources,
@@ -220,10 +235,29 @@ internal class GameDetailSession(
         )
     }
 
-    private fun sameScore(a: EspnHeader, b: EspnHeader): Boolean = when (val x = a.header) {
-        is TeamsHeader -> (b.header as? TeamsHeader)?.let { y -> x.home.score != null && x.home.score == y.home.score && x.away.score == y.away.score } == true
-        is VersusHeader -> (b.header as? VersusHeader)?.let { y -> x.a.score != null && x.a.score == y.a.score && x.b.score == y.b.score } == true
-        else -> true
+    /** The block ids worth asking the backend for: what the profile shows and the chain lets TheSportsDB supply (never broadcast/watch). */
+    private fun backendBlocks(mapping: SportsMapping, profile: ProfileSpec?): Set<String>? {
+        val ids = profile?.blocks.orEmpty().mapNotNull { BlockType.byId(it) }
+            .filter { it != BlockType.BROADCAST && it != BlockType.WATCH && "tsdb" in mapping.chainFor(it) }.map { it.id }
+        return ids.takeIf { it.isNotEmpty() }?.toSet()
+    }
+
+    private fun mergeFreshEspn(primary: EspnHeader, espn: EspnHeader, aliases: Map<String, String>): EspnHeader? {
+        fun side(p: Side, e: Side) = p.copy(score = e.score ?: p.score, short = p.short ?: e.short)
+        val header: Header = when (val p = primary.header) {
+            is TeamsHeader -> {
+                val e = espn.header as? TeamsHeader ?: return null
+                if (!TeamNames.sameTeam(p.home.name, e.home.name, aliases) || !TeamNames.sameTeam(p.away.name, e.away.name, aliases)) return null
+                TeamsHeader(side(p.home, e.home), side(p.away, e.away))
+            }
+            is VersusHeader -> {
+                val e = espn.header as? VersusHeader ?: return null
+                if (!TeamNames.sameTeam(p.a.name, e.a.name, aliases) || !TeamNames.sameTeam(p.b.name, e.b.name, aliases)) return null
+                VersusHeader(side(p.a, e.a), side(p.b, e.b))
+            }
+            else -> return null
+        }
+        return primary.copy(header = header, state = espn.state, live = espn.live)
     }
 
     /** What belongs on screen in each state: live-only blocks stay hidden after the whistle, score blocks before it. */
@@ -231,11 +265,11 @@ internal class GameDetailSession(
         GameState.LIVE -> true
         GameState.FINAL -> type != BlockType.SITUATION && type != BlockType.WIN_PROBABILITY
         GameState.UPCOMING -> type in UPCOMING_BLOCKS
-        GameState.POSTPONED -> type == BlockType.BROADCAST
+        GameState.POSTPONED -> false
     }
 
     /** Finds (or matches) the ESPN event on a scoreboard. Returns a Failed when ESPN could not be asked; null otherwise. */
-    private suspend fun resolveEspnEvent(mapping: SportsMapping, league: LeagueEntry, miss: (String) -> Unit): SourceResult.Failed? {
+    private suspend fun resolveEspnEvent(mapping: SportsMapping, league: LeagueEntry, miss: (String) -> Unit, counted: () -> Unit): SourceResult.Failed? {
         val path = league.espn ?: return null
         val known = espnEventId ?: mapping.eventOverride(ref.tsdbEventId)
         val anchor = espnEventStartMs ?: ref.startsAtMs
@@ -245,6 +279,7 @@ internal class GameDetailSession(
             Iso.yyyymmdd(anchor - windowMs).takeIf { it != Iso.yyyymmdd(anchor) } ?: Iso.yyyymmdd(anchor + windowMs).takeIf { it != Iso.yyyymmdd(anchor) },
         ).take(if (known != null && espnEventStartMs != null) 1 else 2)
         for (d in dates) {
+            counted()
             val sb = when (val r = espn!!.scoreboard(path, d)) {
                 is SourceResult.Ok -> r.value
                 is SourceResult.Empty, is SourceResult.Disabled -> continue
@@ -292,9 +327,10 @@ internal class GameDetailSession(
     }
 
     private companion object {
+        val debugLog = Logger.withTag("SportsDetail")
         const val NEGATIVE_TTL_MS = 5L * 60 * 1000
         const val ESPN_BACKOFF_MS = 30_000L
-        val UPCOMING_BLOCKS = setOf(BlockType.BROADCAST, BlockType.FORM, BlockType.LINEUP, BlockType.RESULTS, BlockType.NEXT, BlockType.STANDINGS, BlockType.HIGHLIGHTS)
+        val UPCOMING_BLOCKS = setOf(BlockType.FORM, BlockType.LINEUP, BlockType.RESULTS, BlockType.NEXT, BlockType.STANDINGS, BlockType.HIGHLIGHTS)
     }
 }
 

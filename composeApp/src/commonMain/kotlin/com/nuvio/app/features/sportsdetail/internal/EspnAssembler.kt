@@ -1,6 +1,5 @@
 package com.nuvio.app.features.sportsdetail.internal
 
-import com.nuvio.app.features.sportsdetail.api.BroadcastBlock
 import com.nuvio.app.features.sportsdetail.api.EventHeader
 import com.nuvio.app.features.sportsdetail.api.FormBlock
 import com.nuvio.app.features.sportsdetail.api.GameBlock
@@ -52,7 +51,6 @@ internal class EspnAssembler(private val m: SportsMapping) {
     fun rootNeeded(type: BlockType, profileKey: String): String? {
         val p = m.profiles[profileKey] ?: return null
         return when (type) {
-            BlockType.BROADCAST -> if ("broadcast" in p.blocks) "scoreboard" else null
             BlockType.LINEUP -> p.spec(type)?.from ?: if ("lineup" in p.blocks) "summary" else null
             else -> p.spec(type)?.from
         }
@@ -90,8 +88,9 @@ internal class EspnAssembler(private val m: SportsMapping) {
             state = state,
             live = LiveInfo(
                 clock = SportsPath.text(event, c.clock)?.takeIf { it.isNotBlank() },
-                periodLabel = if (state == GameState.LIVE && period != null && label != null) "$label$period" else null,
+                periodLabel = if (state == GameState.LIVE && period != null && (label == "Q" || label == "P")) ordinal(period, if (label == "Q") 4 else 3) else null,
                 detail = SportsPath.text(event, c.detail)?.takeIf { it.isNotBlank() },
+                period = if (state == GameState.LIVE) period else null,
             ),
             startsAt = Iso.normalize(SportsPath.text(event, "date")),
             venue = SportsPath.text(event, c.venue),
@@ -116,7 +115,6 @@ internal class EspnAssembler(private val m: SportsMapping) {
             BlockType.SITUATION -> spec?.let { situation(it, root(it)) }
             BlockType.RESULTS -> spec?.let { results(it, root(it)) }
             BlockType.FORM -> spec?.let { form(it, event, root(it)) }
-            BlockType.BROADCAST -> if ("broadcast" in profile.blocks) broadcast(event) else null
             BlockType.LINEUP -> if (spec != null || "lineup" in profile.blocks) lineup(spec, event, summary) else null
             else -> null
         }
@@ -171,6 +169,12 @@ internal class EspnAssembler(private val m: SportsMapping) {
         val comps = SportsPath.read(event, profile.spec(BlockType.RESULTS)?.path ?: "competitions[*]")
         val pick = comps.firstOrNull { SportsPath.text(it, "status.type.state") != "post" } ?: comps.lastOrNull()
         return SportsPath.text(pick, profile.spec(BlockType.RESULTS)?.str("session"))
+    }
+
+    private fun ordinal(n: Int, regulation: Int): String = when {
+        n > regulation -> if (n == regulation + 1) "OT" else "${n - regulation}OT"
+        n == 1 -> "1st"; n == 2 -> "2nd"; n == 3 -> "3rd"
+        else -> "${n}th"
     }
 
     private fun formLetters(s: String): List<String> = s.uppercase().filter { it == 'W' || it == 'D' || it == 'L' }.map { it.toString() }
@@ -435,12 +439,7 @@ internal class EspnAssembler(private val m: SportsMapping) {
         return ResultsBlock(columns, rows, ESPN)
     }
 
-    // ---- broadcast / form / lineup -------------------------------------------------------------------------------------
-
-    private fun broadcast(event: JsonElement): GameBlock? {
-        val names = SportsPath.texts(event, m.common.broadcast).filter { it.isNotBlank() }.distinct()
-        return names.takeIf { it.isNotEmpty() }?.let { BroadcastBlock(mapOf("US" to it), ESPN) }
-    }
+    // ---- form / lineup -------------------------------------------------------------------------------------
 
     private fun form(spec: BlockSpec, event: JsonElement, root: JsonElement?): GameBlock? {
         val (ownersPath, rest) = splitStar(spec.path ?: return null) ?: return null
