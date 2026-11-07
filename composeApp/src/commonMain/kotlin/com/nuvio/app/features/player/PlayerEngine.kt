@@ -129,6 +129,8 @@ enum class PlayerControlsAction {
     DoubleTapSeekForward,
     /** The native error panel's Retry (a failed VOD start or an exhausted live reconnect). */
     RetryPlayback,
+    /** The native error panel's "Send report" (Telemetry v2). The panel shows the outcome in its own button label. */
+    SendReport,
 }
 
 data class PlayerControlSubtitleFont(
@@ -195,6 +197,8 @@ data class PlayerControlsState(
     val playbackErrorActionLabel: String = "Go back",
     /** Empty = the error panel offers no Retry. */
     val playbackErrorRetryLabel: String = "",
+    /** Empty = no "Send report" in the error panel; after a press it carries the outcome text. */
+    val playbackErrorReportLabel: String = "",
     val sourcesPanelTitle: String = "Sources",
     val episodesPanelTitle: String = "Episodes",
     val streamsPanelTitle: String = "Streams",

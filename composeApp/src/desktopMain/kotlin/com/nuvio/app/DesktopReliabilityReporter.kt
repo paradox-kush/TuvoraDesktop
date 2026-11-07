@@ -44,8 +44,8 @@ internal object DesktopReliabilityReporter {
                 Thread(
                     {
                         processExitTracker.markCleanExit()
-                        runCatching { TelemetryAccess.current().onBackground() }
-                        DesktopTelemetry.flushAndClose()
+                        // session_health goes out synchronously inside; see DesktopTelemetry.exitAndFlush.
+                        DesktopTelemetry.exitAndFlush { TelemetryAccess.current().onBackground() }
                     },
                     "PostHogShutdown",
                 )

@@ -63,6 +63,13 @@ import com.nuvio.app.features.streams.streamAddonInstanceId
 import com.nuvio.app.isIos
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.nuvio.app.core.telemetry.api.ReportCategory
+import com.nuvio.app.core.telemetry.api.ReportContext
+import com.nuvio.app.core.telemetry.api.ReportResult
+import com.nuvio.app.core.telemetry.api.ReportSurface
+import com.nuvio.app.core.telemetry.api.TelemetryAccess
+import com.nuvio.app.core.telemetry.ui.reportResultMessage
+import nuvio.composeapp.generated.resources.report_send
 import kotlin.time.TimeSource
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -360,6 +367,9 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
         playbackErrorMessage = errorMessage.orEmpty(),
         playbackErrorActionLabel = stringResource(Res.string.compose_player_go_back),
         playbackErrorRetryLabel = if (vodStartFailed || liveReconnectFailed) stringResource(Res.string.compose_player_retry) else "",
+        playbackErrorReportLabel = if (errorMessage == null) "" else {
+            nativeErrorReportLabel?.takeIf { nativeErrorReportFor == errorMessage } ?: stringResource(Res.string.report_send)
+        },
         sourcesPanelTitle = stringResource(Res.string.compose_player_panel_sources),
         episodesPanelTitle = stringResource(Res.string.compose_player_panel_episodes),
         streamsPanelTitle = stringResource(Res.string.compose_player_panel_streams),
@@ -1167,6 +1177,7 @@ internal fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerContro
         PlayerControlsAction.RevealLockedOverlay -> revealLockedOverlay()
         PlayerControlsAction.Back -> requestBack()
         PlayerControlsAction.RetryPlayback -> retryAfterPlaybackError()
+        PlayerControlsAction.SendReport -> sendReportFromNativeErrorPanel()
         // The regular player keeps the desktop control's existing whole-window fullscreen
         // fallback. Surfaces with their own layout fullscreen (Live TV) may consume this action.
         PlayerControlsAction.ToggleFullscreen -> return false
@@ -2382,6 +2393,32 @@ private fun PlayerScreenRuntime.RenderPlayerModals(displayedPositionMs: Long) {
             },
             onDismiss = { showSwitchEngineConfirm = false },
         )
+    }
+}
+
+/**
+ * "Send report" on the native error panel. The desktop panel is a native layer ABOVE Compose, so the Compose
+ * modal's button and toast are unreachable there; the outcome is shown in the panel's own button label.
+ * A second press while a send is in flight or after an answer is ignored (the rate limit also guards).
+ */
+internal fun PlayerScreenRuntime.sendReportFromNativeErrorPanel() {
+    val forError = errorMessage ?: return
+    if (nativeErrorReportFor == forError && nativeErrorReportLabel != null) return
+    nativeErrorReportFor = forError
+    nativeErrorReportLabel = "…"
+    scope.launch {
+        val result = try {
+            TelemetryAccess.current().sendUserReport(
+                ReportCategory.WONT_PLAY,
+                ReportSurface.VOD,
+                ReportContext(),
+            )
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            throw c
+        } catch (_: Throwable) {
+            ReportResult.Failed
+        }
+        nativeErrorReportLabel = reportResultMessage(result).substringBefore('\n')
     }
 }
 

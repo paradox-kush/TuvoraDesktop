@@ -14,6 +14,8 @@ const playbackErrorMessage = document.getElementById("playbackErrorMessage");
 const playbackErrorAction = document.getElementById("playbackErrorAction");
 const playbackErrorRetry = document.getElementById("playbackErrorRetry");
 const playbackErrorRetryLabel = document.getElementById("playbackErrorRetryLabel");
+const playbackErrorReport = document.getElementById("playbackErrorReport");
+const playbackErrorReportLabel = document.getElementById("playbackErrorReportLabel");
 const playbackErrorActionLabel = document.getElementById("playbackErrorActionLabel");
 const pauseMetadataOverlay = document.getElementById("pauseMetadataOverlay");
 const pauseWatchingLabel = document.getElementById("pauseWatchingLabel");
@@ -252,6 +254,7 @@ let state = {
   playbackErrorMessage: "",
   playbackErrorActionLabel: "Go back",
   playbackErrorRetryLabel: "",
+  playbackErrorReportLabel: "",
   sourcesPanelTitle: "Sources",
   episodesPanelTitle: "Episodes",
   streamsPanelTitle: "Streams",
@@ -2670,6 +2673,10 @@ const renderPlaybackError = () => {
   playbackErrorRetry.hidden = !retryText;
   playbackErrorRetryLabel.textContent = retryText;
   if (retryText) playbackErrorRetry.setAttribute("aria-label", retryText);
+  const reportText = String(state.playbackErrorReportLabel || "").trim();
+  playbackErrorReport.hidden = !reportText;
+  playbackErrorReportLabel.textContent = reportText;
+  if (reportText) playbackErrorReport.setAttribute("aria-label", reportText);
 
   return showError;
 };

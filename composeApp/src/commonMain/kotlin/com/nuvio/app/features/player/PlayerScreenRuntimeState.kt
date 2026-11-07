@@ -213,6 +213,9 @@ internal class PlayerScreenRuntime(
     val playerReleaseSurfaceRetention = PlayerReleaseSurfaceRetention()
     var playerControllerSourceUrl by mutableStateOf<String?>(null)
     var errorMessage by mutableStateOf<String?>(null)
+    /** Outcome text of "Send report" on the NATIVE (desktop) error panel, tied to the error it was pressed on. */
+    var nativeErrorReportLabel by mutableStateOf<String?>(null)
+    var nativeErrorReportFor by mutableStateOf<String?>(null)
     /** The live reconnect ladder ran out: the error modal offers Retry beside Go back. */
     var liveReconnectFailed by mutableStateOf(false)
     /** Bumped by the viewer's Retry on that error; the live freeze ladder starts over on it (never on its own reconnects). */

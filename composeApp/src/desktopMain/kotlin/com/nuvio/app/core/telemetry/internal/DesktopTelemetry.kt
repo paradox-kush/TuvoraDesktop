@@ -27,7 +27,21 @@ internal object DesktopTelemetry {
     private const val HOST = "https://us.i.posthog.com"
 
     private var started = false
+
+    @Volatile
     private var lastHandled: Throwable? = null
+
+    private val uncaught = DesktopUncaughtDispatcher(
+        onFatal = { thread, error -> TelemetryRuntime.onUncaught(thread, error) },
+        onNonFatal = { type, thread, frames ->
+            runCatching {
+                TelemetryRuntime.service?.reportError(
+                    "app_nonfatal_exception",
+                    mapOf("exception_type" to type, "thread" to thread, "stack" to frames.joinToString("\n")),
+                )
+            }
+        },
+    )
 
     @Volatile
     private var gpuName: String? = null
@@ -36,8 +50,9 @@ internal object DesktopTelemetry {
     fun start() {
         if (started) return
         started = true
-        TelemetryRuntime.start(DesktopTelemetryHost { gpuName })
+        // Handler first: a failure while the service itself is built is then still seen (and handed on).
         installCrashHandler()
+        TelemetryRuntime.start(DesktopTelemetryHost { gpuName })
         Thread({ gpuName = detectGpuName() }, "TelemetryGpuProbe").apply { isDaemon = true }.start()
     }
 
@@ -48,7 +63,7 @@ internal object DesktopTelemetry {
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
             val first = lastHandled !== error
             lastHandled = error
-            if (first) TelemetryRuntime.onUncaught(thread.name, error)
+            if (first) uncaught.dispatch(thread.name, error)
             try { previous?.uncaughtException(thread, error) } catch (_: Throwable) { }
         }
     }
@@ -90,16 +105,30 @@ internal object DesktopTelemetry {
         if (enabled) PostHog.optIn() else PostHog.optOut()
     }
 
-    fun flushAndClose() {
+    /**
+     * Exit path. PostHog's JVM `flush()` only queues an async upload and `close()` does not wait for it, so the
+     * one event that exists only at exit (`session_health`) is POSTed synchronously (short timeout) while
+     * [shuttingDown] is set; everything else gets a bounded grace period for the async queue.
+     */
+    fun exitAndFlush(finalize: () -> Unit) {
+        DesktopSyncSender.shuttingDown = true
+        runCatching(finalize)
         runCatching { PostHog.flush() }
+        runCatching { Thread.sleep(EXIT_GRACE_MS) }
         runCatching { PostHog.close() }
     }
+
+    private const val EXIT_GRACE_MS = 750L
 
     private fun detectGpuName(): String {
         val os = System.getProperty("os.name").orEmpty().lowercase(Locale.ROOT)
         val command = when {
             os.contains("mac") -> listOf("/usr/sbin/system_profiler", "SPDisplaysDataType")
             os.contains("linux") -> listOf("lspci")
+            os.contains("win") -> listOf(
+                "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                "(Get-CimInstance Win32_VideoController | Select-Object -First 1).Name",
+            )
             else -> return "unknown"
         }
         return runCatching {
@@ -108,6 +137,8 @@ internal object DesktopTelemetry {
             if (!proc.waitFor(4, TimeUnit.SECONDS)) proc.destroyForcibly()
             val line = if (os.contains("mac")) {
                 out.lineSequence().firstOrNull { it.trim().startsWith("Chipset Model:") }?.substringAfter(':')
+            } else if (os.contains("win")) {
+                out.lineSequence().firstOrNull { it.isNotBlank() }
             } else {
                 out.lineSequence().firstOrNull { it.contains("VGA") || it.contains("3D controller") }?.substringAfterLast(": ")
             }
@@ -170,6 +201,12 @@ internal class DesktopTelemetryHost(private val gpu: () -> String?) : TelemetryH
     }
 
     override fun capture(event: String, props: Map<String, Any>, timestampMs: Long?) {
+        // Consent is the source of truth. The SDK's opt-in follows it asynchronously (a collector), so a
+        // "Turn on" immediately followed by "Send report" would be dropped by an SDK that is still opted out.
+        if (consentEnabled() && PostHog.isOptOut()) PostHog.optIn()
+        if (DesktopSyncSender.shuttingDown && event == SESSION_HEALTH_EVENT &&
+            DesktopSyncSender.send(event, props + registeredProps(), timestampMs)
+        ) return
         if (timestampMs != null) PostHog.capture(event, properties = props, timestamp = Date(timestampMs))
         else PostHog.capture(event, properties = props)
     }
@@ -209,5 +246,15 @@ internal class DesktopTelemetryHost(private val gpu: () -> String?) : TelemetryH
         java.lang.management.ManagementFactory.getOperatingSystemMXBean() as? com.sun.management.OperatingSystemMXBean
     }.getOrNull()
 
-    private companion object { const val SUPPORT_CODE_FILE = "support_code.txt" }
+    private fun registeredProps(): Map<String, Any> = buildMap {
+        loadSupportCode()?.let { put("support_code", it) }
+        put("\$app_name", "Tuvora Desktop")
+        put("\$app_version", appVersion)
+        put("\$os", System.getProperty("os.name").orEmpty().take(64))
+    }
+
+    private companion object {
+        const val SUPPORT_CODE_FILE = "support_code.txt"
+        const val SESSION_HEALTH_EVENT = "session_health"
+    }
 }

@@ -122,9 +122,7 @@ class ArchitectureTest {
         val builtLoading = Regex("""\bLoadStatus\.Loading\s*\(""")
         // A loading Boolean that STARTS true (`val loading: Boolean = true`) is the same switch, set at birth.
         val declaredOn = Regex("""\b\w*[lL]oading\w*\s*:\s*Boolean\s*=\s*true\b""")
-        // androidMain is excluded: the Android target is dead in this fork (never built or shipped), so it keeps
-        // its pre-Telemetry-v2 PostHog setup rather than carrying an unverifiable port of the Mobile change.
-        val mainSourceSet = Regex("""/composeApp/src/(?!androidMain/)[A-Za-z]*Main/""")
+        val mainSourceSet = Regex("""/composeApp/src/[A-Za-z]*Main/""")
         val violations = files
             // The Calendar adopted BoundedLoad (its refresh is LoadSurface.CALENDAR), so R7 covers it too.
             .filter { (p, _) -> ("/features/iptv/" in p || "/features/livetv/" in p || "/features/calendar/" in p) && mainSourceSet.containsMatchIn(p) }
@@ -150,13 +148,14 @@ class ArchitectureTest {
      */
     @Test
     fun `only core-telemetry-internal calls the PostHog SDK or AnalyticsSink capture (Telemetry v2)`() {
-        val sdkRef = Regex("""\bimport\s+com\.posthog\.|\bPostHogSDK\b|\bAnalyticsSink\s*\.\s*capture(At)?\b|\bAnalyticsSink\s*::\s*capture""")
-        // androidMain is excluded: the Android target is dead in this fork (never built or shipped), so it keeps
-        // its pre-Telemetry-v2 PostHog setup rather than carrying an unverifiable port of the Mobile change.
-        val mainSourceSet = Regex("""/composeApp/src/(?!androidMain/)[A-Za-z]*Main/""")
+        val sdkRef = Regex("""\bcom\.posthog\.|\bPostHogSDK\b|\bAnalyticsSink\s*\.\s*capture(At)?\b|\bAnalyticsSink\s*::\s*capture""")
+        val mainSourceSet = Regex("""/composeApp/src/[A-Za-z]*Main/""")
         val violations = files
             .filter { (p, _) -> mainSourceSet.containsMatchIn(p) }
             .filterNot { (p, _) -> "/core/telemetry/internal/" in p || p.endsWith("/core/analytics/AnalyticsSink.kt") }
+            // The Android target is dead in this fork (never built or shipped): these two files keep their
+            // pre-Telemetry-v2 PostHog use. Everything else in androidMain stays under the rule.
+            .filterNot { (p, _) -> p.endsWith("/androidMain/kotlin/com/nuvio/app/NuvioApplication.kt") || p.endsWith("/androidMain/kotlin/com/nuvio/app/AppExitReporter.kt") }
             .flatMap { (p, text) ->
                 stripComments(text).lines().withIndex()
                     .filter { (_, line) -> sdkRef.containsMatchIn(line) }
