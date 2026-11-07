@@ -8,83 +8,106 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * What may enter the flight recorder and leave the device inside a trail: allow-listed field
- * names, numbers / booleans / short code-like strings only, a URL scrub as a second guard, and a
- * hard size bound. Everything else is dropped, never masked.
+ * What may enter the flight recorder and ride along on an error or report: an ALLOW-LIST of field names,
+ * enum/number values only, with a URL scrub as a second guard. Anything else is dropped, never redacted-and-kept,
+ * so a provider's host, a channel name or a free-text message cannot reach the wire through the trail.
  */
 internal object DiagTrailPolicy {
     const val MAX_ENTRIES = 80
     const val MAX_BYTES = 12 * 1024
+    private const val MAX_STRING = 48
+    private const val MAX_FIELDS = 12
 
+    /** Field names that carry only code, enum or numeric values. Add a name here only when its values are closed. */
     val ALLOWED_FIELDS: Set<String> = setOf(
-        "engine", "phase", "outcome", "reason", "state", "status", "kind", "surface", "screen",
-        "attempt", "count", "ms", "duration_ms", "bytes", "http", "bucket", "source",
-        "used_mb", "max_mb", "native_mb", "pss_mb", "total_mb", "threads", "error_type", "error_class",
+        "engine", "phase", "outcome", "kind", "surface", "source", "lane", "reason", "state", "level", "screen",
+        "from", "to", "bucket", "error_type", "error_class", "code", "container", "category",
+        "attempt", "count", "total", "programmes", "channels", "channels_covered", "duration_ms", "position_ms",
+        "java_mb", "java_max_mb", "native_mb", "pss_mb", "ram_free_mb", "ram_total_mb", "trim_level",
     )
 
-    private val codeLike = Regex("""^[A-Za-z0-9_.:\-]{1,48}$""")
-    private val urlish = Regex("""(?i)(://|www\.|\.(com|net|org|tv|io|xyz|me|cc|co)\b|@)""")
+    private val codeValue = Regex("""^[a-z0-9][a-z0-9_.:\-]{0,47}$""")
+    private val urlLike = Regex("""(?i)([a-z][a-z0-9+.\-]*://|www\.|\b[a-z0-9\-]+(\.[a-z0-9\-]+)+\.[a-z]{2,}\b)""")
 
-    fun cleanCode(code: String): String? =
-        code.takeIf { codeLike.matches(it) && !urlish.containsMatchIn(it) }
-
-    /** Null when the entry's code itself is not code-like; otherwise the entry with only safe fields. */
+    /** Returns the entry with only allowed fields/values, or null when its own code is not a clean code. */
     fun sanitize(entry: DiagEntry): DiagEntry? {
-        val code = cleanCode(entry.code) ?: return null
-        val fields = buildMap<String, Any> {
-            for ((key, value) in entry.fields) {
-                if (key !in ALLOWED_FIELDS) continue
-                when (value) {
-                    is Boolean, is Int, is Long, is Short, is Byte -> put(key, value)
-                    is Double -> if (value.isFinite()) put(key, value)
-                    is Float -> if (value.isFinite()) put(key, value)
-                    is Enum<*> -> cleanCode(value.name)?.let { put(key, it) }
-                    is String -> cleanCode(value)?.let { put(key, it) }
-                }
-            }
+        if (!isCode(entry.code)) return null
+        val fields = LinkedHashMap<String, Any>()
+        for ((k, v) in entry.fields) {
+            if (fields.size >= MAX_FIELDS) break
+            if (k !in ALLOWED_FIELDS) continue
+            val clean = cleanValue(v) ?: continue
+            fields[k] = clean
         }
-        return entry.copy(code = code, fields = fields)
+        return entry.copy(fields = fields)
     }
 
-    fun toJson(entry: DiagEntry): JsonObject = JsonObject(
-        buildMap {
-            put("t", JsonPrimitive(entry.atMs))
-            put("a", JsonPrimitive(entry.area.name.lowercase()))
-            put("c", JsonPrimitive(entry.code))
-            for ((k, v) in entry.fields) put(k, primitive(v))
-        },
+    private fun isCode(s: String) = codeValue.matches(s) && !urlLike.containsMatchIn(s)
+
+    private fun cleanValue(v: Any): Any? = when (v) {
+        is Int, is Long, is Boolean -> v
+        is Double -> if (v.isNaN() || v.isInfinite()) null else v
+        is Float -> if (v.isNaN() || v.isInfinite()) null else v.toDouble()
+        is Enum<*> -> v.name.lowercase().takeIf(::isCode)
+        is String -> v.lowercase().takeIf { it.length <= MAX_STRING && isCode(it) }
+        else -> null
+    }
+
+    private val urlRegex = Regex("""(?i)\b[a-z][a-z0-9+.\-]*://[^\s"'<>]+""")
+    private val dottedToken = Regex("""(?i)\b[a-z0-9_\-]+(?:\.[a-z0-9_\-]+)+(?::\d+)?\b""")
+    private val packagePrefixes = listOf(
+        "com.", "org.", "java.", "javax.", "kotlin.", "kotlinx.", "android.", "androidx.", "okhttp3.", "okio.",
+        "io.", "dalvik.", "libcore.", "sun.", "jdk.", "platform.", "kfun:", "coil3.", "app.cash.",
     )
 
-    private fun primitive(v: Any): JsonElement = when (v) {
+    /**
+     * Free text (an exception message, a stack line) loses anything URL- or host-shaped before it is stored or
+     * sent. Dotted class names survive (they start with a known package root or have a capitalised segment);
+     * `example.com` and `10.0.0.5:8080` do not.
+     */
+    fun scrubText(text: String, maxLength: Int): String {
+        val noUrls = urlRegex.replace(text, "[url]")
+        val noHosts = dottedToken.replace(noUrls) { m ->
+            val token = m.value
+            val classLike = packagePrefixes.any { token.startsWith(it, ignoreCase = false) } ||
+                token.split('.').any { it.firstOrNull()?.isUpperCase() == true } && !token.contains(':')
+            if (classLike) token else "[host]"
+        }
+        return noHosts.take(maxLength)
+    }
+
+    /**
+     * Serializes the newest entries that fit: at most [MAX_ENTRIES] and [MAX_BYTES]. Each entry is
+     * `[ageMs, area, code, {fields}]`, newest last, so the line reads top to bottom as it happened.
+     */
+    fun serialize(entries: List<DiagEntry>, nowMs: Long, maxEntries: Int = MAX_ENTRIES, maxBytes: Int = MAX_BYTES): String {
+        val picked = ArrayList<JsonElement>()
+        var size = 2
+        for (entry in entries.asReversed()) {
+            if (picked.size >= maxEntries) break
+            val clean = sanitize(entry) ?: continue
+            val json = JsonArray(
+                listOf(
+                    JsonPrimitive((nowMs - clean.atMs).coerceAtLeast(0L)),
+                    JsonPrimitive(clean.area.name.lowercase()),
+                    JsonPrimitive(clean.code),
+                    JsonObject(clean.fields.mapValues { toJson(it.value) }),
+                ),
+            )
+            val cost = json.toString().length + 1
+            if (size + cost > maxBytes) break
+            size += cost
+            picked.add(json)
+        }
+        return JsonArray(picked.asReversed()).toString()
+    }
+
+    private fun toJson(v: Any): JsonElement = when (v) {
         is Boolean -> JsonPrimitive(v)
-        is Number -> JsonPrimitive(v)
-        else -> JsonPrimitive(v.toString())
-    }
-
-    /** The last [maxEntries] entries as one JSON array string, oldest dropped until it fits [maxBytes]. */
-    fun trailJson(entries: List<DiagEntry>, maxEntries: Int = MAX_ENTRIES, maxBytes: Int = MAX_BYTES): String {
-        var tail = entries.mapNotNull(::sanitize).takeLast(maxEntries.coerceAtMost(MAX_ENTRIES))
-        var json = JsonArray(tail.map(::toJson)).toString()
-        while (json.length > maxBytes && tail.isNotEmpty()) {
-            tail = tail.drop(maxOf(1, tail.size / 10))
-            json = JsonArray(tail.map(::toJson)).toString()
-        }
-        return json
-    }
-
-    fun fromJson(element: JsonElement): DiagEntry? {
-        val obj = element as? JsonObject ?: return null
-        val at = (obj["t"] as? JsonPrimitive)?.content?.toLongOrNull() ?: return null
-        val areaName = (obj["a"] as? JsonPrimitive)?.content ?: return null
-        val area = com.nuvio.app.core.telemetry.api.DiagArea.entries.firstOrNull { it.name.equals(areaName, true) } ?: return null
-        val code = (obj["c"] as? JsonPrimitive)?.content ?: return null
-        val fields = buildMap<String, Any> {
-            for ((k, v) in obj) {
-                if (k == "t" || k == "a" || k == "c" || v is JsonNull) continue
-                val p = v as? JsonPrimitive ?: continue
-                put(k, p.content.toLongOrNull() ?: p.content.toDoubleOrNull() ?: p.content.toBooleanStrictOrNull() ?: p.content)
-            }
-        }
-        return sanitize(DiagEntry(at, area, code, fields))
+        is Int -> JsonPrimitive(v)
+        is Long -> JsonPrimitive(v)
+        is Double -> JsonPrimitive(v)
+        is String -> JsonPrimitive(v)
+        else -> JsonNull
     }
 }

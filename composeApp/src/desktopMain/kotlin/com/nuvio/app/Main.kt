@@ -62,7 +62,7 @@ fun main(args: Array<String>) {
         runCatching { NativePlayerBridge.initGtkEarly() }
     }
     // Telemetry v2: first of all, so the uncaught-exception handler covers every later crash.
-    DesktopTelemetry.install()
+    com.nuvio.app.core.telemetry.internal.DesktopTelemetry.start()
     // Feature-contribution bootstrap (once per process — see FeatureWiring.kt).
     registerFeatureContributions()
     // Resolve the app-wide memory tier once (desktop is always HIGH — bounded by -Xmx1g and the

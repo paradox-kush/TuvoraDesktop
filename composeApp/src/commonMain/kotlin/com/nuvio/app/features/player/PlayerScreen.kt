@@ -49,10 +49,6 @@ internal fun PlayerScreen(
     sourceFilename: String? = null,
     stream: com.nuvio.app.features.streams.StreamItem? = null,
 ) {
-    // Memory trend for reports and crashes; lives exactly as long as this player screen.
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        com.nuvio.app.core.telemetry.api.TelemetryAccess.sampleMemoryWhileActive()
-    }
     PlayerScreenContent(
         PlayerScreenArgs(
             profileId = profileId,

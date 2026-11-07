@@ -1,41 +1,59 @@
 package com.nuvio.app.core.telemetry.internal
 
-/** What happens to an analytics event: sent now, kept in the local log only, or counted for `session_health`. */
+/** What happens to a routine event. Decided by [TelemetrySendPolicy], applied by the service. */
 internal enum class SendDecision { SEND, RECORD_ONLY, COUNT }
 
+/**
+ * Error-only sending (design §3): success-path steps stay local or become counts in `session_health`;
+ * anything that signals a problem is sent now. Pure, so the cuts are testable without a network.
+ * Unknown events default to SEND: a new event is never silently swallowed.
+ */
 internal object TelemetrySendPolicy {
-    private val recordOnlyEvents = setOf(
-        "clean_playback_diagnostic", "\$screen", "\$rageclick", "\$autocapture",
-    )
-    private val countedWhenOk = setOf("iptv_index_build", "epg_resolve", "epg_ingest", "epg_mapping", "iptv_load")
-    private val countedAlways = setOf("playback_started")
-    private val okOutcomes = setOf("ok", "loaded", "empty", "success", "succeeded")
+    const val SCREEN_EVENT = "\$screen"
 
-    /** Exit reasons that are an abnormal end the user could feel, sent individually. */
+    private val countedAlways = setOf("playback_started", "iptv_index_build")
+    private val countedUnlessFailed = setOf("iptv_load", "epg_ingest", "epg_resolve", "epg_mapping")
+    private val failureOutcomes = setOf("failed", "error", "timeout", "unavailable", "fail", "failure")
+
+    /** Exit reasons worth a single event each; the rest (cached/background kills) become a count. */
+    private const val USER_VISIBLE_IMPORTANCE_MAX = 270
+
     private val individualExitReasons = setOf(
-        "crash", "native_crash", "anr", "unexpected_process_exit", "initialization_failure",
-        "signaled", "dependent_package_died", "user_requested", "foreground_kill",
+        "crash", "native_crash", "anr", "initialization_failure", "user_requested_crash",
     )
 
     fun decide(event: String, props: Map<String, Any>): SendDecision = when {
-        event in recordOnlyEvents -> SendDecision.RECORD_ONLY
+        event == SCREEN_EVENT -> SendDecision.RECORD_ONLY
         event in countedAlways -> SendDecision.COUNT
-        event in countedWhenOk ->
-            if (props["outcome"]?.toString()?.lowercase() in okOutcomes) SendDecision.COUNT else SendDecision.SEND
-        event == "app_exit" -> {
-            val reason = props["reason"]?.toString()?.lowercase()
-            val cachedKill = props["importance"]?.toString()?.lowercase() in setOf("cached", "background")
-            if (reason != null && reason in individualExitReasons && !cachedKill) SendDecision.SEND
-            else if (cachedKill || reason == "low_memory") SendDecision.COUNT
-            else SendDecision.SEND
-        }
+        event in countedUnlessFailed -> if (isFailure(props)) SendDecision.SEND else SendDecision.COUNT
+        event == "app_exit" -> decideExit(props)
         else -> SendDecision.SEND
     }
 
-    /** Key under which a counted event is tallied in `session_health`. */
-    fun healthKey(event: String, props: Map<String, Any>): String {
-        val outcome = props["outcome"]?.toString()?.let(DiagTrailPolicy::cleanCode)
-        val surface = (props["surface"] ?: props["source"])?.toString()?.let(DiagTrailPolicy::cleanCode)
-        return listOfNotNull(event, surface, outcome).joinToString(".")
+    private val errorMarkers = listOf("fail", "freeze", "error", "crash", "timeout", "anr", "exception", "gave_up", "warning")
+
+    /** Error events carry the recorder's last entries (`diag_trail`); routine SEND events do not. */
+    fun attachesTrail(event: String, props: Map<String, Any>): Boolean =
+        errorMarkers.any { it in event.lowercase() } || isFailure(props)
+
+    fun isFailure(props: Map<String, Any>): Boolean {
+        val outcome = (props["outcome"] as? String)?.lowercase()
+        if (outcome != null) return outcome in failureOutcomes
+        // epg_resolve has no outcome: a non-zero `unavailable` is the failure signal.
+        return (props["unavailable"] as? Int ?: 0) > 0
+    }
+
+    private fun decideExit(props: Map<String, Any>): SendDecision {
+        val reason = (props["reason"] as? String)?.lowercase() ?: (props["exit_reason"] as? String)?.lowercase()
+        if (reason == null) return SendDecision.SEND
+        if (reason in individualExitReasons) return SendDecision.SEND
+        // Android passes the raw ActivityManager importance (<= 270 is user-visible); other hosts pass a name.
+        val raw = props["importance"]
+        val foreground = when (raw) {
+            is Int -> raw in 1..USER_VISIBLE_IMPORTANCE_MAX
+            is String -> raw.lowercase().let { it.contains("foreground") || it.contains("perceptible") || it.contains("visible") }
+            else -> false
+        }
+        return if (foreground) SendDecision.SEND else SendDecision.COUNT
     }
 }

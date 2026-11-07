@@ -1,12 +1,9 @@
 package com.nuvio.app
 
 import com.nuvio.app.core.build.AppVersionConfig
-import com.nuvio.app.core.analytics.PostHogPrivacy
+import com.nuvio.app.core.telemetry.api.TelemetryAccess
+import com.nuvio.app.core.telemetry.internal.DesktopTelemetry
 import com.nuvio.app.features.settings.SentrySettingsRepository
-import com.posthog.PostHog
-import com.posthog.PostHogBeforeSend
-import com.posthog.PostHogConfig
-import com.posthog.logs.PostHogBeforeSendLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,8 +22,6 @@ import kotlin.io.path.exists
  * stream URLs, provider hosts, and account values are deliberately excluded.
  */
 internal object DesktopReliabilityReporter {
-    private const val PROJECT_TOKEN = "phc_o824qv3fcxKW9NvF4K6mYKX3rScK5CBQzrSx4RQ5b6ye"
-    private const val HOST = "https://us.i.posthog.com"
 
     @Volatile
     private var started = false
@@ -39,68 +34,28 @@ internal object DesktopReliabilityReporter {
             SentrySettingsRepository.ensureLoaded()
             val crashReportsEnabled = SentrySettingsRepository.enabled.value
             val version = AppVersionConfig.DESKTOP_VERSION_NAME.ifBlank { "dev" }
-            val config = PostHogConfig(apiKey = PROJECT_TOKEN, host = HOST).apply {
-                errorTrackingConfig.autoCapture = true
-                optOut = !crashReportsEnabled
-                sendFeatureFlagEvent = false
-                preloadFeatureFlags = false
-                surveys = false
-                sessionReplay = false
-                tracingHeaders = emptyList()
-                logs.addBeforeSend(PostHogBeforeSendLog { null })
-                addBeforeSend(PostHogBeforeSend { event ->
-                    if (PostHogPrivacy.shouldDropEvent(event.event)) null
-                    else event.copy(
-                        properties = PostHogPrivacy.sanitize(event.properties.orEmpty()).toMutableMap(),
-                    )
-                })
-                flushIntervalSeconds = 10
-                releaseIdentifier = version
-            }
-            PostHog.setup(config)
-            // Lets shared code capture without depending on a platform-specific SDK.
-            // Telemetry v2: the send policy decides per event class — send now, keep in the local
-            // flight recorder, or count into `session_health`.
-            val telemetry = DesktopTelemetry.telemetryPort
-            com.nuvio.app.core.analytics.AnalyticsSink.register { event, properties ->
-                if (telemetry == null || telemetry.route(event, properties)) {
-                    PostHog.capture(event, properties = properties)
-                }
-            }
-            if (crashReportsEnabled) PostHog.optIn() else PostHog.optOut()
-            PostHog.register(PostHogPrivacy.GEOIP_DISABLE_PROPERTY, true)
-            PostHog.register("\$app_name", "Tuvora Desktop")
-            PostHog.register("\$app_version", version)
-            PostHog.register("\$app_namespace", "com.tuvora.desktop")
-            PostHog.register("\$device_type", "Desktop")
-            PostHog.register("\$os", System.getProperty("os.name").orEmpty().take(64))
-            telemetry?.let { t ->
-                // Super properties: every event, crash and report carries the support code and hardware.
-                PostHog.register("support_code", t.supportCode)
-                DesktopTelemetry.hardwareProfile().forEach { (k, v) -> PostHog.register(k, v) }
-            }
+            // PostHog setup, super properties (support code, hardware) and the crash-handler re-wrap
+            // live in core/telemetry/internal; routine events go through TelemetryPort.emit.
+            DesktopTelemetry.configurePostHog(crashReportsEnabled, version)
 
             val processExitTracker = DesktopProcessExitTracker.start(version)
-            // Last run's Java/Kotlin crash (written synchronously by the uncaught-exception handler).
-            DesktopTelemetry.sendPendingCrashAsync()
 
             Runtime.getRuntime().addShutdownHook(
                 Thread(
                     {
                         processExitTracker.markCleanExit()
-                        DesktopTelemetry.shutdown()
-                        runCatching { PostHog.flush() }
-                        runCatching { PostHog.close() }
+                        runCatching { TelemetryAccess.current().onBackground() }
+                        DesktopTelemetry.flushAndClose()
                     },
                     "PostHogShutdown",
                 )
             )
             started = true
             consentScope.launch {
-                SentrySettingsRepository.enabled.collect { enabled ->
-                    if (enabled) PostHog.optIn() else PostHog.optOut()
-                }
+                SentrySettingsRepository.enabled.collect { enabled -> DesktopTelemetry.setOptIn(enabled) }
             }
+            // Last run's Java/Kotlin crash record goes out once, off Main, with a deadline.
+            consentScope.launch { TelemetryAccess.current().sendPendingCrash() }
         }
     }
 }
@@ -164,16 +119,18 @@ private class DesktopProcessExitTracker private constructor(
             val startedAt = properties.getProperty("started_at_ms")?.toLongOrNull()
             val props = buildMap<String, Any> {
                 put("reason", "unexpected_process_exit")
+                // An unexpected desktop exit is user-visible: the shared send policy would otherwise count it.
+                put("importance", "foreground")
                 put("diagnostic_source", "desktop_run_marker")
                 put("failed_app_version", failedVersion)
                 startedAt?.let { put("failed_run_started_at_ms", it) }
             }
-            val trail = DesktopTelemetry.previousRunTrailJson()
+            val trail = TelemetryAccess.current().previousSessionTrail()
             val exitProps = if (trail != null) props + ("diag_trail" to trail) else props
-            PostHog.capture("app_exit", properties = exitProps)
-            PostHog.captureException(
-                throwable = DesktopUnexpectedExitException(),
-                properties = props + mapOf(
+            TelemetryAccess.current().emit("app_exit", exitProps)
+            TelemetryAccess.current().reportException(
+                DesktopUnexpectedExitException(),
+                props + mapOf(
                     "\$exception_fingerprint" to "desktop_process_exit:unexpected",
                     "\$exception_level" to "fatal",
                     "synthetic_process_exit" to true,

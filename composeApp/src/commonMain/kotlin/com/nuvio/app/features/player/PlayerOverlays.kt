@@ -46,12 +46,16 @@ import androidx.compose.ui.unit.sp
 import com.nuvio.app.core.ui.NuvioAsyncImage as AsyncImage
 import com.nuvio.app.core.ui.NuvioBackButton
 import com.nuvio.app.core.ui.nuvioTypeScale
+import com.nuvio.app.core.telemetry.api.ReportCategoryInference
+import com.nuvio.app.core.telemetry.api.ReportContext
+import com.nuvio.app.core.telemetry.api.ReportSurface
+import com.nuvio.app.core.telemetry.ui.rememberReportSender
+import nuvio.composeapp.generated.resources.report_send
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.compose_player_episode_code_full
 import nuvio.composeapp.generated.resources.compose_player_go_back
 import nuvio.composeapp.generated.resources.compose_player_playback_error
 import nuvio.composeapp.generated.resources.compose_player_retry
-import nuvio.composeapp.generated.resources.report_send
 import nuvio.composeapp.generated.resources.compose_player_youre_watching
 import org.jetbrains.compose.resources.StringResource
 import org.jetbrains.compose.resources.stringResource
@@ -287,7 +291,10 @@ internal fun ErrorModal(
     message: String,
     onDismiss: () -> Unit,
     onRetry: (() -> Unit)? = null,
+    failureCode: String? = null,
+    engine: String? = null,
 ) {
+    val sender = rememberReportSender()
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -335,18 +342,19 @@ internal fun ErrorModal(
                     )
                 }
             }
-            val reportSender = com.nuvio.app.core.telemetry.ui.rememberReportSender()
+            // One press sends; the category is inferred from the failure. Secondary to Retry (quieter surface).
             Surface(
                 modifier = Modifier
                     .padding(top = 4.dp)
                     .widthIn(min = 180.dp, max = 260.dp)
-                    .clickable(enabled = !reportSender.sending) {
-                        reportSender.send(
-                            com.nuvio.app.core.telemetry.api.ReportCategory.WONT_PLAY,
-                            com.nuvio.app.core.telemetry.api.ReportSurface.VOD,
+                    .clickable(enabled = !sender.sending) {
+                        sender.send(
+                            ReportCategoryInference.fromFailureCode(failureCode),
+                            ReportSurface.VOD,
+                            ReportContext(failureCode = failureCode, engine = engine),
                         )
                     },
-                color = MaterialTheme.colorScheme.surfaceVariant,
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
                 shape = RoundedCornerShape(12.dp),
             ) {
                 Text(
@@ -355,15 +363,7 @@ internal fun ErrorModal(
                         .fillMaxWidth()
                         .padding(vertical = 12.dp),
                     style = MaterialTheme.nuvioTypeScale.bodyLg,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center,
-                )
-            }
-            com.nuvio.app.core.telemetry.ui.reportStatusText(reportSender.status)?.let { status ->
-                Text(
-                    text = status,
-                    style = MaterialTheme.nuvioTypeScale.bodyLg.copy(lineHeight = 24.sp),
-                    color = Color.White.copy(alpha = 0.72f),
+                    color = Color.White.copy(alpha = 0.85f),
                     textAlign = TextAlign.Center,
                 )
             }

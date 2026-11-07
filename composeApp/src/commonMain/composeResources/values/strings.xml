@@ -2958,19 +2958,4 @@
     <string name="calendar_game_postponed">Postponed</string>
     <string name="calendar_game_watch_now">Watch now</string>
     <string name="calendar_game_versus">%1$s v %2$s</string>
-    <string name="support_code_title">Support code</string>
-    <string name="support_code_hint">Tell us this code when you report a problem.</string>
-    <string name="report_send">Send report</string>
-    <string name="report_sending">Sending report…</string>
-    <string name="report_sent">Report sent. Your support code: %1$s</string>
-    <string name="report_consent_off">Turn on Crash &amp; usage reports to send this.</string>
-    <string name="report_rate_limited">Please wait a moment before sending another report.</string>
-    <string name="report_failed">Couldn\'t send the report. Please try again later.</string>
-    <string name="report_pick_title">Send a report</string>
-    <string name="report_pick_description">Pick what went wrong. We receive recent app activity and your support code, never your playlists, links or names.</string>
-    <string name="report_category_wont_play">Won\'t play</string>
-    <string name="report_category_black_screen">Black screen</string>
-    <string name="report_category_freezes">Freezes</string>
-    <string name="report_category_app_closed">App closed</string>
-    <string name="report_category_other">Other</string>
 </resources>

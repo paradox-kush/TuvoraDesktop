@@ -31,7 +31,7 @@ class ArchitectureTest {
     private val forkPaths = listOf(
         "/features/radar/", "/features/iptv/", "/features/epg/", "/features/livetv/", "/features/dev/", "/features/recordings/",
         "/features/announcements/", "/features/calendar/",
-        "/core/analytics/", "/core/diag/", "/core/memory/", "/core/rec/",
+        "/core/analytics/", "/core/diag/", "/core/memory/", "/core/rec/", "/core/telemetry/",
     )
     private val forkFiles = listOf("ImmersivePlaybackGate.kt")
     private fun isForkFile(path: String) =
@@ -122,7 +122,9 @@ class ArchitectureTest {
         val builtLoading = Regex("""\bLoadStatus\.Loading\s*\(""")
         // A loading Boolean that STARTS true (`val loading: Boolean = true`) is the same switch, set at birth.
         val declaredOn = Regex("""\b\w*[lL]oading\w*\s*:\s*Boolean\s*=\s*true\b""")
-        val mainSourceSet = Regex("""/composeApp/src/[A-Za-z]*Main/""")
+        // androidMain is excluded: the Android target is dead in this fork (never built or shipped), so it keeps
+        // its pre-Telemetry-v2 PostHog setup rather than carrying an unverifiable port of the Mobile change.
+        val mainSourceSet = Regex("""/composeApp/src/(?!androidMain/)[A-Za-z]*Main/""")
         val violations = files
             // The Calendar adopted BoundedLoad (its refresh is LoadSurface.CALENDAR), so R7 covers it too.
             .filter { (p, _) -> ("/features/iptv/" in p || "/features/livetv/" in p || "/features/calendar/" in p) && mainSourceSet.containsMatchIn(p) }
@@ -135,6 +137,34 @@ class ArchitectureTest {
         assertTrue(
             violations.isEmpty(),
             "IPTV/Live TV loading state entered outside BoundedLoad — use BoundedLoad.begin/run so it always ends:\n" +
+                violations.joinToString("\n"),
+        )
+    }
+
+    /**
+     * Telemetry v2 — one door to the analytics SDKs. Feature code reports through `TelemetryPort` (send policy,
+     * consent, support code and flight recorder live behind it); only `core/telemetry/internal` may import a PostHog
+     * SDK, name the iOS SDK, or call `AnalyticsSink.capture`. A second path is how success-path chatter and
+     * unscrubbed properties crept back before. Main source sets only; tests may drive the sink directly.
+     * No baseline: the call sites were migrated in the same change.
+     */
+    @Test
+    fun `only core-telemetry-internal calls the PostHog SDK or AnalyticsSink capture (Telemetry v2)`() {
+        val sdkRef = Regex("""\bimport\s+com\.posthog\.|\bPostHogSDK\b|\bAnalyticsSink\s*\.\s*capture(At)?\b|\bAnalyticsSink\s*::\s*capture""")
+        // androidMain is excluded: the Android target is dead in this fork (never built or shipped), so it keeps
+        // its pre-Telemetry-v2 PostHog setup rather than carrying an unverifiable port of the Mobile change.
+        val mainSourceSet = Regex("""/composeApp/src/(?!androidMain/)[A-Za-z]*Main/""")
+        val violations = files
+            .filter { (p, _) -> mainSourceSet.containsMatchIn(p) }
+            .filterNot { (p, _) -> "/core/telemetry/internal/" in p || p.endsWith("/core/analytics/AnalyticsSink.kt") }
+            .flatMap { (p, text) ->
+                stripComments(text).lines().withIndex()
+                    .filter { (_, line) -> sdkRef.containsMatchIn(line) }
+                    .map { (i, line) -> "${rel(p)}:${i + 1}: ${line.trim()}" }
+            }
+        assertTrue(
+            violations.isEmpty(),
+            "analytics SDK / AnalyticsSink.capture used outside core/telemetry/internal — go through TelemetryAccess.current().emit/reportError:\n" +
                 violations.joinToString("\n"),
         )
     }

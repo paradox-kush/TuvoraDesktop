@@ -1,22 +1,25 @@
 package com.nuvio.app.core.telemetry.internal
 
-/** One user report per [windowMs]. Plain state: the owner serialises access (a Mutex in the port). */
-internal class ReportRateLimit(private val windowMs: Long = WINDOW_MS) {
+/** One "Send report" per [minIntervalMs] (2 min). Only a successful acquire starts the window. */
+internal class ReportRateLimit(private val minIntervalMs: Long = 120_000L) {
+    private val lock = TelemetryLock()
     private var lastAtMs: Long? = null
 
-    /** Seconds to wait, or null when a report may go now. */
-    fun retryInSec(nowMs: Long): Int? {
-        val last = lastAtMs ?: return null
-        val remaining = windowMs - (nowMs - last)
-        if (remaining <= 0 || remaining > windowMs) return null
-        return ((remaining + 999) / 1000).toInt()
+    /** Returns 0 when a report may go now (and starts the window), else the milliseconds left to wait. */
+    fun tryAcquire(nowMs: Long): Long = lock.withLock {
+        val last = lastAtMs
+        if (last != null && nowMs >= last && nowMs - last < minIntervalMs) {
+            minIntervalMs - (nowMs - last)
+        } else {
+            lastAtMs = nowMs
+            0L
+        }
     }
 
-    fun markSent(nowMs: Long) {
-        lastAtMs = nowMs
-    }
+    /** A report that failed to send must not burn the window. */
+    fun release() = lock.withLock { lastAtMs = null }
 
     companion object {
-        const val WINDOW_MS = 120_000L
+        fun secondsLeft(remainingMs: Long): Int = ((remainingMs + 999L) / 1000L).toInt().coerceAtLeast(1)
     }
 }
