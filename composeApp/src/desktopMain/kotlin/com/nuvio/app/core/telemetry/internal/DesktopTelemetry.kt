@@ -189,6 +189,10 @@ internal class DesktopTelemetryHost(private val gpu: () -> String?) : TelemetryH
     override val appVersion: String = AppVersionConfig.DESKTOP_VERSION_NAME.ifBlank { "dev" }
     override val store: TelemetryFileStore = DesktopTelemetryFileStore(DesktopStorage.rootDir.resolve("telemetry"))
 
+    // The JVM SDK's queue is in memory: after flush() a quick quit can still lose the event, so the service keeps
+    // sending.json and re-sends once more after the delivery-confirm window.
+    override val deliveryDurable: Boolean = false
+
     override fun nowMs(): Long = System.currentTimeMillis()
     override fun randomBelow(bound: Int): Int = random.nextInt(bound)
 
