@@ -13,10 +13,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.build.AppVersionPolicy
+import com.nuvio.app.core.telemetry.api.TelemetryAccess
+import com.nuvio.app.core.telemetry.api.formatSupportCode
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.compose_about_based_on_version_format
 import nuvio.composeapp.generated.resources.compose_about_made_with
 import nuvio.composeapp.generated.resources.compose_about_version_format
+import nuvio.composeapp.generated.resources.support_code_hint
+import nuvio.composeapp.generated.resources.support_code_title
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
@@ -55,6 +59,24 @@ internal fun SettingsAttribution(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
+        val supportCode = TelemetryAccess.port.supportCode
+        if (supportCode.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(if (isTablet) 10.dp else 8.dp))
+            Text(
+                text = stringResource(Res.string.support_code_title) + ": " + formatSupportCode(supportCode),
+                modifier = Modifier.fillMaxWidth(),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                text = stringResource(Res.string.support_code_hint),
+                modifier = Modifier.fillMaxWidth(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+        }
         AppVersionPolicy.basedOnVersionName?.let { basedOnVersionName ->
             Text(
                 text = stringResource(

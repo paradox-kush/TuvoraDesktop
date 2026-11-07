@@ -59,8 +59,13 @@ internal object DesktopReliabilityReporter {
             }
             PostHog.setup(config)
             // Lets shared code capture without depending on a platform-specific SDK.
+            // Telemetry v2: the send policy decides per event class — send now, keep in the local
+            // flight recorder, or count into `session_health`.
+            val telemetry = DesktopTelemetry.telemetryPort
             com.nuvio.app.core.analytics.AnalyticsSink.register { event, properties ->
-                PostHog.capture(event, properties = properties)
+                if (telemetry == null || telemetry.route(event, properties)) {
+                    PostHog.capture(event, properties = properties)
+                }
             }
             if (crashReportsEnabled) PostHog.optIn() else PostHog.optOut()
             PostHog.register(PostHogPrivacy.GEOIP_DISABLE_PROPERTY, true)
@@ -69,13 +74,21 @@ internal object DesktopReliabilityReporter {
             PostHog.register("\$app_namespace", "com.tuvora.desktop")
             PostHog.register("\$device_type", "Desktop")
             PostHog.register("\$os", System.getProperty("os.name").orEmpty().take(64))
+            telemetry?.let { t ->
+                // Super properties: every event, crash and report carries the support code and hardware.
+                PostHog.register("support_code", t.supportCode)
+                DesktopTelemetry.hardwareProfile().forEach { (k, v) -> PostHog.register(k, v) }
+            }
 
             val processExitTracker = DesktopProcessExitTracker.start(version)
+            // Last run's Java/Kotlin crash (written synchronously by the uncaught-exception handler).
+            DesktopTelemetry.sendPendingCrashAsync()
 
             Runtime.getRuntime().addShutdownHook(
                 Thread(
                     {
                         processExitTracker.markCleanExit()
+                        DesktopTelemetry.shutdown()
                         runCatching { PostHog.flush() }
                         runCatching { PostHog.close() }
                     },
@@ -155,7 +168,9 @@ private class DesktopProcessExitTracker private constructor(
                 put("failed_app_version", failedVersion)
                 startedAt?.let { put("failed_run_started_at_ms", it) }
             }
-            PostHog.capture("app_exit", properties = props)
+            val trail = DesktopTelemetry.previousRunTrailJson()
+            val exitProps = if (trail != null) props + ("diag_trail" to trail) else props
+            PostHog.capture("app_exit", properties = exitProps)
             PostHog.captureException(
                 throwable = DesktopUnexpectedExitException(),
                 properties = props + mapOf(

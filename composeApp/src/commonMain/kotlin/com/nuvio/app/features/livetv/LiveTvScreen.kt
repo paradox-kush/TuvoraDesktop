@@ -144,6 +144,7 @@ import nuvio.composeapp.generated.resources.compose_livetv_catchup_start_over
 import nuvio.composeapp.generated.resources.compose_livetv_catchup_watch_live
 import nuvio.composeapp.generated.resources.compose_livetv_catchup_watch
 import nuvio.composeapp.generated.resources.compose_livetv_error_tap_retry
+import nuvio.composeapp.generated.resources.report_send
 import nuvio.composeapp.generated.resources.compose_livetv_exit_fullscreen
 import nuvio.composeapp.generated.resources.compose_livetv_fullscreen
 import nuvio.composeapp.generated.resources.compose_livetv_live_badge
@@ -184,6 +185,9 @@ fun LiveTvScreen(
     var currentLogo by remember { mutableStateOf(initialLogo) }
 
     var source by remember { mutableStateOf<LiveChannelSource?>(null) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        com.nuvio.app.core.telemetry.api.TelemetryAccess.sampleMemoryWhileActive()
+    }
     var resolveError by remember { mutableStateOf(false) }
     var playbackError by remember { mutableStateOf<String?>(null) }
     // The reconnect ladder ran out (several reconnects in a row never rendered a frame). Kept apart
@@ -1132,6 +1136,14 @@ fun LiveTvScreen(
                         }
                     },
                     onError = { message ->
+                        if (message != null) {
+                            com.nuvio.app.core.telemetry.api.TelemetryAccess.port.record(
+                                com.nuvio.app.core.telemetry.api.DiagEntry(
+                                    0L, com.nuvio.app.core.telemetry.api.DiagArea.PLAYBACK, "player_error",
+                                    mapOf("surface" to "live", "state" to if (isCatchUp) "catchup" else "live"),
+                                ),
+                            )
+                        }
                         if (message != null && !isCatchUp && startupPolicy.sample(
                                 snapshot.copy(isEnded = true, isPlaying = false), elapsedMs = 0L,
                             )) {
@@ -1654,6 +1666,8 @@ private fun LiveBadge(danger: Color, behindLiveMs: Long? = null, onGoLive: (() -
 
 @Composable
 private fun ErrorPill(danger: Color, onRetry: () -> Unit, message: String? = null) {
+    val reportSender = com.nuvio.app.core.telemetry.ui.rememberReportSender()
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8)) {
     Row(
         modifier = Modifier
             .padding(horizontal = NuvioTokens.Space.s16)
@@ -1671,6 +1685,24 @@ private fun ErrorPill(danger: Color, onRetry: () -> Unit, message: String? = nul
             style = MaterialTheme.typography.bodyMedium,
             color = Color.White,
         )
+    }
+    // Secondary to Retry: one press sends, the category is inferred from the error state.
+    Text(
+        text = com.nuvio.app.core.telemetry.ui.reportStatusText(reportSender.status)
+            ?: stringResource(Res.string.report_send),
+        modifier = Modifier
+            .clip(RoundedCornerShape(NuvioTokens.Radius.md))
+            .background(Color.Black.copy(alpha = 0.45f))
+            .clickable(enabled = !reportSender.sending && reportSender.status == com.nuvio.app.core.telemetry.ui.ReportStatus.Idle) {
+                reportSender.send(
+                    com.nuvio.app.core.telemetry.api.ReportCategory.WONT_PLAY,
+                    com.nuvio.app.core.telemetry.api.ReportSurface.LIVE,
+                )
+            }
+            .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s8),
+        style = MaterialTheme.typography.bodySmall,
+        color = Color.White.copy(alpha = 0.85f),
+    )
     }
 }
 

@@ -61,6 +61,8 @@ fun main(args: Array<String>) {
     if (System.getProperty("os.name", "").lowercase().contains("linux")) {
         runCatching { NativePlayerBridge.initGtkEarly() }
     }
+    // Telemetry v2: first of all, so the uncaught-exception handler covers every later crash.
+    DesktopTelemetry.install()
     // Feature-contribution bootstrap (once per process — see FeatureWiring.kt).
     registerFeatureContributions()
     // Resolve the app-wide memory tier once (desktop is always HIGH — bounded by -Xmx1g and the

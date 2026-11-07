@@ -152,6 +152,7 @@ internal fun LazyListScope.advancedSettingsContent(
                         onCheckedChange = { showSentryDialog = true },
                     )
                 }
+                SendReportSettingsRow(isTablet = isTablet)
                 // Applied immediately, deliberately without the confirmation dialog the Sentry
                 // row uses: interrupting someone who is trying to STOP data collection is
                 // friction pointed the wrong way. setEnabled also rotates the device id, so the
