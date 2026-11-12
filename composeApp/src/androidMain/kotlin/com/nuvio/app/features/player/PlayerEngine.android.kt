@@ -756,6 +756,8 @@ private fun ExoPlayerSurface(
         preferredSubtitleLanguage = playerSettings.preferredSubtitleLanguage,
         onMimeTypeSelected = { selectedExternalSubtitleMimeType = it },
         onSubtitleDelayChanged = { subtitleDelayMs = it },
+        // Android target is not shipped from this repo: fail closed (AutoSyncSourcePolicy).
+        mayProbeSource = false,
     )
 
     fun syncPlayerViewKeepScreenOn() {
@@ -1402,6 +1404,8 @@ private fun LibmpvPlayerSurface(
         sourceHeaders = sanitizedSourceHeaders,
         externalSubtitles = externalSubtitles,
         preferredSubtitleLanguage = preferredSubtitleLanguage,
+        // Android target is not shipped from this repo: fail closed (AutoSyncSourcePolicy).
+        mayProbeSource = false,
     )
     var playerViewRef by remember { mutableStateOf<NuvioLibmpvView?>(null) }
     val nowPlayingController = remember(context, playerViewRef) {

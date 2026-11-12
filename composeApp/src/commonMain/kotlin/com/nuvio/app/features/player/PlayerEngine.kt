@@ -536,6 +536,13 @@ expect fun PlatformPlayerSurface(
      * mints a fresh link. See [LiveLinkReconnectPolicy].
      */
     singleUseLink: Boolean = false,
+    /**
+     * Subtitle AutoSync may read this source's URL itself (HTTP Range requests for the container's
+     * subtitle index): [com.nuvio.app.features.autosync.AutoSyncSourcePolicy.mayProbe] for the playing
+     * item. False (the default) attaches add-on subtitles unchanged and never touches the URL, so an
+     * own-source, live or catch-up link is never spent by a side request.
+     */
+    autoSyncMayProbeSource: Boolean = false,
     useYoutubeChunkedPlayback: Boolean = false,
     modifier: Modifier = Modifier,
     playWhenReady: Boolean = true,

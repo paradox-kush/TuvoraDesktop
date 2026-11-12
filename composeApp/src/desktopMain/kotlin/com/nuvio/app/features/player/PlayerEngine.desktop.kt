@@ -64,6 +64,7 @@ actual fun PlatformPlayerSurface(
     streamType: String?,
     isCatchUpPlayback: Boolean,
     singleUseLink: Boolean,
+    autoSyncMayProbeSource: Boolean,
     useYoutubeChunkedPlayback: Boolean,
     modifier: Modifier,
     playWhenReady: Boolean,
@@ -117,6 +118,7 @@ actual fun PlatformPlayerSurface(
                 .takeIf { it == LiveLinkReconnectPolicy.Mode.SINGLE_USE }
                 ?.let(LiveLinkReconnectPolicy::mpvStreamLavfOptions),
             sourceAvailable = sourceAvailable,
+            autoSyncMayProbeSource = autoSyncMayProbeSource,
             isLiveStream = LivePlaybackRejoinPolicy.rejoinsLiveEdge(streamType, isCatchUpPlayback),
             sourceHeaders = sourceHeaders,
             externalSubtitles = externalSubtitles,
@@ -160,6 +162,8 @@ private fun NativePlayerSurface(
     tlsVerify: Boolean,
     streamLavfOptions: String?,
     sourceAvailable: Boolean,
+    /** [com.nuvio.app.features.autosync.AutoSyncSourcePolicy.mayProbe]: false = AutoSync never reads [sourceUrl]. */
+    autoSyncMayProbeSource: Boolean,
     isLiveStream: Boolean,
     sourceHeaders: Map<String, String>,
     externalSubtitles: List<com.nuvio.app.features.streams.StreamSubtitle>,
@@ -195,7 +199,7 @@ private fun NativePlayerSurface(
             currentNotificationToken = { latestPlayerControlsState.value.notificationToken },
         )
     }
-    val autoSyncCoordinator = remember(sourceUrl, playbackHeaders, autoSyncScope) {
+    val autoSyncCoordinator = remember(sourceUrl, playbackHeaders, autoSyncScope, autoSyncMayProbeSource) {
         AutoSyncMpvCoordinator(
             scope = autoSyncScope,
             sourceUrl = sourceUrl,
@@ -208,6 +212,8 @@ private fun NativePlayerSurface(
             },
             getPreferredLanguage = { PlayerSettingsRepository.uiState.value.preferredSubtitleLanguage },
             platform = autoSyncPlatform,
+            // AutoSyncSourcePolicy: an own-source / live / catch-up link is never range-probed.
+            mayProbeSource = autoSyncMayProbeSource,
         )
     }
     DisposableEffect(autoSyncCoordinator) {

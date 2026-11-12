@@ -57,6 +57,7 @@ actual fun PlatformPlayerSurface(
     // Accepted for signature parity: this repo ships desktop only; the iOS app's single-use handling
     // lives in NuvioMobile (LiveLinkReconnectPolicy via NuvioPlayerLinkReconnectBridge).
     @Suppress("UNUSED_PARAMETER") singleUseLink: Boolean,
+    autoSyncMayProbeSource: Boolean,
     useYoutubeChunkedPlayback: Boolean,
     modifier: Modifier,
     playWhenReady: Boolean,
@@ -322,7 +323,7 @@ actual fun PlatformPlayerSurface(
     val coroutineScope = rememberCoroutineScope()
     val latestExternalSubtitles = rememberUpdatedState(externalSubtitles)
     val sanitizedSourceHeaders = remember(sourceHeaders) { sanitizePlaybackHeaders(sourceHeaders) }
-    val autoSyncCoordinator = remember(sourceUrl, sanitizedSourceHeaders, coroutineScope) {
+    val autoSyncCoordinator = remember(sourceUrl, sanitizedSourceHeaders, coroutineScope, autoSyncMayProbeSource) {
         AutoSyncMpvCoordinator(
             scope = coroutineScope,
             sourceUrl = sourceUrl,
@@ -335,6 +336,8 @@ actual fun PlatformPlayerSurface(
             },
             getPreferredLanguage = { latestPlayerSettings.value.preferredSubtitleLanguage },
             platform = IosAutoSyncMpvPlatform,
+            // AutoSyncSourcePolicy: an own-source / live / catch-up link is never range-probed.
+            mayProbeSource = autoSyncMayProbeSource,
         )
     }
     DisposableEffect(autoSyncCoordinator) {
