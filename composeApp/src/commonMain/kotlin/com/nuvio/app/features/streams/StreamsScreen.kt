@@ -156,7 +156,17 @@ fun StreamsScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val uiState by StreamsRepository.uiState.collectAsStateWithLifecycle()
+    val repositoryState by StreamsRepository.uiState.collectAsStateWithLifecycle()
+    // The repository is a singleton: until this screen's own load has published, its state belongs to the
+    // previous title (or to nothing). That is "still loading", never this title's empty message (B162).
+    val uiState = if (
+        repositoryState.requestToken != StreamsRepository.requestToken(type, videoId, seasonNumber, episodeNumber, manualSelection) &&
+        !repositoryState.hasAnyStreams
+    ) {
+        StreamsUiState(isAnyLoading = true)
+    } else {
+        repositoryState
+    }
     val streamDisplaySettings by remember {
         StreamBadgeSettingsRepository.ensureLoaded()
         StreamBadgeSettingsRepository.uiState
@@ -812,6 +822,16 @@ internal fun StreamList(
     val hasGroups = filteredGroups.isNotEmpty()
     val hasAnyStreams = filteredGroups.any { it.streams.isNotEmpty() }
     val anyLoading = filteredGroups.any { it.isLoading }
+    val failedLanes = remember(uiState.groups, uiState.isAnyLoading) {
+        if (uiState.isAnyLoading) emptyList() else StreamSourcePresentationPolicy.failedLanes(uiState.groups)
+    }
+    val body = StreamSourcePresentationPolicy.body(
+        hasAnyStreams = hasAnyStreams,
+        anyLoading = anyLoading || uiState.isAnyLoading,
+        hasGroups = hasGroups,
+        emptyReason = uiState.emptyStateReason,
+        isForThisRequest = true,
+    )
     val streamSections = remember(filteredGroups) {
         buildStreamSectionRenderModels(filteredGroups)
     }
@@ -860,8 +880,8 @@ internal fun StreamList(
                     }
                 }
             }
-            when {
-                hasGroups && anyLoading && !hasAnyStreams -> {
+            when (body) {
+                StreamsBody.Loading -> {
                     item(
                         key = "streams_loading",
                         contentType = STREAM_CONTENT_TYPE_LOADING,
@@ -870,16 +890,21 @@ internal fun StreamList(
                     }
                 }
 
-                !hasAnyStreams && !uiState.isAnyLoading -> {
+                StreamsBody.Empty -> {
                     item(
                         key = "streams_empty",
                         contentType = STREAM_CONTENT_TYPE_EMPTY,
                     ) {
                         EmptyStateBlock(reason = uiState.emptyStateReason)
                     }
+                    if (failedLanes.isNotEmpty()) {
+                        item(key = "failed_sources", contentType = STREAM_CONTENT_TYPE_EMPTY) {
+                            FailedSourcesNote(failedLanes)
+                        }
+                    }
                 }
 
-                else -> {
+                StreamsBody.Streams -> {
                     streamSections.forEach { section ->
                         streamSection(
                             section = section,
@@ -904,6 +929,11 @@ internal fun StreamList(
                             contentType = STREAM_CONTENT_TYPE_FOOTER_LOADING,
                         ) {
                             FooterLoadingBlock(checkingMoreAddonsText = checkingMoreAddonsText)
+                        }
+                    }
+                    if (failedLanes.isNotEmpty()) {
+                        item(key = "failed_sources", contentType = STREAM_CONTENT_TYPE_FOOTER_LOADING) {
+                            FailedSourcesNote(failedLanes)
                         }
                     }
                     item(
@@ -1605,6 +1635,22 @@ private fun EmptyStateBlock(
             textAlign = TextAlign.Center,
         )
     }
+}
+
+/** B186: a source that failed or timed out is named, next to the results the other sources returned. */
+@Composable
+private fun FailedSourcesNote(
+    failedLanes: List<FailedLane>,
+    modifier: Modifier = Modifier,
+) {
+    Text(
+        text = stringResource(Res.string.streams_failed_sources_note, failedLanes.joinToString(", ") { it.name }),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable
