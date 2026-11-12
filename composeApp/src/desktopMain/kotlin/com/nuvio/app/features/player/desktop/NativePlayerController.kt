@@ -1,6 +1,7 @@
 package com.nuvio.app.features.player.desktop
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.IntSize
 import co.touchlab.kermit.Logger
 import com.nuvio.app.features.player.LivePlaybackStartupPolicy
 import com.nuvio.app.features.player.LiveSeekWindow
@@ -50,6 +51,7 @@ import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -698,6 +700,23 @@ internal class NativePlayerController(
         liveWindowPoll = worker.scheduleWithFixedDelay(::refreshLiveWindow, 0L, LIVE_WINDOW_POLL_MS, TimeUnit.MILLISECONDS)
     }
 
+    /**
+     * Video display size for [snapshot], read on this same worker (never the UI thread: up to four blocking
+     * `mpv_get_property` calls under mpv's core lock) and served from the shadow. The worker is created on demand
+     * for VOD too; [stopLiveWindow] tears it down with the handle.
+     */
+    private val videoSizeShadow = MpvVideoSizeShadow(read = {
+        var size: IntSize? = null
+        withLiveHandle { current ->
+            size = desktopMpvVideoSize { name -> NativePlayerBridge.stringProperty(current, name) }
+        }
+        size
+    })
+
+    private fun cachedVideoSize(): IntSize = videoSizeShadow.current { refresh ->
+        (ensureLiveWorker() ?: throw RejectedExecutionException("player released")).execute(refresh)
+    }
+
     private fun refreshLiveWindow() {
         withLiveHandle { current ->
             val state = NativePlayerBridge.stringProperty(current, "demuxer-cache-state")
@@ -729,6 +748,7 @@ internal class NativePlayerController(
             liveWorker.also { liveWorker = null }
         }
         liveWindowShadow = null
+        videoSizeShadow.reset()
         worker?.shutdownNow()
         if (liveNativeLock.tryLock(LIVE_NATIVE_LOCK_WAIT_MS, TimeUnit.MILLISECONDS)) liveNativeLock.unlock()
     }
@@ -907,7 +927,8 @@ internal class NativePlayerController(
             val videoTicks = NativePlayerBridge.videoFrameTicks(current)
             // Packed 32/32; see NativePlayerBridge.voFrameStats.
             val voFrameStats = NativePlayerBridge.voFrameStats(current)
-            val videoSize = desktopMpvVideoSize { name -> NativePlayerBridge.stringProperty(current, name) }
+            // Cached off the UI thread: no blocking mpv read here (see videoSizeShadow).
+            val videoSize = cachedVideoSize()
             PlayerPlaybackSnapshot(
                 isLoading = isLoading,
                 isPlaying = !NativePlayerBridge.isPaused(current) && !isLoading && !isEnded,
