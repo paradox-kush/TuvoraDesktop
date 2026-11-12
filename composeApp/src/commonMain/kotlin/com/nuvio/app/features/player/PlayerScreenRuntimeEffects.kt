@@ -166,8 +166,7 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         clearChapterSkipState()
         episodeStreamsPanelState = EpisodeStreamsPanelState()
         PlayerStreamsRepository.clearEpisodeStreams()
-        SubtitleRepository.clear()
-        autoFetchedAddonSubtitlesForKey = null
+        resetAddonSubtitlesIfSourceChanged()
         WatchProgressRepository.ensureLoaded()
     }
 
@@ -257,6 +256,9 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
     LaunchedEffect(playerController, subtitleDelayMs) {
         playerController?.setSubtitleDelayMs(subtitleDelayMs)
     }
+
+    BindAudioDelayEffects()
+    BindAudioAmplificationEffects()
 
     LaunchedEffect(selectedAddonSubtitleId, useCustomSubtitles, activeSourceUrl) {
         subtitleAutoSyncState = SubtitleAutoSyncUiState()
