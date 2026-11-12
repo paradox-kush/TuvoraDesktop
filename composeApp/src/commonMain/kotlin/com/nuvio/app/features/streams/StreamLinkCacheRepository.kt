@@ -76,8 +76,9 @@ object StreamLinkCacheRepository {
         // does not: a panel can renumber its whole VOD catalog overnight (observed live —
         // "synced movie index: +6249 -6253"), after which the cached stream id is gone and the
         // panel answers the replayed URL with 401. Stalker links are worse still: single-use.
-        // Re-resolving costs one catalog lookup the matcher performs anyway, so never cache these.
-        if (isIptvAddon(addonId)) {
+        // Re-resolving costs one catalog lookup the matcher performs anyway, so never cache these
+        // (StreamLinkReusePolicy, shared with NuvioMobile's sync-15 link cache).
+        if (!StreamLinkReusePolicy.mayReuse(addonId)) {
             remove(contentKey)
             return
         }
@@ -130,7 +131,7 @@ object StreamLinkCacheRepository {
         }
         // Also drop IPTV entries written by an earlier build, so an upgrade doesn't keep replaying
         // a link whose stream id the provider has since renumbered away.
-        if (isIptvAddon(entry.addonId)) {
+        if (!StreamLinkReusePolicy.mayReuse(entry.addonId)) {
             StreamLinkCacheStorage.removeEntry(hashedKey(contentKey))
             return null
         }
