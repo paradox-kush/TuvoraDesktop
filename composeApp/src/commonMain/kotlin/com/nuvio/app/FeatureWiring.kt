@@ -2,9 +2,9 @@ package com.nuvio.app
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import co.touchlab.kermit.Logger
 import com.nuvio.app.features.common.lifecycle.FeatureRegistry
 import com.nuvio.app.features.common.lifecycle.LocalRevertFailureSink
+import com.nuvio.app.features.common.lifecycle.logRevertFailure
 import com.nuvio.app.core.contracts.LocalIptvCatalog
 import com.nuvio.app.features.iptv.XtreamRepository
 import com.nuvio.app.core.contracts.HomeRecAccess
@@ -51,7 +51,6 @@ import com.nuvio.app.features.calendar.api.CalendarUiSlots
  * later seam adds its registration/provision line here — do NOT invent ports to fill it.
  */
 
-private val revertLog = Logger.withTag("EffectScope")
 
 /**
  * Called ONCE per PROCESS from a genuinely once-per-process entry point:
@@ -99,7 +98,7 @@ fun installFeatures(content: @Composable () -> Unit) {
         "registerFeatureContributions() was not called at app init — see FeatureWiring.kt"
     }
     CompositionLocalProvider(
-        LocalRevertFailureSink provides ::onRevertFailure,
+        LocalRevertFailureSink provides ::logRevertFailure,
         LocalIptvCatalog provides XtreamRepository,   // S3a — stable object, safe in a static local
         LocalRecordings provides RecordingsAccess.current(),
         LocalRecordingsFolder provides RecordingsFolderAccess.current(),
@@ -118,12 +117,4 @@ fun PreviewFeatureWiring(content: @Composable () -> Unit) {
     CompositionLocalProvider(
         LocalRevertFailureSink provides { /* no-op in previews */ },
     ) { content() }
-}
-
-/**
- * Telemetry-at-the-disposal-boundary (design G4 / S9). Phase 0 logs; S9 additionally captures a
- * telemetry event so a failed/late release becomes a measured signal instead of a silent leak.
- */
-private fun onRevertFailure(t: Throwable) {
-    revertLog.w(t) { "revert failed during teardown" }
 }
