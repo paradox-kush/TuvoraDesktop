@@ -140,6 +140,9 @@ actual fun PlatformPlayerSurface(
     sourceUrl: String,
     sourceAudioUrl: String?,
     sourceHeaders: Map<String, String>,
+    // B259: dropped on this repo's Android target (not shipped from NuvioDesktop; NuvioMobile carries the hop-scoped
+    // Media3 path). Dropping is the privacy-safe default: the libmpv lane must never see these.
+    @Suppress("UNUSED_PARAMETER") originBoundHeaders: Map<String, String>,
     sourceResponseHeaders: Map<String, String>,
     externalSubtitles: List<com.nuvio.app.features.streams.StreamSubtitle>,
     streamType: String?,
