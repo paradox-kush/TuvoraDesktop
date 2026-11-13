@@ -132,7 +132,7 @@ object LiveTvData {
      * [forceMint] = this resolve is a RETRY after a playback failure: a Stalker static-cmd verdict
      * would replay the dead URL, so the retry demands a fresh create_link instead.
      * [stalkerProfile] = the live tune's header profile ([com.nuvio.app.features.iptv.stalker.StalkerStreamFallback.profile]);
-     * null = IDENTITY (catch-up passes none, so it keeps the portal identity).
+     * null = no Stalker header set at all (the pre-1.20.3 request); catch-up passes none.
      */
     suspend fun resolveSource(
         contentId: String,
@@ -358,10 +358,9 @@ object LiveTvData {
         if (account.sourceType != com.nuvio.app.features.iptv.SOURCE_TYPE_STALKER) {
             return LiveStreamHeaders(com.nuvio.app.features.iptv.StreamUserAgentPolicy.headersFor(account, dnsHeaders))
         }
-        val stalker = (
-            if (stalkerProfile == null) com.nuvio.app.features.iptv.stalker.StalkerClient.streamHeadersFor(account, resolvedUrl)
-            else com.nuvio.app.features.iptv.stalker.StalkerClient.streamHeadersFor(account, resolvedUrl, stalkerProfile)
-            )
+        // Catch-up (no profile): exactly the pre-1.20.3 request, the DNS headers alone.
+        if (stalkerProfile == null) return LiveStreamHeaders(dnsHeaders)
+        val stalker = com.nuvio.app.features.iptv.stalker.StalkerClient.streamHeadersFor(account, resolvedUrl, stalkerProfile)
             ?: return LiveStreamHeaders(com.nuvio.app.features.iptv.StreamUserAgentPolicy.headersFor(account, dnsHeaders))
         return LiveStreamHeaders.merge(dnsHeaders, stalker)
     }
