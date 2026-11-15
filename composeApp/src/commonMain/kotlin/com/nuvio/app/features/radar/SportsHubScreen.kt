@@ -5,6 +5,10 @@ import com.nuvio.app.core.contracts.SportsReplay
 import co.touchlab.kermit.Logger
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -145,6 +149,10 @@ fun SportsHubScreen(
     var browseCategory by remember { mutableStateOf<RadarCategory?>(null) }
     var browsing by remember { mutableStateOf(false) }
     var sheetFixture by remember { mutableStateOf<RadarFixture?>(null) }
+    // The game screen (live score, stats, Watch). A fixture it cannot describe, or one no source has data for,
+    // falls back to today's channel-matching sheet.
+    var detailFixture by remember { mutableStateOf<RadarFixture?>(null) }
+    val openFixture: (RadarFixture) -> Unit = { fx -> if (fx.toGameRef() != null) detailFixture = fx else sheetFixture = fx }
     // The Calendar's "Watch now": open the same channel-matching sheet for that game once its fixture is held.
     val requestedGameId by com.nuvio.app.core.contracts.SportsMatchRequest.gameId.collectAsStateWithLifecycle()
     LaunchedEffect(requestedGameId, state.fixturesByLeague, state.fixturesByTeam) {
@@ -167,13 +175,13 @@ fun SportsHubScreen(
                     state = state,
                     page = fixturesPage!!,
                     onBack = { fixturesPage = null },
-                    onFixtureClick = { sheetFixture = it },
+                    onFixtureClick = openFixture,
                 )
                 leaguePage != null -> LeagueFixturesPage(
                     state = state,
                     league = leaguePage!!,
                     onBack = { leaguePage = null },
-                    onFixtureClick = { sheetFixture = it },
+                    onFixtureClick = openFixture,
                 )
                 browsing && isWide -> BrowseTwoPane(
                     state = state,
@@ -199,7 +207,37 @@ fun SportsHubScreen(
                     onOpenCategory = { browsing = true; browseCategory = it },
                     onOpenLeague = { leaguePage = it },
                     onOpenFixtures = { title, fixtures -> fixturesPage = SportsFixturesPage(title, fixtures) },
-                    onFixtureClick = { sheetFixture = it },
+                    onFixtureClick = openFixture,
+                )
+            }
+        }
+    }
+
+    detailFixture?.let { fx ->
+        fx.toGameRef()?.let { gameRef ->
+            // Opaque to the pointer: a mouse click or wheel on an empty area must not reach the fixture cards underneath.
+            val overlayFocus = remember { FocusRequester() }
+            LaunchedEffect(Unit) { runCatching { overlayFocus.requestFocus() } }
+            Box(
+                Modifier.fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Final).changes.forEach { it.consume() }
+                            }
+                        }
+                    }
+                    .focusRequester(overlayFocus)
+                    .focusable(),
+            ) {
+                com.nuvio.app.features.sportsdetail.api.GameDetailScreen(
+                    ref = gameRef,
+                    onBack = { detailFixture = null },
+                    onNoData = { detailFixture = null; sheetFixture = fx },
+                    onPlayChannel = onPlayChannel,
+                    onAddPlaylist = onAddPlaylist,
+                    onFindChannels = { sheetFixture = fx },
                 )
             }
         }
