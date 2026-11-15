@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
@@ -34,7 +35,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.nuvio.app.core.ui.NuvioPrimaryButton
-import com.nuvio.app.core.ui.NuvioScreenHeader
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.PlatformBackHandler
 import com.nuvio.app.core.ui.nuvio
@@ -43,6 +43,7 @@ import com.nuvio.app.features.sportsdetail.internal.GameDetailController
 import com.nuvio.app.features.sportsdetail.internal.GameDetailUiPolicy
 import com.nuvio.app.features.sportsdetail.internal.GameDetailUiState
 import com.nuvio.app.features.sportsdetail.internal.ui.BlockContent
+import com.nuvio.app.features.sportsdetail.internal.ui.GameBackButton
 import com.nuvio.app.features.sportsdetail.internal.ui.GameHeader
 import com.nuvio.app.features.sportsdetail.internal.ui.SituationCard
 import com.nuvio.app.features.sportsdetail.internal.ui.StaleChip
@@ -62,6 +63,8 @@ fun GameDetailScreen(
     onAddPlaylist: () -> Unit,
     onFindChannels: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Reports the freshest state of THIS game (ESPN-backed) so lists can stop saying LIVE: (isLive, period like "3rd"). Final -> (false, null). */
+    onFreshState: (live: Boolean, periodLabel: String?) -> Unit = { _, _ -> },
 ) {
     val service = LocalSportsDetail.current
     val watch = LocalGameWatch.current
@@ -90,9 +93,21 @@ fun GameDetailScreen(
     }
     val state = GameDetailUiPolicy.effective(raw, clock)
     LaunchedEffect(state) { if (state is GameDetailUiState.Empty) onNoData() }
+    LaunchedEffect(raw) {
+        (raw as? GameDetailUiState.Loaded)?.detail?.let { d ->
+            when (d.state) {
+                GameState.LIVE -> onFreshState(true, d.live?.periodLabel)
+                GameState.FINAL -> onFreshState(false, null)
+                else -> {}
+            }
+        }
+    }
 
     Column(modifier = modifier.fillMaxSize().background(MaterialTheme.nuvio.colors.background)) {
-        NuvioScreenHeader(title = "", onBack = onBack)
+        // Own top bar: the shared header collapses under iOS native navigation (no back control, content under the island).
+        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = NuvioTokens.Space.s16, top = NuvioTokens.Space.s8, end = NuvioTokens.Space.s16)) {
+            GameBackButton(onClick = onBack)
+        }
         when (val s = state) {
             is GameDetailUiState.Loading, GameDetailUiState.Empty -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(strokeWidth = 2.dp)
@@ -150,7 +165,7 @@ private fun LoadedContent(
                 Spacer(Modifier.height(NuvioTokens.Space.s12))
                 Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s12)) {
                     LazyColumn(Modifier.weight(1f), verticalArrangement = gap) {
-                        item { SituationCard(situation, win, teams?.home?.name.orEmpty(), teams?.away?.name.orEmpty()) }
+                        item { SituationCard(situation, win, teams?.home?.name.orEmpty(), teams?.away?.name.orEmpty(), detail) }
                         item { watchCard() }
                         items(rest.filter(GameDetailUiPolicy::isPrimaryColumn)) { BlockContent(it, detail) }
                     }
@@ -163,7 +178,7 @@ private fun LoadedContent(
             LazyColumn(Modifier.fillMaxSize(), contentPadding = pad, verticalArrangement = gap) {
                 item { GameHeader(detail) }
                 s.staleLabel?.let { item { StaleChip(it) } }
-                item { SituationCard(situation, win, teams?.home?.name.orEmpty(), teams?.away?.name.orEmpty()) }
+                item { SituationCard(situation, win, teams?.home?.name.orEmpty(), teams?.away?.name.orEmpty(), detail) }
                 item { watchCard() }
                 items(rest) { BlockContent(it, detail) }
             }

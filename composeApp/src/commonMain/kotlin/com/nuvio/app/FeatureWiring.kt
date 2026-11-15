@@ -38,6 +38,7 @@ import com.nuvio.app.features.radar.RadarGameWatch
 import com.nuvio.app.features.sportsdetail.api.LocalGameWatch
 import com.nuvio.app.features.sportsdetail.api.LocalSportsDetail
 import com.nuvio.app.features.sportsdetail.api.SportsDetail
+import com.nuvio.app.features.sportsdetail.api.SportsDetailAccess
 
 /**
  * THE one firewall exception (rules doc Rule 1 / R2b): the only non-fork file allowed to name fork
@@ -87,6 +88,8 @@ fun registerFeatureContributions() {
     HomeCalendarSectionAccess.register(CalendarUiSlots.homeSection())
     DetailsCalendarBellAccess.register(CalendarUiSlots.detailsBell())
     CalendarScreenContentAccess.register(CalendarUiSlots.screen())
+    // Game screen: registered at process init so every entry point finds the service, not only those wrapped in installFeatures.
+    SportsDetailAccess.register(sportsDetailService, gameWatch)
     FeatureRegistry.markInitialized()
 }
 
