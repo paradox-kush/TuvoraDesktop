@@ -46,4 +46,16 @@ class DesktopFocusOrderPolicyTest {
         assertEquals(p, DesktopFocusOrderPolicy.clamp(c(0), 0))
         assertEquals(p, DesktopFocusOrderPolicy.clamp(p, 4))
     }
+
+    @Test
+    fun chipArrowTargetMovesWithinRowAndStopsAtEnds() {
+        val k = DesktopFocusOrderPolicy.Key.RIGHT
+        assertEquals(1, DesktopFocusOrderPolicy.chipArrowTarget(0, k, 3))
+        assertEquals(2, DesktopFocusOrderPolicy.chipArrowTarget(1, k, 3))
+        assertEquals(null, DesktopFocusOrderPolicy.chipArrowTarget(2, k, 3))
+        assertEquals(0, DesktopFocusOrderPolicy.chipArrowTarget(1, DesktopFocusOrderPolicy.Key.LEFT, 3))
+        assertEquals(null, DesktopFocusOrderPolicy.chipArrowTarget(0, DesktopFocusOrderPolicy.Key.LEFT, 3))
+        assertEquals(null, DesktopFocusOrderPolicy.chipArrowTarget(1, DesktopFocusOrderPolicy.Key.TAB, 3))
+        assertEquals(null, DesktopFocusOrderPolicy.chipArrowTarget(0, k, 1))
+    }
 }

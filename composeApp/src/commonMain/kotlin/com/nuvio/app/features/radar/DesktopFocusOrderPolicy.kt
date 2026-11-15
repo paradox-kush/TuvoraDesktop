@@ -37,6 +37,12 @@ object DesktopFocusOrderPolicy {
         }
     }
 
+    /** Left/Right within a chip row of [chipCount]: the chip index to focus, or null at the ends / for other keys. */
+    fun chipArrowTarget(index: Int, key: Key, chipCount: Int): Int? {
+        if (key != Key.LEFT && key != Key.RIGHT) return null
+        return (next(Target.Chip(index), key, chipCount) as? Target.Chip)?.index
+    }
+
     /** After the chip list shrinks, keep focus on a chip that still exists, else on PRIMARY. */
     fun clamp(current: Target, chipCount: Int): Target = when {
         current is Target.Chip && chipCount <= 0 -> Target.Primary

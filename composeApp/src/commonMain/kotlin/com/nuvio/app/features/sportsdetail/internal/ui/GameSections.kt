@@ -19,6 +19,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.focus.FocusRequester
+import com.nuvio.app.features.radar.desktopChipKeys
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -67,7 +70,11 @@ internal fun GameTabRow(sections: List<GameSection>, selected: GameSection, onSe
         modifier.fillMaxWidth().background(MaterialTheme.nuvio.colors.background).horizontalScroll(rememberScrollState()).padding(vertical = NuvioTokens.Space.s6),
         horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
     ) {
-        sections.forEach { s -> Chip(GameTabsUi.label(s), selected = s == selected, onClick = { onSelect(s) }) }
+        // Desktop keyboard: Left/Right move between chips (DesktopFocusOrderPolicy); Tab/Enter are Compose defaults.
+        val requesters = remember(sections.size) { List(sections.size) { FocusRequester() } }
+        sections.forEachIndexed { i, s ->
+            Chip(GameTabsUi.label(s), selected = s == selected, onClick = { onSelect(s) }, modifier = Modifier.desktopChipKeys(i, requesters))
+        }
     }
 }
 
@@ -156,9 +163,14 @@ internal fun StandingsCards(block: StandingsTableBlock, modifier: Modifier = Mod
             }
             val cellCount = g.rows.maxOf { it.cells.size }
             val headers = List((cellCount - g.columns.size).coerceAtLeast(0)) { "" } + g.columns
+            androidx.compose.foundation.layout.BoxWithConstraints {
+            // The name column keeps a floor; columns shrink, then the leading ones drop (points/record stay) rather than squeezing names.
+            val fit = StandingsFit.of(maxWidth.value, cellCount)
+            val CELL_W = fit.cellDp.dp
+            Column {
             Row(Modifier.fillMaxWidth()) {
                 Spacer(Modifier.weight(1f))
-                headers.forEach { Text(it, modifier = Modifier.width(CELL_W), textAlign = TextAlign.End, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.nuvio.colors.textMuted) }
+                headers.takeLast(fit.visible).forEach { Text(it, modifier = Modifier.width(CELL_W), textAlign = TextAlign.End, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.nuvio.colors.textMuted) }
             }
             g.rows.forEach { r ->
                 val mod = if (r.isGameTeam) Modifier.background(MaterialTheme.nuvio.colors.surfaceElevated, RoundedCornerShape(NuvioTokens.Space.s6)) else Modifier
@@ -168,14 +180,14 @@ internal fun StandingsCards(block: StandingsTableBlock, modifier: Modifier = Mod
                         style = MaterialTheme.typography.bodySmall, fontWeight = if (r.isGameTeam) FontWeight.Bold else FontWeight.Normal,
                         color = MaterialTheme.nuvio.colors.textPrimary,
                     )
-                    r.cells.forEach { Text(it, modifier = Modifier.width(CELL_W), textAlign = TextAlign.End, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.nuvio.colors.textPrimary) }
+                    r.cells.takeLast(fit.visible).forEach { Text(it, modifier = Modifier.width(CELL_W), textAlign = TextAlign.End, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.nuvio.colors.textPrimary) }
                 }
+            }
+            }
             }
         }
     }
 }
-
-private val CELL_W = 38.dp
 
 /** Leaders with the team's logo on each row (the existing card, restyled). */
 @Composable
@@ -210,7 +222,7 @@ internal fun PlaysCard(block: com.nuvio.app.features.sportsdetail.api.PlaysBlock
             g.items.forEach { item ->
                 // Only the newly arrived row fades in; no list-wide motion.
                 val fresh = newId != null && item.id == newId.id && item.text == newId.text && item.time == newId.time
-                PlayRow(item, detail, palette, Modifier.enterOnce(batch.seq, fresh, reduce))
+                PlayRow(item, detail, palette, Modifier.enterOnce("play-${item.id ?: item.time + item.text}", fresh, reduce))
             }
         }
     }
