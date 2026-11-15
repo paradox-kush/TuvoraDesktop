@@ -6,6 +6,8 @@ import co.touchlab.kermit.Logger
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
@@ -53,6 +55,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -166,10 +169,14 @@ fun SportsHubScreen(
     var leaguePage by remember { mutableStateOf<RadarLeague?>(null) }
     var fixturesPage by remember { mutableStateOf<SportsFixturesPage?>(null) }
 
+    // Desktop: the page behind the game overlay keeps its own focus group, so closing the overlay hands the keyboard
+    // back to the page (to the control that had focus when the overlay opened) instead of leaving it nowhere.
+    val pageFocus = remember { FocusRequester() }
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val tabletTopInset = if (maxWidth >= 768.dp) TABLET_TOP_BAR_INSET else 0.dp
         val isWide = maxWidth >= 768.dp
-        Column(modifier = Modifier.fillMaxSize().statusBarsPadding().padding(top = tabletTopInset)) {
+        Column(modifier = Modifier.fillMaxSize().statusBarsPadding().padding(top = tabletTopInset)
+            .focusRequester(pageFocus).focusRestorer().focusGroup()) {
             when {
                 fixturesPage != null -> SportsFixturesPage(
                     state = state,
@@ -219,6 +226,7 @@ fun SportsHubScreen(
             // Opaque to the pointer: a mouse click or wheel on an empty area must not reach the fixture cards underneath.
             val overlayFocus = remember { FocusRequester() }
             LaunchedEffect(Unit) { runCatching { overlayFocus.requestFocus() } }
+            DisposableEffect(Unit) { onDispose { runCatching { pageFocus.requestFocus() } } }
             Box(
                 Modifier.fillMaxSize()
                     .background(MaterialTheme.colorScheme.background)
