@@ -1,6 +1,7 @@
 package com.nuvio.app.features.iptv.stalker
 
 import com.nuvio.app.features.iptv.XtreamAccount
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -93,5 +94,35 @@ class StalkerLineupStreamTest {
         val list = urls.first { "action=get_ordered_list" in it && "type=vod" in it }
         assertTrue("category=12" in list, list)
         assertTrue("genre=%2A" in list || "genre=*" in list, list)
+    }
+
+    /**
+     * A portal WITHOUT get_all_channels falls back to paging get_ordered_list — on a slow portal
+     * that is minutes of requests. Every page must count as import progress, or the IPTV page's
+     * stall deadline (BoundedLoad) declares a still-importing lineup dead and shows the error.
+     */
+    @Test
+    fun `the paged lineup fallback ticks import progress once per page`() = runBlocking {
+        val noBulkLineup: suspend (String, Map<String, String>) -> String = { url, h ->
+            if ("action=get_all_channels" in url) throw IllegalStateException("not supported")
+            fakePortal(url, h)
+        }
+        StalkerClient.sessionFactory = {
+            StalkerSession(it, noBulkLineup, { u, h, c -> c(noBulkLineup(u, h)) })
+        }
+        val acc = account("dt-paged-progress")
+        val latestTick = java.util.concurrent.atomic.AtomicLong(0L)
+        val watcher = launch(kotlinx.coroutines.Dispatchers.Default) {
+            com.nuvio.app.features.iptv.IptvImportProgress.of(acc.id).collect { latestTick.set(it) }
+        }
+        kotlinx.coroutines.yield()
+        kotlinx.coroutines.delay(50)   // let the watcher subscribe before the import starts
+
+        assertEquals(6, StalkerClient.liveChannels(acc, null).getOrThrow().size)
+        assertEquals(3, requests.count { it == "itv/get_ordered_list" }, "$requests")
+        // Ticks are a running count, so the latest one seen is the page total.
+        kotlinx.coroutines.withTimeoutOrNull(5_000) { while (latestTick.get() < 3L) kotlinx.coroutines.delay(10) }
+        watcher.cancel()
+        assertEquals(3L, latestTick.get(), "one progress tick per fetched page")
     }
 }
