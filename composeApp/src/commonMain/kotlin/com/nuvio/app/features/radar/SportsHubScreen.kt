@@ -123,6 +123,7 @@ fun SportsHubScreen(
     modifier: Modifier = Modifier,
     onOpenRecording: (String) -> Unit = {},
     onPlayReplay: (SportsReplay) -> Unit = {},
+    rootRequests: kotlinx.coroutines.flow.Flow<Unit> = kotlinx.coroutines.flow.emptyFlow(),
 ) {
     val state by RadarRepository.uiState.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -172,6 +173,28 @@ fun SportsHubScreen(
     // Desktop: the page behind the game overlay keeps its own focus group, so closing the overlay hands the keyboard
     // back to the page (to the control that had focus when the overlay opened) instead of leaving it nowhere.
     val pageFocus = remember { FocusRequester() }
+    // Tab re-select -> Sports root; Back from a sub-page -> root / one level up, never the Exit dialog (SportsNavPolicy).
+    fun navState() = SportsNavState(
+        browsing = browsing,
+        browseCategoryOpen = browseCategory != null,
+        leaguePageOpen = leaguePage != null,
+        fixturesPageOpen = fixturesPage != null,
+        gameOpen = detailFixture != null,
+    )
+    fun applyNav(n: SportsNavState) {
+        browsing = n.browsing
+        if (!n.browseCategoryOpen) browseCategory = null
+        if (!n.leaguePageOpen) leaguePage = null
+        if (!n.fixturesPageOpen) fixturesPage = null
+        if (!n.gameOpen) detailFixture = null
+        if (n.atRoot) sheetFixture = null
+    }
+    LaunchedEffect(rootRequests) { rootRequests.collect { applyNav(SportsNavPolicy.onReselect(navState())) } }
+    // Declared before the game overlay, so the game screen's own Back (closing only the game) wins while it is open.
+    PlatformBackHandler(enabled = !navState().copy(gameOpen = false).atRoot) {
+        SportsNavPolicy.onBack(navState().copy(gameOpen = false))?.let(::applyNav)
+    }
+
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val tabletTopInset = if (maxWidth >= 768.dp) TABLET_TOP_BAR_INSET else 0.dp
         val isWide = maxWidth >= 768.dp

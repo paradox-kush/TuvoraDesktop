@@ -288,6 +288,7 @@ internal fun MainAppContent(
         val searchListState = rememberLazyListState()
         val libraryScrollToTopRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
         val iptvScrollToTopRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
+        val sportsRootRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
         val settingsRootActionRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
 
         LaunchedEffect(ownsAppRuntime) {
@@ -491,7 +492,7 @@ internal fun MainAppContent(
             }
             AppScreenTab.Library -> libraryScrollToTopRequests.tryEmit(Unit)
             AppScreenTab.Iptv -> iptvScrollToTopRequests.tryEmit(Unit)
-            AppScreenTab.Sports -> Unit
+            AppScreenTab.Sports -> sportsRootRequests.tryEmit(Unit)
             AppScreenTab.Settings -> settingsRootActionRequests.tryEmit(Unit)
         }
     }
@@ -1683,6 +1684,7 @@ internal fun MainAppContent(
                             searchScrollToTopRequests = searchScrollToTopRequests,
                             libraryScrollToTopRequests = libraryScrollToTopRequests,
                             iptvScrollToTopRequests = iptvScrollToTopRequests,
+                            sportsRootRequests = sportsRootRequests,
                             settingsRootActionRequests = settingsRootActionRequests,
                         ),
                         state = AppTabState(
