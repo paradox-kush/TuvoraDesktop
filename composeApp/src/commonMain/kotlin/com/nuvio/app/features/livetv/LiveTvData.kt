@@ -151,7 +151,9 @@ object LiveTvData {
             followRedirects = LiveLinkReconnectPolicy.allowsRedirectProbe(LiveLinkReconnectPolicy.modeFor(singleUse)),
         )
         XtreamLiveRecents.record(contentId, name, logo)
-        val headers = streamHeaders(contentId, immediate, playback.headers, stalkerProfile)
+        // An M3U channel's own playlist headers (#EXTVLCOPT / #EXTHTTP), carried by its registry item.
+        val channelHeaders = XtreamItemRegistry.get(contentId)?.requestHeaders.orEmpty()
+        val headers = streamHeaders(contentId, immediate, playback.headers, stalkerProfile, channelHeaders)
         return LiveChannelSource(
             url = playback.url, headers = headers.engine, singleUseLink = singleUse,
             originBoundHeaders = headers.originBound, profileFallback = headers.profileFallback,
@@ -337,7 +339,11 @@ object LiveTvData {
      */
     fun withStreamUserAgent(contentId: String, headers: Map<String, String>): Map<String, String> {
         val account = accountFor(contentId)?.first ?: return headers
-        return com.nuvio.app.features.iptv.StreamUserAgentPolicy.headersFor(account, headers)
+        // The channel's own playlist headers keep winning over the playlist UA, exactly as the player sends them.
+        val channelHeaders = XtreamItemRegistry.get(contentId)?.requestHeaders.orEmpty()
+        return com.nuvio.app.features.iptv.M3uStreamHeaders.merge(
+            headers, com.nuvio.app.features.iptv.StreamUserAgentPolicy.resolve(account), channelHeaders,
+        )
     }
 
     /**
@@ -353,10 +359,16 @@ object LiveTvData {
         resolvedUrl: String,
         dnsHeaders: Map<String, String>,
         stalkerProfile: com.nuvio.app.features.iptv.stalker.StalkerStreamProfile? = null,
+        channelHeaders: Map<String, String> = emptyMap(),
     ): LiveStreamHeaders {
         val account = accountFor(contentId)?.first ?: return LiveStreamHeaders(dnsHeaders)
         if (account.sourceType != com.nuvio.app.features.iptv.SOURCE_TYPE_STALKER) {
-            return LiveStreamHeaders(com.nuvio.app.features.iptv.StreamUserAgentPolicy.headersFor(account, dnsHeaders))
+            // Channel header > playlist User-Agent > engine default (M3uStreamHeaders.merge).
+            return LiveStreamHeaders(
+                com.nuvio.app.features.iptv.M3uStreamHeaders.merge(
+                    dnsHeaders, com.nuvio.app.features.iptv.StreamUserAgentPolicy.resolve(account), channelHeaders,
+                ),
+            )
         }
         // Catch-up (no profile): exactly the pre-1.20.3 request, the DNS headers alone.
         if (stalkerProfile == null) return LiveStreamHeaders(dnsHeaders)
