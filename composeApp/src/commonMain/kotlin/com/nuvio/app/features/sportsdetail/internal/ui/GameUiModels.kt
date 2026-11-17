@@ -9,6 +9,8 @@ import com.nuvio.app.features.sportsdetail.api.TimelineItem
 import com.nuvio.app.features.sportsdetail.api.WinProbabilityBlock
 import com.nuvio.app.features.sportsdetail.internal.GameDetailUiPolicy
 import com.nuvio.app.features.sportsdetail.internal.GameSection
+import com.nuvio.app.features.sportsdetail.internal.GameStartLabel
+import com.nuvio.app.features.sportsdetail.internal.StartTimeFormat
 
 /** Pure view-models for the game screen: every decision a composable would otherwise make lives here and is unit-tested. */
 
@@ -206,4 +208,15 @@ internal class PlayedLedger {
         if (w == null || w.first != token) { windows[slot] = token to nowMs; return true }
         return nowMs - w.second <= windowMs
     }
+}
+
+/** The soft edge under the fixed back-button header: only while content has scrolled under it and no sticky score bar already covers that edge. */
+internal object GameTopFade {
+    fun visible(scrolledPastTop: Boolean, stickyBarShown: Boolean): Boolean = scrolledPastTop && !stickyBarShown
+}
+
+/** Upcoming status text: the device-local start ("Today 8:15 PM"); the old UTC wording only when the feed gave no parseable date. */
+internal object UpcomingStartText {
+    fun of(startsAt: String, format: StartTimeFormat): String =
+        GameStartLabel.of(startsAt, format) ?: (startsAt.replace('T', ' ').removeSuffix("Z").take(16) + " UTC")
 }

@@ -13,6 +13,9 @@ import com.nuvio.app.features.sportsdetail.api.TimelineItem
 import com.nuvio.app.features.sportsdetail.api.WinProbabilityBlock
 import com.nuvio.app.features.sportsdetail.internal.GameMomentTracker
 import com.nuvio.app.features.sportsdetail.internal.Moment
+import com.nuvio.app.features.sportsdetail.internal.ui.GameTopFade
+import com.nuvio.app.features.sportsdetail.internal.ui.UpcomingStartText
+import com.nuvio.app.features.sportsdetail.internal.StartTimeFormat
 import com.nuvio.app.features.sportsdetail.internal.ui.GameScoreBar
 import com.nuvio.app.features.sportsdetail.internal.ui.GameTabsUi
 import com.nuvio.app.features.sportsdetail.internal.ui.PlaysGrouping
@@ -222,5 +225,31 @@ class StandingsFitTest {
 
     @Test fun `wide cards keep the full 38 dp cells`() {
         assertEquals(38f, fit.of(600f, 7).cellDp, "no shrink when there is room")
+    }
+}
+
+class GameTopFadeTest {
+    @Test
+    fun `fade shows only once scrolled and when no sticky bar covers the edge`() {
+        assertEquals(false, GameTopFade.visible(scrolledPastTop = false, stickyBarShown = false))
+        assertEquals(true, GameTopFade.visible(scrolledPastTop = true, stickyBarShown = false))
+        assertEquals(false, GameTopFade.visible(scrolledPastTop = true, stickyBarShown = true))
+    }
+}
+
+class UpcomingStartTextTest {
+    private val fake = object : StartTimeFormat {
+        override fun dayLabel(epochMs: Long) = "Today"
+        override fun formatTime(epochMs: Long) = "8:15 PM"
+    }
+
+    @Test
+    fun `a parseable start is shown in the device-local format not as UTC`() {
+        assertEquals("Today 8:15 PM", UpcomingStartText.of("2026-11-17T01:15:00Z", fake))
+    }
+
+    @Test
+    fun `an unparseable start keeps the old wording`() {
+        assertEquals("soon UTC", UpcomingStartText.of("soon", fake))
     }
 }
