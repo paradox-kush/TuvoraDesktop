@@ -624,6 +624,17 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
         LaunchedEffect(liveUserRetryGeneration) {
             if (liveUserRetryGeneration > 0) freezeReconnector.onUserRetry()
         }
+        // Desktop draws the native video over Compose, so the reconnect line rides the native controls' toast:
+        // one notice per attempt ("Reconnecting… (attempt N of M) · reason"); the give-up stays the error modal.
+        val reconnectStatus by freezeReconnector.status.collectAsState()
+        LaunchedEffect(reconnectStatus) {
+            liveReconnectStatus = reconnectStatus
+            val status = reconnectStatus ?: return@LaunchedEffect
+            playerNotificationMessage = org.jetbrains.compose.resources.getString(
+                nuvio.composeapp.generated.resources.Res.string.player_live_reconnecting_attempt, status.attempt, status.maxAttempts,
+            ) + " · " + org.jetbrains.compose.resources.getString(status.reason.resource())
+            playerNotificationToken += 1L
+        }
         val singleUseLink = remember(activeVideoId, isLiveStream) {
             LiveLinkReconnectPolicy.modeFor(
                 isStalkerSource = activeVideoId?.let {
@@ -819,6 +830,8 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
                     }
                 },
                 onError = { message ->
+                    // Only the reason code is kept (the text can carry a host): it words the reconnect notice.
+                    if (isLiveStream && message != null) freezeReconnector.noteFailure(message)
                     if (message != null && tryRefreshCredentialedSourceAfterError(message)) {
                         return@PlatformPlayerSurface
                     }
