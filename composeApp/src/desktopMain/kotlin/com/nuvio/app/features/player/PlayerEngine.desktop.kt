@@ -109,6 +109,10 @@ actual fun PlatformPlayerSurface(
     // user's IPTV panels (PlaybackTlsPolicy.PermissivePanel) keeps the old unverified behaviour; everything else is verified.
     val tlsVerify = remember(sourceUrl) { playbackTlsClassOf(sourceUrl) == PlaybackTlsClass.Strict }
     val onControllerReady = engineOnControllerReady
+    // Every engine failure lands in the flight recorder as closed codes (surface/engine/category/phase), never the text.
+    val failureTrail = remember(sourceUrl) {
+        PlaybackFailureTrailRecorder(PlaybackFailureTrail.surfaceOf(streamType, isCatchUpPlayback))
+    }
     if (DesktopHostOs.current == DesktopHostOs.MACOS ||
         DesktopHostOs.current == DesktopHostOs.WINDOWS ||
         DesktopHostOs.current == DesktopHostOs.LINUX
@@ -144,8 +148,14 @@ actual fun PlatformPlayerSurface(
             onPlayerControlsScrubFinished = onPlayerControlsScrubFinished,
             onInitialPositionHandled = onInitialPositionHandled,
             onControllerReady = onControllerReady,
-            onSnapshot = onSnapshot,
-            onError = onError,
+            onSnapshot = { snapshot ->
+                failureTrail.onSnapshot(snapshot)
+                onSnapshot(snapshot)
+            },
+            onError = { message ->
+                failureTrail.onError(message, engine = "libmpv")
+                onError(message)
+            },
         )
         return
     }
