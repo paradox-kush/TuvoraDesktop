@@ -152,7 +152,7 @@ object LiveTvData {
         )
         XtreamLiveRecents.record(contentId, name, logo)
         // An M3U channel's own playlist headers (#EXTVLCOPT / #EXTHTTP), carried by its registry item.
-        val channelHeaders = XtreamItemRegistry.get(contentId)?.requestHeaders.orEmpty()
+        val channelHeaders = XtreamItemRegistry.liveRequestHeadersFor(contentId)
         val headers = streamHeaders(contentId, immediate, playback.headers, stalkerProfile, channelHeaders)
         return LiveChannelSource(
             url = playback.url, headers = headers.engine, singleUseLink = singleUse,
@@ -337,10 +337,13 @@ object LiveTvData {
      * [headers] with the playlist's own User-Agent ([com.nuvio.app.features.iptv.StreamUserAgentPolicy]): the player's
      * stream request must carry it (providers key their WAF on it, HTTP 456/403). Unchanged without an override.
      */
-    fun withStreamUserAgent(contentId: String, headers: Map<String, String>): Map<String, String> {
+    fun withStreamUserAgent(
+        contentId: String,
+        headers: Map<String, String>,
+        channelHeaders: Map<String, String> = XtreamItemRegistry.get(contentId)?.requestHeaders.orEmpty(),
+    ): Map<String, String> {
         val account = accountFor(contentId)?.first ?: return headers
         // The channel's own playlist headers keep winning over the playlist UA, exactly as the player sends them.
-        val channelHeaders = XtreamItemRegistry.get(contentId)?.requestHeaders.orEmpty()
         return com.nuvio.app.features.iptv.M3uStreamHeaders.merge(
             headers, com.nuvio.app.features.iptv.StreamUserAgentPolicy.resolve(account), channelHeaders,
         )
