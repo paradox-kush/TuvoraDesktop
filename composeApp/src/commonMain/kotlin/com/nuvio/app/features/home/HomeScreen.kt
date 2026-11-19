@@ -999,7 +999,12 @@ fun HomeScreen(
         hasRenderableHomeRows = hasRenderableHomeRows,
     )
     // The user's section order (Settings -> Home order). Hero keeps its stretch / edge-to-edge treatment only while it leads.
-    val hasWatchHistory = continueWatchingItems.isNotEmpty() || liveRecentPreviews.isNotEmpty()
+    // Until history has loaded, keep the last session's answer (persisted) so a cold launch does not reorder.
+    val hasWatchHistory = HomeSectionOrderPolicy.effectiveHistory(
+        stored = homeSettingsUiState.hasWatchHistory,
+        current = continueWatchingItems.isNotEmpty() || liveRecentPreviews.isNotEmpty(),
+        settled = watchProgressUiState.hasLoadedRemoteProgress,
+    )
     LaunchedEffect(hasWatchHistory) { HomeCatalogSettingsRepository.reportWatchHistory(hasWatchHistory) }
     val homeSectionOrder = HomeSectionOrderPolicy.visibleOrder(homeSettingsUiState.homeSections, hasWatchHistory)
     val heroPinnedTop = showHeroSlot && homeSectionOrder.firstOrNull() == HomeSectionIds.HERO
@@ -1188,6 +1193,7 @@ fun HomeScreen(
             // Declared once ahead of the state `when`: every state used to emit the same rows first.
                 homeContinueWatchingSections(
                     slots = homeSectionSlots,
+            liveFollowsContinueWatching = HomeSectionOrderPolicy.liveRecentsFollowContinueWatching(homeSettingsUiState.homeSections),
                     preferences = continueWatchingPreferences,
                     continueWatchingItems = continueWatchingItems,
                     upcomingItems = upcomingItems,
@@ -1278,7 +1284,12 @@ fun HomeScreen(
                 }
 
                 homeUiState.sections.isEmpty() && homeUiState.heroItems.isEmpty() &&
-                    (!continueWatchingPreferences.isVisible || (!hasContinueWatchingRows && effectiveLiveRecents.isEmpty())) &&
+                    HomeSectionOrderPolicy.hasNoContinueContent(
+                        homeSettingsUiState.homeSections,
+                        continueWatchingPreferences.isVisible,
+                        hasContinueWatchingRows,
+                        effectiveLiveRecents.isNotEmpty(),
+                    ) &&
                     !hasRenderableCollectionRows -> {
                     item(key = "home_empty", contentType = "empty") {
                         val loadFailed = !homeUiState.errorMessage.isNullOrBlank()
@@ -1406,6 +1417,7 @@ private fun MetaPreview.toLiveRecentActionTarget(): LiveRecentActionTarget =
 
 private fun homeContinueWatchingSections(
     slots: HomeSectionSlots,
+    liveFollowsContinueWatching: Boolean,
     preferences: ContinueWatchingPreferencesUiState,
     continueWatchingItems: List<ContinueWatchingItem>,
     upcomingItems: List<ContinueWatchingItem>,
@@ -1421,7 +1433,7 @@ private fun homeContinueWatchingSections(
     onLivePosterLongPress: (MetaPreview) -> Unit,
     disintegrationRequest: DisintegrationRequest<String>?,
 ) {
-    if (!preferences.isVisible) return
+    if (!preferences.isVisible && liveFollowsContinueWatching) return
 
     // The Live TV recents row and the resumable rows are separate sections, so each can be moved on its own.
     if (liveRecents.isNotEmpty()) slots.add(HomeSectionIds.LIVE_RECENTS) {
@@ -1445,6 +1457,8 @@ private fun homeContinueWatchingSections(
             )
         }
     }
+
+    if (!preferences.isVisible) return
 
     if (continueWatchingItems.isNotEmpty()) slots.add(HomeSectionIds.CONTINUE_WATCHING) {
         item(key = HOME_CONTINUE_WATCHING_SECTION_KEY, contentType = "continue_watching") {

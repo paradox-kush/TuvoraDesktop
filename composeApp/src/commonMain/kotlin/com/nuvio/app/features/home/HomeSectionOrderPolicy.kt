@@ -137,6 +137,32 @@ object HomeSectionOrderPolicy {
         }
     }
 
+    /**
+     * The history answer to order Home by. Any current history wins; "none" is only believed once the
+     * history has settled, until then the last stored answer holds so a returning user's Home does not
+     * reorder on every cold launch.
+     */
+    fun effectiveHistory(stored: Boolean, current: Boolean, settled: Boolean): Boolean =
+        if (current) true else if (settled) false else stored
+
+    /**
+     * Whether the Live TV recents row is gated by the Continue Watching switch. Only an untouched layout
+     * keeps that coupling; a customised one shows each by its own flag.
+     */
+    fun liveRecentsFollowContinueWatching(config: HomeSectionsConfig?): Boolean = config?.customized != true
+
+    /** True when there is nothing for the Continue Watching block to show, honouring the coupling above. */
+    fun hasNoContinueContent(
+        config: HomeSectionsConfig?,
+        continueWatchingVisible: Boolean,
+        hasContinueWatchingRows: Boolean,
+        hasLiveRecents: Boolean,
+    ): Boolean = if (liveRecentsFollowContinueWatching(config)) {
+        !continueWatchingVisible || (!hasContinueWatchingRows && !hasLiveRecents)
+    } else {
+        (!continueWatchingVisible || !hasContinueWatchingRows) && !hasLiveRecents
+    }
+
     /** Remote layout -> the switches that mirror it. Null for a section not in the layout. */
     fun toggleFor(config: HomeSectionsConfig?, id: String): Boolean? =
         config?.takeIf { it.customized }?.sections?.firstOrNull { it.id == id }?.enabled

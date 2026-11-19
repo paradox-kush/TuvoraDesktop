@@ -204,3 +204,51 @@ class HomeSectionOrderPolicyTest {
         assertTrue(onViaList.customized, "both are user changes")
     }
 }
+
+class HomeSectionLaunchAndCouplingTest {
+    private val returningOrder = listOf("continue_watching", "live_recents", "hero", "new_episodes", "sports", "upcoming", "catalogs")
+
+    @Test
+    fun `stored history with nothing loaded yet gives the returning-user order`() {
+        val history = HomeSectionOrderPolicy.effectiveHistory(stored = true, current = false, settled = false)
+
+        assertEquals(returningOrder, HomeSectionOrderPolicy.visibleOrder(null, history), "first frame matches last session")
+    }
+
+    @Test
+    fun `history answer settles once loaded`() {
+        assertTrue(HomeSectionOrderPolicy.effectiveHistory(stored = false, current = true, settled = false), "items appearing wins at once")
+        assertFalse(HomeSectionOrderPolicy.effectiveHistory(stored = true, current = false, settled = true), "settled with none is believed")
+        assertFalse(HomeSectionOrderPolicy.effectiveHistory(stored = false, current = false, settled = false), "first launch ever: no history")
+    }
+
+    @Test
+    fun `untouched layout keeps Live TV tied to Continue Watching`() {
+        for (config in listOf(null, HomeSectionsConfig(customized = false))) {
+            assertTrue(HomeSectionOrderPolicy.liveRecentsFollowContinueWatching(config), "coupled for $config")
+            assertTrue(
+                HomeSectionOrderPolicy.hasNoContinueContent(config, continueWatchingVisible = false, hasContinueWatchingRows = true, hasLiveRecents = true),
+                "Continue Watching off hides live too",
+            )
+        }
+    }
+
+    @Test
+    fun `customised layout shows Live TV and Continue Watching independently`() {
+        val mine = HomeSectionsConfig(customized = true)
+
+        assertFalse(HomeSectionOrderPolicy.liveRecentsFollowContinueWatching(mine), "decoupled")
+        assertFalse(
+            HomeSectionOrderPolicy.hasNoContinueContent(mine, continueWatchingVisible = false, hasContinueWatchingRows = true, hasLiveRecents = true),
+            "live row still counts with Continue Watching off",
+        )
+        assertTrue(
+            HomeSectionOrderPolicy.hasNoContinueContent(mine, continueWatchingVisible = true, hasContinueWatchingRows = false, hasLiveRecents = false),
+            "nothing to show",
+        )
+        assertFalse(
+            HomeSectionOrderPolicy.hasNoContinueContent(mine, continueWatchingVisible = true, hasContinueWatchingRows = true, hasLiveRecents = false),
+            "resumable rows alone are content",
+        )
+    }
+}

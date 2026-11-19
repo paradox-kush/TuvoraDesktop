@@ -112,6 +112,8 @@ private data class StoredHomeCatalogSettingsPayload(
     val hideUnreleasedContent: Boolean = false,
     val showLiveOnHome: Boolean = true,
     val homeSections: HomeSectionsConfig? = null,
+    /** Last known "this profile has watch history", so the first frame orders Home like the last session did. */
+    val hadWatchHistory: Boolean = false,
     val items: List<StoredHomeCatalogPreference> = emptyList(),
 )
 
@@ -367,7 +369,10 @@ object HomeCatalogSettingsRepository {
     fun reportWatchHistory(hasHistory: Boolean) {
         if (hasWatchHistory == hasHistory) return
         hasWatchHistory = hasHistory
-        if (hasLoaded) publish()
+        if (hasLoaded) {
+            publish()
+            persist()
+        }
     }
 
     /** Returns whether the layout changed. A flag that already matches never marks the layout customized. */
@@ -464,6 +469,7 @@ object HomeCatalogSettingsRepository {
             hideUnreleasedContent = parsedPayload.hideUnreleasedContent
             showLiveOnHome = parsedPayload.showLiveOnHome
             homeSections = parsedPayload.homeSections
+            hasWatchHistory = parsedPayload.hadWatchHistory
             preferences = parsedPayload.items.associateBy { it.key }
             publish()
             return
@@ -609,6 +615,7 @@ object HomeCatalogSettingsRepository {
                 hideUnreleasedContent = hideUnreleasedContent,
                 showLiveOnHome = showLiveOnHome,
                 homeSections = homeSections,
+                hadWatchHistory = hasWatchHistory,
                 items = preferences.values.sortedBy { it.order },
             ),
         )
