@@ -42,6 +42,8 @@ data class SyncHomeCatalogPayload(
     @SerialName("show_catalog_type") val showCatalogType: Boolean = true,
     @SerialName("hide_unreleased_content") val hideUnreleasedContent: Boolean = false,
     @SerialName("show_live_on_home") val showLiveOnHome: Boolean = true,
+    /** Shared Home section layout; null (never set on this device) is omitted from the push so another device's value survives the merge. */
+    @SerialName("home_sections") val homeSections: HomeSectionsConfig? = null,
     val items: List<SyncCatalogItem> = emptyList(),
 )
 
@@ -61,6 +63,26 @@ private data class CachedSharedSettings(
     val settingsJson: JsonObject,
 )
 
+private const val HOME_SECTIONS_KEY = "home_sections"
+
+/** Wire codec of the shared home catalog settings blob. `explicitNulls = false` keeps an unset `home_sections` out of the push. */
+internal val homeCatalogSyncJson = Json {
+    ignoreUnknownKeys = true
+    encodeDefaults = true
+    explicitNulls = false
+}
+
+/** Decodes the shared blob. A malformed `home_sections` (another build's shape) is dropped, not allowed to sink the rest. */
+internal fun decodeSharedHomeCatalogPayload(settingsJson: JsonObject): SyncHomeCatalogPayload {
+    val homeSections = settingsJson[HOME_SECTIONS_KEY]?.let { element ->
+        runCatching { homeCatalogSyncJson.decodeFromJsonElement(HomeSectionsConfig.serializer(), element) }.getOrNull()
+    }
+    return homeCatalogSyncJson.decodeFromJsonElement(
+        SyncHomeCatalogPayload.serializer(),
+        JsonObject(settingsJson - HOME_SECTIONS_KEY),
+    ).copy(homeSections = homeSections)
+}
+
 internal fun mergeHomeCatalogSettingsJson(
     remoteJson: JsonObject?,
     localJson: JsonObject,
@@ -72,10 +94,7 @@ internal fun mergeHomeCatalogSettingsJson(
 object HomeCatalogSettingsSyncService {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val log = Logger.withTag("HomeCatalogSettingsSyncService")
-    private val json = Json {
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-    }
+    private val json = homeCatalogSyncJson
 
     private const val HIDE_UNRELEASED_CONTENT_KEY = "hide_unreleased_content"
     private const val SHOW_CATALOG_TYPE_KEY = "show_catalog_type"
@@ -211,7 +230,7 @@ object HomeCatalogSettingsSyncService {
         settingsJson: JsonObject,
         localPayload: SyncHomeCatalogPayload,
     ): SyncHomeCatalogPayload? = runCatching {
-        val decoded = json.decodeFromJsonElement(SyncHomeCatalogPayload.serializer(), settingsJson)
+        val decoded = decodeSharedHomeCatalogPayload(settingsJson)
         decoded.copy(
             showCatalogType = if (settingsJson.containsKey(SHOW_CATALOG_TYPE_KEY)) {
                 decoded.showCatalogType

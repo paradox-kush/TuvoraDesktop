@@ -28,6 +28,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -40,6 +41,7 @@ import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.home.HomeCatalogSettingsItem
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
+import com.nuvio.app.features.home.HomeSectionOrderPolicy
 import com.nuvio.app.features.home.components.HomeEmptyStateCard
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.action_retry
@@ -176,6 +178,19 @@ internal fun LazyListScope.homescreenSettingsContent(
                 )
             }
         }
+    }
+    item {
+        // Reads the layout itself so the three settings screens that host this page need no extra arguments.
+        val layout by HomeCatalogSettingsRepository.uiState.collectAsStateWithLifecycle()
+        HomeSectionOrderSettings(
+            isTablet = isTablet,
+            entries = HomeSectionOrderPolicy.withToggles(
+                entries = HomeSectionOrderPolicy.listed(layout.homeSections, layout.hasWatchHistory),
+                heroEnabled = heroEnabled,
+                continueWatchingVisible = continueWatchingVisible,
+                showLiveOnHome = showLiveOnHome,
+            ),
+        )
     }
     item {
         if (isCatalogLoading && items.isEmpty()) {
