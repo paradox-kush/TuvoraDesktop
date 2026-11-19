@@ -114,6 +114,7 @@ object ContinueWatchingPreferencesRepository {
         ensureLoaded()
         _uiState.value = _uiState.value.copy(isVisible = isVisible)
         persist()
+        com.nuvio.app.features.home.HomeCatalogSettingsRepository.onContinueWatchingVisibilityChanged(isVisible)
     }
 
     fun setStyle(style: ContinueWatchingSectionStyle) {
