@@ -33,4 +33,6 @@ expect object AppFeaturePolicy {
     val debugBackendSwitcherEnabled: Boolean
     val downloadForegroundServiceEnabled: Boolean
     val customServerConnectionsEnabled: Boolean
+    /** Analytics `build_flavor`: "full" for sideloaded builds, "store" for Play / App Store builds. */
+    val buildFlavor: String
 }

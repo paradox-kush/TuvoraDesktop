@@ -29,5 +29,7 @@ actual object AppFeaturePolicy {
     actual val mediaPlaybackForegroundServiceEnabled: Boolean = false
     actual val debugBackendSwitcherEnabled: Boolean = AppBuildConfig.IS_DEBUG_BUILD
     actual val downloadForegroundServiceEnabled: Boolean = false
+    /** Build flavor reported in analytics as `build_flavor`: "full" (sideload) or "store" (Play / App Store). */
+    actual val buildFlavor: String = "full"
     actual val customServerConnectionsEnabled: Boolean = false
 }
