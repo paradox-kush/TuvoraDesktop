@@ -204,7 +204,7 @@ object StalkerClient : IptvClient {
      */
     override suspend fun seriesCategories(acc: XtreamAccount): Result<List<XtreamCategory>> {
         if (knownDialect(acc) == StalkerSeriesDialect.Dialect.MINISTRA) return categories(acc, "vod", "get_categories")
-        val xc = categories(acc, "series", "get_categories")
+        val xc = categories(acc, "series", "get_categories", lenient = true)
         if (xc.getOrNull()?.isNotEmpty() == true) {
             rememberDialect(acc, StalkerSeriesDialect.Dialect.XC)
             setSeriesAbsent(acc, false)
@@ -1200,14 +1200,16 @@ object StalkerClient : IptvClient {
 
     // --- request helpers ------------------------------------------------------
 
-    private suspend fun categories(acc: XtreamAccount, type: String, action: String): Result<List<XtreamCategory>> = runCatching {
-        val arr = browse(acc, mapOf("type" to type, "action" to action)) as? JsonArray
-            ?: return@runCatching emptyList()
-        arr.mapNotNull { it as? JsonObject }.mapNotNull { obj ->
-            val id = obj.str("id") ?: return@mapNotNull null
-            if (id == "*") return@mapNotNull null   // "*" = All; the hub adds its own "All"
-            XtreamCategory(id, obj.str("title") ?: obj.str("name").orEmpty())
-        }
+    /**
+     * A non-array reply is a failure (never "empty"), except for [lenient] calls: the `type=series` probe,
+     * where a Ministra portal answers its missing series module with a non-array and that must still reach
+     * the vod fallback (an empty list, as before) rather than read as a network failure.
+     */
+    private suspend fun categories(acc: XtreamAccount, type: String, action: String, lenient: Boolean = false): Result<List<XtreamCategory>> = runCatching {
+        val reply = browse(acc, mapOf("type" to type, "action" to action))
+        if (lenient) runCatching { StalkerCategoryReply.parse(reply) }
+            .getOrElse { if (it is StalkerMalformedReplyException) emptyList() else throw it }
+        else StalkerCategoryReply.parse(reply)
     }
 
     /** Paginated get_ordered_list across pages (js.total_items bounds the loop), capped so an "All"

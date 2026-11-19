@@ -93,6 +93,7 @@ import nuvio.composeapp.generated.resources.compose_iptv_hub_row_failed
 import nuvio.composeapp.generated.resources.provider_hub_contact_label
 import nuvio.composeapp.generated.resources.provider_setup_have_code
 import nuvio.composeapp.generated.resources.compose_iptv_hub_add_provider
+import nuvio.composeapp.generated.resources.compose_iptv_hub_empty_checked_just_now
 import nuvio.composeapp.generated.resources.compose_iptv_hub_empty_message
 import nuvio.composeapp.generated.resources.compose_iptv_hub_empty_title
 import nuvio.composeapp.generated.resources.compose_iptv_hub_epg_next
@@ -166,6 +167,9 @@ fun XtreamHubScreen(
     }
 
     val isLive = state.section == XtreamHubSection.LIVE
+    // The viewer tapped Retry on the empty state: a re-check that is still empty then says so.
+    // Reset per playlist and section, so a plain section switch starts from the ordinary empty card.
+    var emptyRetried by remember(state.selectedAccountId, state.section) { mutableStateOf(false) }
     val onTileClick: (MetaPreview) -> Unit = if (isLive) {
         { meta -> onPlayLiveChannel(meta.id) }
     } else {
@@ -423,13 +427,27 @@ fun XtreamHubScreen(
                     )
                 }
 
-                displayedCategories.isEmpty() -> XtreamHubMessageCard(
-                    title = stringResource(Res.string.compose_iptv_hub_empty_title),
-                    message = stringResource(Res.string.compose_iptv_hub_empty_message),
-                    actionLabel = stringResource(Res.string.compose_settings_page_iptv_add_playlist),
-                    onAction = onAddProvider,
-                    sectionPadding = sectionPadding,
-                )
+                displayedCategories.isEmpty() -> {
+                    // Retry first: a slow, half-loaded or mis-parsed playlist must not look like a truly empty one.
+                    val empty = IptvEmptyStatePolicy.decide(retried = emptyRetried, status = categoriesStatus)
+                    val checkedNote = stringResource(Res.string.compose_iptv_hub_empty_checked_just_now)
+                    XtreamHubMessageCard(
+                        title = stringResource(Res.string.compose_iptv_hub_empty_title),
+                        message = stringResource(Res.string.compose_iptv_hub_empty_message),
+                        actionLabel = if (empty.offersRetry) stringResource(Res.string.action_retry) else stringResource(Res.string.compose_settings_page_iptv_add_playlist),
+                        onAction = if (empty.offersRetry) ({ emptyRetried = true; XtreamHubRepository.retryEmptyCategories() }) else onAddProvider,
+                        secondaryActionLabel = if (empty.offersRetry) stringResource(Res.string.compose_settings_page_iptv_add_playlist) else null,
+                        onSecondaryAction = if (empty.offersRetry) onAddProvider else null,
+                        sectionPadding = sectionPadding,
+                        footer = if (empty.checkedJustNow) ({
+                            Text(
+                                text = checkedNote,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.nuvio.colors.textMuted,
+                            )
+                        }) else null,
+                    )
+                }
 
                 else -> {
                     // Xtream panels ship real-world duplicate category ids — duplicate-safe keys.
@@ -1032,6 +1050,8 @@ internal fun XtreamHubMessageCard(
     sectionPadding: Dp,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
+    secondaryActionLabel: String? = null,
+    onSecondaryAction: (() -> Unit)? = null,
     footer: (@Composable () -> Unit)? = null,
 ) {
     Column(
@@ -1044,6 +1064,8 @@ internal fun XtreamHubMessageCard(
             message = message,
             actionLabel = actionLabel,
             onActionClick = onAction,
+            secondaryActionLabel = secondaryActionLabel,
+            onSecondaryActionClick = onSecondaryAction,
             footer = footer,
         )
     }
