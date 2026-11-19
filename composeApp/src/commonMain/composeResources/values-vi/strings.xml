@@ -603,7 +603,7 @@
     <string name="settings_licenses_attributions_mdblist_title">MDBList</string>
     <string name="settings_licenses_attributions_mdblist_body">Tuvora dùng MDBList để lấy điểm đánh giá và dữ liệu từ các dịch vụ xếp hạng khác. Tuvora không liên kết hoặc được MDBList bảo trợ</string>
     <string name="settings_licenses_attributions_introdb_title">IntroDB</string>
-    <string name="settings_licenses_attributions_introdb_body">Tuvora dùng API IntroDB để lấy dữ liệu cộng đồng về thời điểm mở đầu, tóm tắt, phần credit và đoạn xem trước cho tính năng bỏ qua. Tuvora không liên kết hoặc được IntroDB bảo trợ</string>
+    <string name="settings_licenses_attributions_introdb_body">Tuvora dùng API IntroDB để lấy dữ liệu cộng đồng về thời điểm mở đầu, tóm tắt, phần credit và đoạn xem trước cho tính năng bỏ qua. Tuvora không liên kết hoặc được IntroDB bảo trợ Contains data from IntroDB (introdb.app), available under the ODbL.</string>
     <string name="settings_licenses_attributions_mpvkit_title">MPVKit</string>
     <string name="settings_licenses_attributions_mpvkit_body">Được dùng để phát lại trên các bản dựng iOS</string>
     <string name="settings_licenses_attributions_mpvkit_license">Mã nguồn của MPVKit được cấp phép theo LGPL v3.0. Các gói MPVKit, bao gồm libmpv và FFmpeg, cũng được cấp phép theo LGPL v3.0.</string>
