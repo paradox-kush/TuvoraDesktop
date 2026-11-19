@@ -7,6 +7,11 @@ internal object XtreamRecentsCleaner : LocalStateCleaner {
     override fun clearLocalState() = XtreamLiveRecents.clearLocalState()
 }
 
+internal object LivePinSuggestionsCleaner : LocalStateCleaner {
+    override val name = "Live pin suggestions"
+    override fun clearLocalState() = LivePinSuggestions.store.clearLocalState()
+}
+
 internal object XtreamAccountsCleaner : LocalStateCleaner {
     override val name = "Xtream accounts"
     override fun clearLocalState() = XtreamRepository.clearLocalState()

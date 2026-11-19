@@ -151,6 +151,8 @@ object LiveTvData {
             followRedirects = LiveLinkReconnectPolicy.allowsRedirectProbe(LiveLinkReconnectPolicy.modeFor(singleUse)),
         )
         XtreamLiveRecents.record(contentId, name, logo)
+        // Device-local play count behind "pin suggestions" (skipped while the viewer has them off).
+        com.nuvio.app.features.iptv.LivePinSuggestions.store.recordPlay(contentId, name, logo)
         // An M3U channel's own playlist headers (#EXTVLCOPT / #EXTHTTP), carried by its registry item.
         val channelHeaders = XtreamItemRegistry.liveRequestHeadersFor(contentId)
         val headers = streamHeaders(contentId, immediate, playback.headers, stalkerProfile, channelHeaders)

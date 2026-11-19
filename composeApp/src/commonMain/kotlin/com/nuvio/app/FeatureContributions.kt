@@ -81,6 +81,7 @@ fun registerLogicFeatureContributions() {
     SyncParticipantRegistry.register(RadarSyncParticipant)
     SyncParticipantRegistry.register(IptvOverlaySyncParticipant)
     LocalStateCleanerRegistry.register(XtreamRecentsCleaner)
+    LocalStateCleanerRegistry.register(com.nuvio.app.features.iptv.LivePinSuggestionsCleaner)
     LocalStateCleanerRegistry.register(RecLocalStateCleaner)
     LocalStateCleanerRegistry.register(XtreamAccountsCleaner)
     RecTrackingAccess.register(RecPlaybackReporterImpl)
