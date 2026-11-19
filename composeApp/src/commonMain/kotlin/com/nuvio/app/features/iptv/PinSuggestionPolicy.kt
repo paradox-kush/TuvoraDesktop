@@ -22,6 +22,9 @@ object PinSuggestionPolicy {
     const val WINDOW_MS: Long = 14 * DAY_MS
     const val SNOOZE_MS: Long = 14 * DAY_MS
 
+    /** A play of a channel within this long of its previous recorded play is the same play (retry, reconnect, re-tune). */
+    const val SAME_PLAY_MS: Long = 10L * 60 * 1000
+
     /** One channel and the epoch-ms time of each of its recent plays (device-local). */
     @Serializable
     data class ChannelPlays(val contentId: String, val name: String, val logo: String?, val playTimesMs: List<Long>)

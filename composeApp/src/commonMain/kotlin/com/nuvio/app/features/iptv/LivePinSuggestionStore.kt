@@ -43,7 +43,10 @@ object LivePlayCounts {
     fun recorded(current: List<ChannelPlays>, contentId: String, name: String, logo: String?, nowMs: Long): List<ChannelPlays> {
         val prior = current.firstOrNull { it.contentId == contentId }
         val cutoff = nowMs - PinSuggestionPolicy.WINDOW_MS
-        val times = ((prior?.playTimesMs.orEmpty()) + nowMs).filter { it >= cutoff }.takeLast(MAX_PLAYS_PER_CHANNEL)
+        val priorTimes = prior?.playTimesMs.orEmpty()
+        // Within 10 minutes of this channel's previous recorded play = the same play, not a new one.
+        val samePlay = priorTimes.lastOrNull()?.let { nowMs - it < PinSuggestionPolicy.SAME_PLAY_MS } == true
+        val times = (if (samePlay) priorTimes else priorTimes + nowMs).filter { it >= cutoff }.takeLast(MAX_PLAYS_PER_CHANNEL)
         val entry = ChannelPlays(
             contentId = contentId,
             name = com.nuvio.app.core.contracts.LiveChannelNames.best(name, prior?.name) ?: name,

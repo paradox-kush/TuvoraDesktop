@@ -24,12 +24,40 @@ class LivePinSuggestionStoreTest {
     fun `record counts plays and keeps the newest name and logo`() {
         val s = store()
         s.recordPlay("x:1", "Alpha", null)
-        now += 1000
+        now += 11 * 60_000
         s.recordPlay("x:1", "Alpha HD", "a.png")
         val c = s.state.value.channels.single()
-        assertEquals(listOf(1_000 * day, 1_000 * day + 1000), c.playTimesMs, "two plays in order")
+        assertEquals(listOf(1_000 * day, 1_000 * day + 11 * 60_000), c.playTimesMs, "two plays in order")
         assertEquals("Alpha HD", c.name, "name")
         assertEquals("a.png", c.logo, "logo")
+    }
+
+    @Test
+    fun `plays of one channel under 10 minutes apart count once`() {
+        val s = store()
+        val min = 60_000L
+        s.recordPlay("x:1", "One", null)
+        now += 9 * min
+        s.recordPlay("x:1", "One", null)
+        assertEquals(1, s.state.value.channels.single().playTimesMs.size, "9 minutes apart is one play")
+        now += 11 * min
+        s.recordPlay("x:1", "One", null)
+        assertEquals(2, s.state.value.channels.single().playTimesMs.size, "11 minutes after the last recorded play is a new play")
+    }
+
+    @Test
+    fun `the 10 minute rule is per channel`() {
+        val s = store()
+        s.recordPlay("x:1", "One", null)
+        now += 60_000
+        s.recordPlay("x:2", "Two", null)
+        now += 60_000
+        s.recordPlay("x:1", "One", null)
+        s.recordPlay("x:2", "Two", null)
+        now += 12 * 60_000
+        s.recordPlay("x:1", "One", null)
+        s.recordPlay("x:2", "Two", null)
+        assertEquals(listOf(2, 2), s.state.value.channels.map { it.playTimesMs.size }, "each channel counted on its own")
     }
 
     @Test
@@ -68,7 +96,7 @@ class LivePinSuggestionStoreTest {
     @Test
     fun `play times per channel are capped`() {
         val s = store()
-        repeat(LivePlayCounts.MAX_PLAYS_PER_CHANNEL + 7) { now += 1000; s.recordPlay("x:1", "One", null) }
+        repeat(LivePlayCounts.MAX_PLAYS_PER_CHANNEL + 7) { now += 11 * 60_000; s.recordPlay("x:1", "One", null) }
         val times = s.state.value.channels.single().playTimesMs
         assertEquals(LivePlayCounts.MAX_PLAYS_PER_CHANNEL, times.size, "per-channel cap")
         assertEquals(now, times.last(), "newest kept")
