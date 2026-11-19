@@ -3,13 +3,13 @@
     <string name="party_start_title">Oglądajcie razem</string>
     <string name="party_start_description">Zaproś znajomych. Każdy odtwarza z własnych źródeł, a wszyscy pozostają zsynchronizowani.</string>
     <string name="party_start_action">Rozpocznij wspólne oglądanie</string>
-    <string name="party_sign_in_required">Zaloguj się na konto Nuvio, aby korzystać ze wspólnego oglądania.</string>
+    <string name="party_sign_in_required">Zaloguj się na konto Tuvora, aby korzystać ze wspólnego oglądania.</string>
     <string name="party_unavailable">Wspólne oglądanie jest teraz niedostępne.</string>
     <string name="party_experimental">Wspólne oglądanie jest funkcją eksperymentalną i może nie działać zgodnie z oczekiwaniami.</string>
     <string name="party_code_label">Kod grupy</string>
     <string name="party_copy_invite">Kopiuj zaproszenie</string>
     <string name="party_invite_copied">Skopiowano zaproszenie</string>
-    <string name="party_invite_message">Dołącz do wspólnego oglądania w Nuvio. Kod: %1$s\n%2$s</string>
+    <string name="party_invite_message">Dołącz do wspólnego oglądania w Tuvora. Kod: %1$s\n%2$s</string>
     <string name="party_seats">Miejsca: %1$d z %2$d</string>
     <string name="party_host">Gospodarz</string>
     <string name="party_you">Ty</string>

@@ -89,6 +89,23 @@ class SiloProviderTest {
     }
 
     @Test
+    fun identifiesTheAppAsTuvoraNotNuvio() = runTest {
+        val (silo, http) = provider { request ->
+            when (request.url.encodedPath) {
+                "/api/v2/system/info" -> ok("""{"api_major":2}""")
+                "/api/v2/system/identity" -> ok("""{"server_id":"server-1"}""")
+                "/api/v2/auth/providers" -> ok("""{"password_login":true,"items":[]}""")
+                else -> problem(404, "not_found")
+            }
+        }
+
+        silo.findServer("silo.example.com")
+
+        val sent = http.requests("/api/v2/auth/providers").single()
+        assertEquals("Tuvora", sent.headers["X-Client-Name"])
+    }
+
+    @Test
     fun aWebsiteThatIsNotSiloSaysSo() = runTest {
         val (silo, _) = provider { ok("<html>Welcome</html>") }
 
@@ -500,7 +517,7 @@ class SiloProviderTest {
         val start = Json.parseToJsonElement(http.requests("/api/v2/playback/start").single().text).jsonObject
         val context = start["client_playback_context"]!!.jsonObject
         assertEquals("mobile", context["form_factor"]?.jsonPrimitive?.content)
-        assertEquals(if (com.nuvio.app.isIos) "ios" else "android", context["device"]!!.jsonObject["platform"]?.jsonPrimitive?.content)
+        assertEquals(if (com.nuvio.app.isDesktop) "desktop" else if (com.nuvio.app.isIos) "ios" else "android", context["device"]!!.jsonObject["platform"]?.jsonPrimitive?.content)
     }
 
     @Test

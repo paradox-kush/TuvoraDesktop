@@ -4,6 +4,8 @@ import coil3.PlatformContext
 import coil3.svg.SvgDecoder
 import com.nuvio.app.buildAppImageLoader
 import com.nuvio.app.core.poster.CustomPosterFallbackInterceptor
+import com.nuvio.app.features.servers.plex.PlexArtworkInterceptor
+import com.nuvio.app.features.servers.silo.SiloArtworkInterceptor
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
@@ -19,6 +21,13 @@ class AppImageLoaderWiringTest {
         assertTrue(loader.components.interceptors.any { it is CustomPosterFallbackInterceptor }, "custom poster fallback interceptor missing")
         assertTrue(loader.components.decoderFactories.any { it is SvgDecoder.Factory }, "svg decoder missing")
         assertTrue(loader.components.fetcherFactories.any { it.first is PinnedServerImageFetcherFactory }, "pinned artwork fetcher missing")
+    }
+
+    @Test
+    fun `the desktop image loader carries the Plex and Silo artwork interceptors`() {
+        val loader = buildAppImageLoader(PlatformContext.INSTANCE)
+        assertTrue(loader.components.interceptors.any { it is PlexArtworkInterceptor }, "Plex artwork interceptor missing")
+        assertTrue(loader.components.interceptors.any { it is SiloArtworkInterceptor }, "Silo artwork interceptor missing")
     }
 
     @Test

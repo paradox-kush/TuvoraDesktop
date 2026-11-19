@@ -6,6 +6,7 @@ import com.nuvio.app.core.sync.SyncClientIdentity
 import com.nuvio.app.features.servers.ServerException
 import com.nuvio.app.features.servers.ServerFailure
 import com.nuvio.app.features.servers.mediabrowser.buildUrl
+import com.nuvio.app.isDesktop
 import com.nuvio.app.isIos
 import io.ktor.client.HttpClient
 import io.ktor.client.request.header
@@ -35,22 +36,22 @@ internal class SiloClient(
     val deviceId: String
         get() = deviceIdProvider()
 
-    /** "android" or "ios", as Silo's own apps name their platform. */
+    /** "android", "ios" or "desktop", as Silo's own apps name their platform. */
     val platform: String
-        get() = if (isIos) "ios" else "android"
+        get() = if (isDesktop) "desktop" else if (isIos) "ios" else "android"
 
     val appVersion: String
         get() = AppVersionConfig.VERSION_NAME
 
     /** The name the server shows for this device in its list of signed-in devices. */
     val deviceName: String
-        get() = "Nuvio on ${if (isIos) "iOS" else "Android"}"
+        get() = "Tuvora on ${if (isDesktop) "Desktop" else if (isIos) "iOS" else "Android"}"
 
     val deviceHeaders: Map<String, String>
         get() = mapOf(
             "X-Device-ID" to deviceId,
             "X-Silo-Device-Id" to deviceId,
-            "X-Client-Name" to "Nuvio",
+            "X-Client-Name" to "Tuvora",
             "X-Client-Version" to appVersion.take(MAX_HEADER),
         )
 

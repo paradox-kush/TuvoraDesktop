@@ -6,6 +6,7 @@ import com.nuvio.app.core.sync.SyncClientIdentity
 import com.nuvio.app.features.servers.ServerException
 import com.nuvio.app.features.servers.ServerFailure
 import com.nuvio.app.features.servers.mediabrowser.buildUrl
+import com.nuvio.app.isDesktop
 import com.nuvio.app.isIos
 import io.ktor.client.HttpClient
 import io.ktor.client.request.header
@@ -34,7 +35,7 @@ internal class PlexClient(
 
     val headers: Map<String, String>
         get() {
-            val platform = if (isIos) "iOS" else "Android"
+            val platform = if (isDesktop) "Desktop" else if (isIos) "iOS" else "Android"
             return mapOf(
                 "X-Plex-Product" to PRODUCT,
                 "X-Plex-Version" to AppVersionConfig.VERSION_NAME.take(MAX_HEADER),
@@ -93,7 +94,7 @@ internal class PlexClient(
     }
 
     companion object {
-        const val PRODUCT = "Nuvio"
+        const val PRODUCT = "Tuvora"
         const val TOKEN_HEADER = "X-Plex-Token"
         private const val MAX_HEADER = 64
     }

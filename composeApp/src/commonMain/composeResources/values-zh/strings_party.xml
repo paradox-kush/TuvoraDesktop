@@ -3,13 +3,13 @@
     <string name="party_start_title">一起看</string>
     <string name="party_start_description">邀请好友，大家用各自的播放源播放并保持同步。</string>
     <string name="party_start_action">发起一起看</string>
-    <string name="party_sign_in_required">请先登录 Nuvio 账号才能使用一起看。</string>
+    <string name="party_sign_in_required">请先登录 Tuvora 账号才能使用一起看。</string>
     <string name="party_unavailable">一起看功能当前不可用。</string>
     <string name="party_experimental">一起看仍处于实验阶段，可能无法按预期工作。</string>
     <string name="party_code_label">房间代码</string>
     <string name="party_copy_invite">复制邀请</string>
     <string name="party_invite_copied">邀请已复制</string>
-    <string name="party_invite_message">用代码 %1$s 加入我的 Nuvio 一起看\n%2$s</string>
+    <string name="party_invite_message">用代码 %1$s 加入我的 Tuvora 一起看\n%2$s</string>
     <string name="party_seats">%2$d 个座位中已用 %1$d 个</string>
     <string name="party_host">房主</string>
     <string name="party_you">你</string>

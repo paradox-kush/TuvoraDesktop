@@ -113,6 +113,8 @@ internal fun AppEnvironment(content: @Composable () -> Unit) {
  */
 internal fun coil3.ComponentRegistry.Builder.addSharedImageComponents() {
     add(CustomPosterFallbackInterceptor())
+    add(PlexArtworkInterceptor())
+    add(SiloArtworkInterceptor())
     addPlatformDecoders() // before SvgDecoder: desktop's SvgEmbeddedImageDecoder must claim SVGs with embedded images first
     add(SvgDecoder.Factory())
     add(com.nuvio.app.features.servers.PinnedServerImageFetcherFactory())

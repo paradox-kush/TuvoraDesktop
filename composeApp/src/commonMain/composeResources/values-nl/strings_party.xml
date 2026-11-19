@@ -3,13 +3,13 @@
     <string name="party_start_title">Samen kijken</string>
     <string name="party_start_description">Nodig je vrienden uit. Iedereen speelt af via eigen bronnen en blijft op hetzelfde punt in de video.</string>
     <string name="party_start_action">Kijksessie starten</string>
-    <string name="party_sign_in_required">Log in bij je Nuvio-account om samen te kijken.</string>
+    <string name="party_sign_in_required">Log in bij je Tuvora-account om samen te kijken.</string>
     <string name="party_unavailable">Samen kijken is momenteel niet beschikbaar.</string>
     <string name="party_experimental">Samen kijken is experimenteel en werkt mogelijk anders dan verwacht.</string>
     <string name="party_code_label">Sessiecode</string>
     <string name="party_copy_invite">Uitnodiging kopiëren</string>
     <string name="party_invite_copied">Uitnodiging gekopieerd</string>
-    <string name="party_invite_message">Kijk met me mee in Nuvio met code %1$s\n%2$s</string>
+    <string name="party_invite_message">Kijk met me mee in Tuvora met code %1$s\n%2$s</string>
     <string name="party_seats">%1$d van %2$d plekken bezet</string>
     <string name="party_host">Organisator</string>
     <string name="party_you">Jij</string>
