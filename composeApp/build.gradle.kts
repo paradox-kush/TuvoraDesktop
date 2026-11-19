@@ -800,10 +800,17 @@ val linuxPlayerBridgeOutput = layout.buildDirectory.file("native/linux/libplayer
 val linuxPlayerBridgeJavaHome = providers.systemProperty("java.home").get()
 val linuxPlayerBridgeSourceFile = linuxPlayerBridgeSource.asFile
 val linuxPlayerBridgeOutputFile = linuxPlayerBridgeOutput.get().asFile
+// Keep the distributed bridge compatible with x86-64 CPUs without AVX.
+val linuxPlayerBridgeCpuFlags = if (isLinuxHost && normalizedLinuxArch(System.getProperty("os.arch")) == "x86_64") {
+    "-march=x86-64 -mtune=generic"
+} else {
+    ""
+}
 val buildLinuxPlayerBridge = tasks.register<Exec>("buildLinuxPlayerBridge") {
     notCompatibleWithConfigurationCache("Builds a host-local player bridge against system libmpv.")
     enabled = isLinuxHost
     inputs.file(linuxPlayerBridgeSourceFile)
+    inputs.property("cpuFlags", linuxPlayerBridgeCpuFlags)
     outputs.file(linuxPlayerBridgeOutputFile)
     val src = linuxPlayerBridgeSourceFile.absolutePath
     val out = linuxPlayerBridgeOutputFile.absolutePath
@@ -815,6 +822,7 @@ val buildLinuxPlayerBridge = tasks.register<Exec>("buildLinuxPlayerBridge") {
         "c++ -std=c++17 -shared -fPIC -O2 " +
             "-I'$jni' -I'$jni/linux' " +
             "$(pkg-config --cflags mpv webkit2gtk-4.1 gtk+-3.0 x11 xcomposite xext) " +
+            "$linuxPlayerBridgeCpuFlags " +
             "'$src' -o '$out' " +
             "$(pkg-config --libs mpv webkit2gtk-4.1 gtk+-3.0 x11 xcomposite xext) -lpthread",
     )
@@ -1126,6 +1134,10 @@ tasks.withType<KotlinCompilationTask<*>>().configureEach {
     dependsOn(generateRuntimeConfigs)
 }
 
+tasks.withType<org.gradle.api.tasks.testing.Test>().matching { it.name == "desktopTest" }.configureEach {
+    jvmArgs("--add-opens=java.desktop/java.awt.event=ALL-UNNAMED")
+}
+
 kotlin {
     android {
         namespace = "com.nuvio.app"
@@ -1415,6 +1427,7 @@ compose.desktop {
             // bridge owns the process's GTK via initGtkEarly (skoruppa's fix).
             "-Djdk.gtk.version=0",
             "--add-opens=java.desktop/java.awt=ALL-UNNAMED",
+            "--add-opens=java.desktop/java.awt.event=ALL-UNNAMED",
             "--add-opens=java.desktop/sun.lwawt=ALL-UNNAMED",
             "--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED",
             "--add-opens=java.desktop/sun.awt.windows=ALL-UNNAMED",
@@ -1875,5 +1888,13 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     testLogging {
         events("failed", "skipped")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
+}
+
+composeCompiler {
+    stabilityConfigurationFiles.add(project.layout.projectDirectory.file("compose_stability_config.conf"))
+    if (providers.gradleProperty("composeCompilerReports").orNull == "true") {
+        metricsDestination = layout.buildDirectory.dir("compose_metrics")
+        reportsDestination = layout.buildDirectory.dir("compose_reports")
     }
 }

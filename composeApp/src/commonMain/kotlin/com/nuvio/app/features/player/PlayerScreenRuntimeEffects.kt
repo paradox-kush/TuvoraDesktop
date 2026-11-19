@@ -20,6 +20,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.nuvio.app.features.addons.AddonPlayerAction
 import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.P2pStreamRequest
@@ -41,6 +42,8 @@ import com.nuvio.app.features.servers.ServerPlayback
 import com.nuvio.app.features.servers.ServerStreams
 import com.nuvio.app.features.streams.BingeGroupCacheRepository
 import com.nuvio.app.features.streams.StreamLinkCacheRepository
+import com.nuvio.app.features.debrid.DirectDebridPlayableResult
+import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.hasLikelyExpiringPlaybackCredentials
 import com.nuvio.app.features.streams.runCatchingUnlessCancelled
@@ -168,6 +171,16 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         PlayerStreamsRepository.clearEpisodeStreams()
         resetAddonSubtitlesIfSourceChanged()
         WatchProgressRepository.ensureLoaded()
+
+        // A source that does not finish loading within the configured time counts as failed when
+        // falling back to the next source. It has an effect only where that fallback applies.
+        val startupTimeoutSeconds = playerSettingsUiState.streamAutoPlayFallbackStartupTimeoutSeconds
+        delay(startupTimeoutSeconds * 1_000L)
+        if (!initialLoadCompleted && errorMessage == null) {
+            tryFallbackToNextSourceAfterError(
+                getString(Res.string.player_error_source_startup_timeout, startupTimeoutSeconds),
+            )
+        }
     }
 
     // Re-arm the credential-refresh counter on a genuinely new stream (channel/content change). This is
@@ -593,6 +606,10 @@ private fun PlayerScreenRuntime.BindPlayerUiVisibilityEffects() {
         if (previousIsPlaying && !playbackSnapshot.isPlaying && !playbackSnapshot.isLoading) {
             pendingSeekScrobbleRestart = false
             flushWatchProgress(TrackingScrobbleAction.PAUSE)
+        }
+
+        if (!previousIsPlaying && playbackSnapshot.isPlaying) {
+            emitAddonPlayerEvent(AddonPlayerAction.START)
         }
 
         if (playbackSnapshot.isPlaying && pendingSeekScrobbleRestart) {
@@ -1027,7 +1044,15 @@ internal fun PlayerScreenRuntime.removeFailedStreamFromCache() {
     StreamLinkCacheRepository.remove(cacheKey)
 }
 
-internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message: String?): Boolean {
+/**
+ * Fetches the playing source again from its add-on (re-resolving debrid) and continues from the
+ * same position when its link has likely expired:
+ * - a link reopened from the reuse-last-link cache, which may have expired since it was saved;
+ * - a link with expiring credentials in its URL, which may already be stale when picked from
+ *   warmed-up results or may expire during playback.
+ * Each failed URL is refreshed at most once.
+ */
+internal fun PlayerScreenRuntime.tryRefreshExpiredLinkAfterError(message: String?): Boolean {
     if (ServerStreams.isServerSourceId(activeProviderAddonId)) return retryServerSourceAfterError(message)
     val streamProvider = com.nuvio.app.core.contracts.StreamSourceAccess.current()
     val failedUrl = activeSourceUrl
@@ -1039,9 +1064,13 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
     val matchedSourceId = activeProviderAddonId?.takeIf { streamProvider.isMatchSourceId(it) }
     val isIptvSource = matchedSourceId != null ||
         streamProvider.isHandledId(activeVideoId)
-    val isEligible = isIptvSource || failedUrl.hasLikelyExpiringPlaybackCredentials()
+    // Upstream 3d70db683: a link reopened from the reuse-last-link cache may have expired since it was
+    // saved, so it qualifies even without a token in its URL. Own-source (IPTV) links never enter that
+    // cache (StreamLinkReusePolicy), so this only ever widens the add-on/debrid lane.
+    val fromLinkCache = failedUrl.isNotBlank() && failedUrl == linkCacheSourceUrl
+    val isEligible = isIptvSource || fromLinkCache || failedUrl.hasLikelyExpiringPlaybackCredentials()
     iptvRefreshLog.i {
-        "gate: iptv=$isIptvSource matchedSrc=$matchedSourceId addonId=$activeProviderAddonId " +
+        "gate: iptv=$isIptvSource fromLinkCache=$fromLinkCache matchedSrc=$matchedSourceId addonId=$activeProviderAddonId " +
             "videoId=$activeVideoId expiringCreds=${failedUrl.hasLikelyExpiringPlaybackCredentials()} " +
             "jobActive=${credentialRefreshJob?.isActive} attempts=$credentialRefreshAttempts"
     }
@@ -1075,6 +1104,7 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
     // and re-arm the re-mint loop guard on the first snapshot (live keeps its snapshot baseline).
     val swapStart = sourceSwapStart()
     credentialRefreshAttempts++
+    linkCacheSourceUrl = null
     credentialRefreshBaselinePositionMs = maxOf(playbackSnapshot.positionMs.coerceAtLeast(0L), swapStart.positionMs)
     removeFailedStreamFromCache()
 
@@ -1083,6 +1113,8 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
     val expectedProviderName = activeProviderName
     val expectedStreamTitle = activeStreamTitle
     val expectedBingeGroup = currentStreamBingeGroup
+    val expectedInfoHash = activeStream?.p2pInfoHash ?: currentStreamInfoHash
+    val expectedFilename = activeStream?.behaviorHints?.filename ?: currentStreamFilename
     val type = contentType ?: parentMetaType
     val season = activeSeasonNumber
     val episode = activeEpisodeNumber
@@ -1110,6 +1142,8 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
                     expectedProviderName = expectedProviderName,
                     expectedStreamTitle = expectedStreamTitle,
                     expectedBingeGroup = expectedBingeGroup,
+                    expectedInfoHash = expectedInfoHash,
+                    expectedFilename = expectedFilename,
                 )
             } else {
                 PlayerStreamsRepository.loadSources(
@@ -1133,6 +1167,8 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
                         expectedProviderName = expectedProviderName,
                         expectedStreamTitle = expectedStreamTitle,
                         expectedBingeGroup = expectedBingeGroup,
+                        expectedInfoHash = expectedInfoHash,
+                        expectedFilename = expectedFilename,
                     )
                     if (
                         refreshedStream != null ||
@@ -1146,12 +1182,27 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
                 }
             }
 
-            val stream = refreshedStream
-            if (stream == null) {
+            val candidate = refreshedStream
+            if (candidate == null) {
                 iptvRefreshLog.w { "no replacement stream found — surfacing the original error" }
-                errorMessage = message
-                controlsVisible = !playerControlsLocked
+                showErrorUnlessSourceFallback(message)
                 return@launch
+            }
+            // Debrid links are always requested anew; a prepared or in-memory one may be the expired link.
+            val unresolved = if (candidate.debridResolved) candidate.copy(url = null, debridResolved = false) else candidate
+            val stream = when (
+                val resolved = DirectDebridPlaybackResolver.resolveToPlayableStream(
+                    stream = unresolved,
+                    season = season,
+                    episode = episode,
+                    forceRefresh = true,
+                )
+            ) {
+                is DirectDebridPlayableResult.Success -> resolved.stream
+                else -> {
+                    showErrorUnlessSourceFallback(message)
+                    return@launch
+                }
             }
 
             // A matched-lane Stalker candidate is DEFERRED ("stalker-deferred:…") — listing never
@@ -1168,12 +1219,20 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
             }
             if (refreshedUrl.isNullOrBlank() || refreshedUrl == failedUrl) {
                 iptvRefreshLog.w { "replacement URL unusable (blank=${refreshedUrl.isNullOrBlank()} sameAsFailed=${refreshedUrl == failedUrl})" }
-                errorMessage = message
-                controlsVisible = !playerControlsLocked
+                showErrorUnlessSourceFallback(message)
                 return@launch
             }
             iptvRefreshLog.i { "recovered with a fresh link, resuming at ${savedPositionMs}ms" }
 
+            if (playerSettingsUiState.streamReuseLastLinkEnabled) {
+                saveDirectStreamForReuse(stream, refreshedUrl, currentVideoId, season, episode)
+            }
+            // Upstream (source fallback): the recovered link replaces the auto-selected one in place, so a later
+            // failure still falls back from the right source; the identity/filename/subtitles follow the stream.
+            if (activeSourceUrl == autoSelectedSourceUrl) autoSelectedSourceUrl = refreshedUrl
+            externalSubtitles = stream.externalSubtitles
+            activeSourceIdentityKey = stream.playerSourceIdentityKey() ?: activeSourceIdentityKey
+            activeSourceFilename = stream.behaviorHints.filename
             flushWatchProgress()
             stopActiveP2pStream()
             activeSourceUrl = refreshedUrl
@@ -1230,19 +1289,22 @@ private fun PlayerScreenRuntime.retryServerSourceAfterError(message: String?): B
     return true
 }
 
-private fun findCredentialRefreshCandidate(
+internal fun findCredentialRefreshCandidate(
     streams: List<StreamItem>,
     failedUrl: String,
     expectedProviderAddonId: String?,
     expectedProviderName: String,
     expectedStreamTitle: String,
     expectedBingeGroup: String?,
+    expectedInfoHash: String? = null,
+    expectedFilename: String? = null,
+    canResolveDebrid: (StreamItem) -> Boolean = DirectDebridPlaybackResolver::shouldResolveToPlayableStream,
 ): StreamItem? =
     streams
         .asSequence()
         .mapNotNull { stream ->
-            val refreshedUrl = stream.playableDirectUrl?.takeIf { it.isNotBlank() && it != failedUrl }
-                ?: return@mapNotNull null
+            val hasFreshUrl = stream.playableDirectUrl?.let { it.isNotBlank() && it != failedUrl } == true
+            if (!hasFreshUrl && !stream.debridResolved && !canResolveDebrid(stream)) return@mapNotNull null
             val providerMatches = if (!expectedProviderAddonId.isNullOrBlank()) {
                 stream.addonId == expectedProviderAddonId
             } else {
@@ -1251,11 +1313,15 @@ private fun findCredentialRefreshCandidate(
             if (!providerMatches) return@mapNotNull null
 
             var score = 100
+            if (!expectedInfoHash.isNullOrBlank() && stream.p2pInfoHash.equals(expectedInfoHash, ignoreCase = true)) {
+                score += 60
+            }
             if (stream.streamLabel == expectedStreamTitle) score += 40
+            if (!expectedFilename.isNullOrBlank() && stream.behaviorHints.filename == expectedFilename) score += 30
             if (!expectedBingeGroup.isNullOrBlank() && stream.behaviorHints.bingeGroup == expectedBingeGroup) {
                 score += 20
             }
-            if (refreshedUrl.hasLikelyExpiringPlaybackCredentials()) score += 5
+            if (stream.playableDirectUrl?.hasLikelyExpiringPlaybackCredentials() == true) score += 5
             score to stream
         }
         .maxByOrNull { (score, _) -> score }

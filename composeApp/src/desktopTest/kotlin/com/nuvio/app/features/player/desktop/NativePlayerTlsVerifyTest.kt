@@ -18,7 +18,7 @@ class NativePlayerTlsVerifyTest {
         val created = CountDownLatch(verify.size)
         val controller = NativePlayerController(
             host = NativePlayerHost(),
-            nativeCreate = { _, source, _, _, _, _, _, _, _ ->
+            nativeCreate = { _, source, _, _, _, _, _, _, _, _ ->
                 events += "create:$source"
                 created.countDown()
                 41L

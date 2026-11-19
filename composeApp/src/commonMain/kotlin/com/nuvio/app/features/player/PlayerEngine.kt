@@ -36,6 +36,8 @@ interface PlayerEngineController {
     fun resetVideoPipeline(): Boolean = false
     fun setPlaybackSpeed(speed: Float)
     fun setMuted(muted: Boolean) {}
+    /** Adjusts output volume by [deltaFraction] on a 0..1 scale; true when the platform applied it. */
+    fun adjustVolumeBy(deltaFraction: Float): Boolean = false
     fun getAudioTracks(): List<AudioTrack>
     fun getSubtitleTracks(): List<SubtitleTrack>
 
@@ -389,6 +391,7 @@ data class PlayerControlsState(
     val party: PlayerControlPartyState = PlayerControlPartyState(),
     val badges: List<StreamBadge> = emptyList(),
     val chapters: List<PlayerControlChapter> = emptyList(),
+    val chapterTitleEnabled: Boolean = true,
     val chaptersLabel: String = "Chapters",
     val chaptersPanelTitle: String = "Chapters",
     val chapterRemainingTemplate: String = "{time} left",

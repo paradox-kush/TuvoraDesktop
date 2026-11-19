@@ -51,6 +51,7 @@ internal object PlayerSyncLocalKeys {
         "ios_interpolation_enabled",
         // Desktop GPU enhancement — present only in the desktop store.
         "nvidia_rtx_super_resolution_enabled",
+        "nvidia_rtx_hdr_enabled",
     )
 
     /** The payload with every device-local key removed — used on BOTH sides: over the freshly built

@@ -38,6 +38,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.Modifier
@@ -52,8 +55,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.max
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.contracts.IptvSettingsSectionAccess
+import com.nuvio.app.core.ui.ContentEntry
 import com.nuvio.app.core.ui.LocalScreenActive
 import com.nuvio.app.core.ui.ScreenActivityEffect
+import com.nuvio.app.core.ui.nuvioContentEntry
 import com.nuvio.app.core.ui.AppTheme
 import com.nuvio.app.core.ui.LocalNuvioBottomNavigationOverlayPadding
 import com.nuvio.app.core.ui.NuvioDesktopVerticalScrollbar
@@ -765,6 +770,7 @@ private fun MobileSettingsScreen(
                     splitByType = continueWatchingPreferencesUiState.splitByType,
                     showResumePromptOnLaunch = continueWatchingPreferencesUiState.showResumePromptOnLaunch,
                     sortMode = continueWatchingPreferencesUiState.sortMode,
+                    clickAction = continueWatchingPreferencesUiState.clickAction,
                 )
                 SettingsPage.PosterCustomization -> posterCustomizationSettingsContent(
                     isTablet = false,
@@ -965,6 +971,7 @@ private fun TabletSettingsScreen(
     }
 
     val saveableStateHolder = rememberSaveableStateHolder()
+    val categoryEntryRequester = remember { FocusRequester() }
 
     Row(modifier = Modifier.fillMaxSize()) {
         Surface(
@@ -1002,6 +1009,23 @@ private fun TabletSettingsScreen(
                                 onPageChange(SettingsPage.Root)
                             }
                         },
+                        modifier = Modifier
+                            .focusProperties {
+                                if (category == SettingsCategory.entries.first()) {
+                                    up = FocusRequester.Cancel
+                                }
+                                if (category == SettingsCategory.entries.last()) {
+                                    down = FocusRequester.Cancel
+                                }
+                                right = ContentEntry.requester
+                            }
+                            .then(
+                                if (category == activeCategory) {
+                                    Modifier.focusRequester(categoryEntryRequester)
+                                } else {
+                                    Modifier
+                                },
+                            ),
                     )
                 }
             }
@@ -1056,7 +1080,7 @@ private fun TabletSettingsScreen(
                 }
             }
             val watchPartyRowClick = watchPartyRow(onWatchPartyClick)
-            Box(modifier = Modifier.fillMaxSize()) {
+            Box(modifier = Modifier.fillMaxSize().nuvioContentEntry()) {
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
@@ -1208,6 +1232,7 @@ private fun TabletSettingsScreen(
                             splitByType = continueWatchingPreferencesUiState.splitByType,
                             showResumePromptOnLaunch = continueWatchingPreferencesUiState.showResumePromptOnLaunch,
                             sortMode = continueWatchingPreferencesUiState.sortMode,
+                            clickAction = continueWatchingPreferencesUiState.clickAction,
                         )
                         SettingsPage.PosterCustomization -> posterCustomizationSettingsContent(
                             isTablet = true,

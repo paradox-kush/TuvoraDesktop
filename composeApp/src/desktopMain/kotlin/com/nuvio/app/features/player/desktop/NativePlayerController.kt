@@ -68,11 +68,12 @@ internal typealias NativePlayerCreate = (
     String,
     Int,
     Boolean,
+    Boolean,
     NativePlayerEventSink,
 ) -> Long
 
 internal val defaultNativePlayerCreate: NativePlayerCreate = { target, source, headers, playWhenReady, positionMs,
-                                                 controlsPageUrl, decoderPriority, rtxVsr, sink ->
+                                                 controlsPageUrl, decoderPriority, rtxVsr, rtxHdr, sink ->
     NativePlayerBridge.ensureLoaded()
     NativePlayerBridge.create(
         hostViewPtr = target.viewPtr,
@@ -88,6 +89,7 @@ internal val defaultNativePlayerCreate: NativePlayerCreate = { target, source, h
         controlsPageUrl = controlsPageUrl,
         decoderPriority = decoderPriority,
         nvidiaRtxSuperResolutionEnabled = rtxVsr,
+        nvidiaRtxHdrEnabled = rtxHdr,
         eventSink = sink,
     )
 }
@@ -203,6 +205,7 @@ internal class NativePlayerController(
         tlsVerify: Boolean = true,
         // Non-null = a single-use link's `stream-lavf-o` (LiveLinkReconnectPolicy); null = the bridge's reconnect defaults.
         streamLavfOptions: String? = null,
+        nvidiaRtxHdrEnabled: Boolean = false,
         onError: (String?) -> Unit,
     ) {
         val pending = PendingSource(
@@ -214,6 +217,7 @@ internal class NativePlayerController(
             nvidiaRtxSuperResolutionEnabled = nvidiaRtxSuperResolutionEnabled,
             tlsVerify = tlsVerify,
             streamLavfOptions = streamLavfOptions,
+            nvidiaRtxHdrEnabled = nvidiaRtxHdrEnabled,
             onError = onError,
         )
         var terminalFailure: String? = null
@@ -391,6 +395,7 @@ internal class NativePlayerController(
                         controlsPageUrl(),
                         pending.decoderPriority,
                         pending.nvidiaRtxSuperResolutionEnabled,
+                        pending.nvidiaRtxHdrEnabled,
                         eventSink,
                     ).also { if (it == 0L) error("Native player did not return a handle.") }
                 }.onSuccess { created ->
@@ -850,6 +855,11 @@ internal class NativePlayerController(
         DesktopPlayerPictureInPicture.toggle()
     }
 
+    override fun adjustVolumeBy(deltaFraction: Float): Boolean {
+        adjustFallbackVolume(deltaFraction * 100f)
+        return true
+    }
+
     @Synchronized
     private fun adjustFallbackVolume(delta: Float) {
         val current = handle
@@ -1259,6 +1269,7 @@ internal class NativePlayerController(
             nvidiaRtxSuperResolutionEnabled = pending.nvidiaRtxSuperResolutionEnabled,
             // The re-created player must open the same way: a reconnect of a single-use link stays reconnect=0.
             streamLavfOptions = pending.streamLavfOptions,
+            nvidiaRtxHdrEnabled = pending.nvidiaRtxHdrEnabled,
             onError = pending.onError,
         )
     }
@@ -1540,6 +1551,7 @@ private data class PendingSource(
     val nvidiaRtxSuperResolutionEnabled: Boolean,
     val tlsVerify: Boolean,
     val streamLavfOptions: String?,
+    val nvidiaRtxHdrEnabled: Boolean,
     val onError: (String?) -> Unit,
 )
 
@@ -2033,6 +2045,8 @@ internal fun PlayerControlsState.toControlsJson(isFullscreen: Boolean, onImageRe
             append(",\"title\":").append(it.title.toJsonString())
             append('}')
         }
+        append(',')
+        appendJsonField("chapterTitleEnabled", chapterTitleEnabled)
         append(',')
         appendJsonField("chaptersLabel", chaptersLabel)
         append(',')

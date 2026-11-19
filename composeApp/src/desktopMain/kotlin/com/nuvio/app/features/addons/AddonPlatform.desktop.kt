@@ -55,6 +55,16 @@ internal actual object AddonStorage {
     actual fun saveSyncedAddonUrls(profileId: Int, urls: List<String>) {
         store.putString("synced_addon_urls_$profileId", json.encodeToString(urls))
     }
+
+    /** Tracking add-ons the user consented to ON THIS DEVICE (never synced): transport urls. Default: none. */
+    actual fun loadTrackingConsentUrls(profileId: Int): List<String> =
+        store.getString("tracking_consent_urls_$profileId")
+            ?.let { payload -> runCatching { json.decodeFromString<List<String>>(payload) }.getOrNull() }
+            ?: emptyList()
+
+    actual fun saveTrackingConsentUrls(profileId: Int, urls: List<String>) {
+        store.putString("tracking_consent_urls_$profileId", json.encodeToString(urls))
+    }
 }
 
 internal val desktopHttpClient = OkHttpClient.Builder()

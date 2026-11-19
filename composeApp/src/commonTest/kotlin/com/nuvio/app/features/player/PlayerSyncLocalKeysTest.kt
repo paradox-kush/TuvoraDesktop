@@ -14,7 +14,7 @@ class PlayerSyncLocalKeysTest {
             "android_playback_engine", "android_libmpv_video_output",
             "android_libmpv_hardware_decoding_enabled", "decoder_priority", "tunneling_enabled",
             "map_dv7_to_hevc", "ios_hardware_decoder_mode", "ios_tone_mapping_mode",
-            "ios_video_output_preset", "nvidia_rtx_super_resolution_enabled",
+            "ios_video_output_preset", "nvidia_rtx_super_resolution_enabled", "nvidia_rtx_hdr_enabled",
         )) {
             assertTrue(k in PlayerSyncLocalKeys.keys, "$k must be device-local")
         }

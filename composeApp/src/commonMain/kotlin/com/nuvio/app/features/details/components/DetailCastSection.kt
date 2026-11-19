@@ -38,6 +38,7 @@ import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import com.nuvio.app.core.ui.NuvioCardDepthSurface
 import com.nuvio.app.core.ui.NuvioToastController
+import com.nuvio.app.core.ui.nuvioFocusBorder
 import com.nuvio.app.core.ui.nuvioHorizontalScrollBleed
 import com.nuvio.app.core.ui.nuvioCardDepth
 import com.nuvio.app.core.ui.nuvioDesktopDragScroll
@@ -156,7 +157,9 @@ private fun CastItem(
             .width(sizing.itemWidth)
             .then(
                 if (onClick != null) {
-                    Modifier.clickable(
+                    Modifier
+                        .nuvioFocusBorder(CircleShape)
+                        .clickable(
                         interactionSource = clickInteractionSource,
                         indication = null,
                         onClick = onClick,
@@ -180,7 +183,8 @@ private fun CastItem(
                 .nuvioCardDepth(
                     shape = CircleShape,
                     surface = NuvioCardDepthSurface.Cast,
-                ),
+                )
+                .nuvioFocusBorder(CircleShape),
             contentAlignment = Alignment.Center,
         ) {
             if (person.photo != null) {

@@ -114,6 +114,8 @@ internal fun PlayerDestination(
         launchId = route.launchId,
         sourceFilename = launch.sourceFilename,
         stream = launch.stream,
+        sourceFromLinkCache = launch.sourceFromLinkCache,
+        sourceAutoSelected = launch.sourceAutoSelected,
         onBack = onBack,
         onSystemBackHandlerChanged = registerSystemBack,
         // Fork: only offered when this device has an external player it can hand off to.
