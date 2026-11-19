@@ -145,9 +145,11 @@ fun XtreamHubScreen(
     val state by XtreamHubRepository.uiState.collectAsStateWithLifecycle()
     val localLibraryItems by LibraryRepository.localItems.collectAsStateWithLifecycle()
     val liveRecents by XtreamLiveRecents.recents.collectAsStateWithLifecycle()
+    val pinPlays by LivePinSuggestions.store.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) {
         LibraryRepository.ensureLoaded()
         XtreamLiveRecents.ensureLoaded()
+        LivePinSuggestions.store.ensureLoaded()
     }
     // The tab stays composed after its first visit, so a one-shot load here went stale (a playlist
     // added in Settings never showed until restart). Follow the playlist store while visible instead.
@@ -207,7 +209,25 @@ fun XtreamHubScreen(
     // Both rails are scoped to the SELECTED account: the stores keep one flat profile-wide list
     // across every playlist, and these rails sit inside one provider's hub.
     val accountPrefix = state.selectedAccountId?.let { XtreamItemRegistry.accountPrefix(it) }
-    val liveSpecialCategories = remember(isLive, localLibraryItems, liveRecents, favoriteTitle, recentTitle, accountPrefix, accountIds, state.accounts) {
+    // Pin suggestions: channels this profile keeps playing that are not yet favourites or pinned. A favourite
+    // is what "Pin" makes (the Favorites row above lists it first); an overlay pin on a loaded row counts too.
+    val pinSuggestions = remember(isLive, pinPlays, localLibraryItems, state.categories, accountPrefix) {
+        if (!isLive || accountPrefix == null) {
+            emptyList()
+        } else {
+            val alreadyPinned = buildSet {
+                localLibraryItems.filter { XtreamItemRegistry.isLiveId(it.id) }.forEach { add(it.id) }
+                state.categories.forEach { row -> row.items.filter { it.pinned }.forEach { add(it.id) } }
+            }
+            PinSuggestionPolicy.suggest(
+                channels = pinPlays.channels.filter { it.contentId.startsWith(accountPrefix) },
+                alreadyPinned = alreadyPinned,
+                prefs = pinPlays.prefs,
+                nowMs = LivePinSuggestions.store.now(),
+            )
+        }
+    }
+    val liveSpecialCategories = remember(isLive, localLibraryItems, liveRecents, pinSuggestions, favoriteTitle, recentTitle, accountPrefix, accountIds, state.accounts) {
         if (!isLive || accountPrefix == null) {
             emptyList()
         } else {
@@ -225,6 +245,10 @@ fun XtreamHubScreen(
                     ?.let { items ->
                         add(XtreamHubCategory(SPECIAL_FAVORITES_ID, favoriteTitle, items, loaded = true))
                     }
+                if (pinSuggestions.isNotEmpty()) {
+                    // Drawn by LivePinSuggestionRail (items stay empty: the rail reads the candidates itself).
+                    add(XtreamHubCategory(SPECIAL_PIN_SUGGESTIONS_ID, "", emptyList(), loaded = true))
+                }
                 liveRecents
                     .filter { it.contentId.startsWith(accountPrefix) }
                     .map { it.toMetaPreview().withSavedChannelName(state.accounts) }
@@ -487,15 +511,26 @@ fun XtreamHubScreen(
                                     }
                                 }
                             }
-                            XtreamHubCategoryRow(
-                                category = category,
-                                live = isLive,
-                                epg = if (isLive) epgMap else emptyMap(),
-                                sectionPadding = sectionPadding,
-                                onPosterClick = onTileClick,
-                                onPosterLongClick = longClickFor(category.id),
-                                onViewAll = { openCategoryId = category.id },
-                            )
+                            if (category.id == SPECIAL_PIN_SUGGESTIONS_ID) {
+                                LivePinSuggestionRail(
+                                    candidates = pinSuggestions,
+                                    epg = epgMap,
+                                    sectionPadding = sectionPadding,
+                                    onPlay = onTileClick,
+                                    // The switch lives on the IPTV settings page, the one "Add a playlist" opens.
+                                    onOpenSettings = onAddProvider,
+                                )
+                            } else {
+                                XtreamHubCategoryRow(
+                                    category = category,
+                                    live = isLive,
+                                    epg = if (isLive) epgMap else emptyMap(),
+                                    sectionPadding = sectionPadding,
+                                    onPosterClick = onTileClick,
+                                    onPosterLongClick = longClickFor(category.id),
+                                    onViewAll = { openCategoryId = category.id },
+                                )
+                            }
                         }
                     }
                 }
@@ -1112,6 +1147,7 @@ private const val SPECIAL_CATEGORY_PREFIX = "__live_"
 private const val SPECIAL_FAVORITES_ID = "${SPECIAL_CATEGORY_PREFIX}favorites__"
 private const val SPECIAL_RECENT_ID = "${SPECIAL_CATEGORY_PREFIX}recent__"
 private const val SPECIAL_ALL_FAVORITES_ID = "${SPECIAL_CATEGORY_PREFIX}all_favorites__"
+private const val SPECIAL_PIN_SUGGESTIONS_ID = "${SPECIAL_CATEGORY_PREFIX}pin_suggestions__"
 
 /** F10: a favourite / recent shows the same cleaned name as the playlist's own rows. */
 private fun MetaPreview.withSavedChannelName(accounts: List<XtreamAccount>): MetaPreview =

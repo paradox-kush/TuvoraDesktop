@@ -230,25 +230,29 @@ internal fun IptvMasterDetail(
             }
         }
         val list: @Composable (Modifier) -> Unit = { m ->
-            IptvPlaylistListPane(
-                rows = accounts.map { rowModel(it) },
-                selectedKey = selectedKey,
-                addSelected = mode == PaneMode.Add,
-                pending = pane.pending?.takeIf { it.origin == PopoverOrigin.Row },
-                onSelect = { IptvSettingsPane.select(it); narrowShowsPane = true },
-                onOpenDetails = { narrowShowsPane = true },
-                onAdd = { IptvSettingsPane.openAdd(); narrowShowsPane = true },
-                onGuideRegions = onGuideRegions,
-                guideRegionsSummary = guideRegionsSummary,
-                onMenuAction = { action, account ->
-                    act(action, account)
-                    if (action != PlaylistMenuAction.Detach && action != PlaylistMenuAction.Remove) narrowShowsPane = true
-                },
-                onConfirmDestructive = ::confirm,
-                onDismissDestructive = IptvSettingsPane::dismissDestructive,
-                onAskRemove = { IptvSettingsPane.askDestructive(DestructiveAction.REMOVE, it, PopoverOrigin.Row) },
-                modifier = m,
-            )
+            // The list pane owns the arrow/Enter keys of its rows, so the Suggestions group sits beside it, not inside.
+            Column(modifier = m) {
+                IptvPlaylistListPane(
+                    rows = accounts.map { rowModel(it) },
+                    selectedKey = selectedKey,
+                    addSelected = mode == PaneMode.Add,
+                    pending = pane.pending?.takeIf { it.origin == PopoverOrigin.Row },
+                    onSelect = { IptvSettingsPane.select(it); narrowShowsPane = true },
+                    onOpenDetails = { narrowShowsPane = true },
+                    onAdd = { IptvSettingsPane.openAdd(); narrowShowsPane = true },
+                    onGuideRegions = onGuideRegions,
+                    guideRegionsSummary = guideRegionsSummary,
+                    onMenuAction = { action, account ->
+                        act(action, account)
+                        if (action != PlaylistMenuAction.Detach && action != PlaylistMenuAction.Remove) narrowShowsPane = true
+                    },
+                    onConfirmDestructive = ::confirm,
+                    onDismissDestructive = IptvSettingsPane::dismissDestructive,
+                    onAskRemove = { IptvSettingsPane.askDestructive(DestructiveAction.REMOVE, it, PopoverOrigin.Row) },
+                    modifier = Modifier.weight(1f),
+                )
+                LivePinSuggestionsSettings()
+            }
         }
 
         if (wide) {
