@@ -89,20 +89,10 @@ class SiloProviderTest {
     }
 
     @Test
-    fun identifiesTheAppAsTuvoraNotNuvio() = runTest {
-        val (silo, http) = provider { request ->
-            when (request.url.encodedPath) {
-                "/api/v2/system/info" -> ok("""{"api_major":2}""")
-                "/api/v2/system/identity" -> ok("""{"server_id":"server-1"}""")
-                "/api/v2/auth/providers" -> ok("""{"password_login":true,"items":[]}""")
-                else -> problem(404, "not_found")
-            }
-        }
-
-        silo.findServer("silo.example.com")
-
-        val sent = http.requests("/api/v2/auth/providers").single()
-        assertEquals("Tuvora", sent.headers["X-Client-Name"])
+    fun identifiesTheAppAsTuvoraNotNuvio() {
+        val client = SiloClient(io.ktor.client.HttpClient(), deviceIdProvider = { "device-1" })
+        assertEquals("Tuvora", client.deviceHeaders["X-Client-Name"])
+        assertTrue(client.deviceName.startsWith("Tuvora on "), client.deviceName)
     }
 
     @Test
