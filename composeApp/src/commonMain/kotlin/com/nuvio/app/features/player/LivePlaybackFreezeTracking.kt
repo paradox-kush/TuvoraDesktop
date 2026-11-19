@@ -47,7 +47,9 @@ fun LivePlaybackFreezeReporter.onLiveSnapshot(
     // which armed this watcher on a channel that never opened and looped reconnects on it.
     val started = LivePlaybackStartupPolicy.hasStarted(snapshot)
 
-    if (!isArmed && started) {
+    // A frame with no source on screen is a torn-down engine's trailing snapshot (a zap drops the source first): it
+    // belongs to the channel that just left, so it must not arm the watcher under the channel now being tuned.
+    if (!isArmed && started && streamUrl != null) {
         onLivePlaybackStarted(
             profile = LivePlaybackFreezeReporter.Profile(
                 engine = engine()?.lowercase() ?: LivePlaybackFreezeReporter.ENGINE_UNKNOWN,
@@ -61,6 +63,7 @@ fun LivePlaybackFreezeReporter.onLiveSnapshot(
         )
         // Keyed on the channel, not the URL: the full player re-arms on every URL change, and a
         // Stalker re-mint changes it every time, so a URL-keyed reset refilled the ladder (skill 02 2.1).
+        armedContentId = contentId
         reconnector.onPlaybackArmed(contentId)
     }
 
