@@ -77,6 +77,23 @@ class StalkerSeriesAbsentTest {
     }
 
     @Test
+    fun `a non-array series reply still reaches the vod fallback and keeps the Ministra series tree`() = runBlocking {
+        seriesReply = """{"js":{"error":"no such module"}}"""
+        vodCategories = """{"js":[{"id":"*","title":"All"},{"id":"1","title":"Drama"}]}"""
+        val acc = account()
+        assertEquals(listOf("1"), StalkerClient.seriesCategories(acc).getOrThrow().map { it.id })
+        assertTrue(XtreamHubSection.SERIES in tabs(acc))
+    }
+
+    @Test
+    fun `a non-array series reply with plain vod is an empty success not a failure`() = runBlocking {
+        seriesReply = """{"js":"nope"}"""
+        val r = StalkerClient.seriesCategories(account())
+        assertTrue(r.isSuccess, "the series probe stays lenient: ${r.exceptionOrNull()}")
+        assertEquals(emptyList(), r.getOrThrow().map { it.id })
+    }
+
+    @Test
     fun `an XC portal with series keeps the tab`() = runBlocking {
         seriesReply = """{"js":[{"id":"*","title":"All"},{"id":"7","title":"Drama"}]}"""
         val acc = account()

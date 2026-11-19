@@ -388,6 +388,17 @@ object XtreamHubRepository {
         showSection(accountId, state.section)
     }
 
+    /**
+     * Retry on the empty state. An empty list is cached like any other answer, so [retryCategories] alone
+     * would just replay it: drop the account's cache first so the same bounded load runs again.
+     * User-initiated only (a tap), never a loop or timer.
+     */
+    fun retryEmptyCategories() {
+        val accountId = _uiState.value.selectedAccountId ?: return
+        invalidateCatalogue(accountId)
+        retryCategories()
+    }
+
     /** Show cached categories instantly, else fetch the (cheap) category list. */
     private fun showSection(accountId: String, section: XtreamHubSection) {
         val account = accountFor(accountId)
