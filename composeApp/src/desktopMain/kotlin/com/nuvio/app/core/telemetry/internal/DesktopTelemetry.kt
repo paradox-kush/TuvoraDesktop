@@ -1,12 +1,14 @@
 package com.nuvio.app.core.telemetry.internal
 
 import com.nuvio.app.core.analytics.PostHogPrivacy
+import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.core.build.AppVersionConfig
 import com.nuvio.app.core.storage.DesktopStorage
 import com.nuvio.app.features.settings.SentrySettingsRepository
 import com.posthog.PostHog
 import com.posthog.PostHogBeforeSend
 import com.posthog.PostHogConfig
+import com.posthog.internal.PostHogMemoryPreferences
 import com.posthog.logs.PostHogBeforeSendLog
 import java.nio.file.Files
 import java.nio.file.Path
@@ -14,6 +16,7 @@ import java.nio.file.StandardCopyOption
 import java.security.SecureRandom
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /**
@@ -27,6 +30,41 @@ internal object DesktopTelemetry {
     private const val HOST = "https://us.i.posthog.com"
 
     private var started = false
+
+    /** Where the install id lives: beside the support code. Shared by both PostHog paths. */
+    private val identity = DesktopInstallIdentity(DesktopTelemetryFileStore(DesktopStorage.rootDir.resolve("telemetry")))
+
+    @Volatile
+    private var installId: String? = null
+
+    /** The SDK's preference store. Its "distinctId"/"anonymousId" keys are what `PostHog.distinctId()` reads. */
+    private var sdkPrefs: PostHogMemoryPreferences? = null
+
+    /** Every super property registered so far, so the exit-time POST can carry the same set. */
+    private val registered = ConcurrentHashMap<String, Any>()
+
+    fun registeredSnapshot(): Map<String, Any> = HashMap(registered)
+
+    /** The install id for the exit path; the SDK's own id only when none is stored (diagnostics never on). */
+    fun distinctIdForExit(): String = installId ?: identity.peek() ?: PostHog.distinctId()
+
+    fun register(key: String, value: Any) {
+        registered[key] = value
+        PostHog.register(key, value)
+    }
+
+    /**
+     * Makes the stored install id the SDK's distinct id. Only [crashReportsEnabled] installs create the file;
+     * an opted-out install reuses an id it already has and writes nothing.
+     */
+    private fun applyInstallId(create: Boolean) {
+        val id = (if (create) identity.loadOrCreate() else identity.peek()) ?: return
+        installId = id
+        sdkPrefs?.apply {
+            setValue("distinctId", id)
+            setValue("anonymousId", id)
+        }
+    }
 
     @Volatile
     private var lastHandled: Throwable? = null
@@ -70,7 +108,11 @@ internal object DesktopTelemetry {
 
     /** PostHog setup lives here so the SDK is named in one place. Call once consent is loaded. */
     fun configurePostHog(crashReportsEnabled: Boolean, version: String) {
+        // The JVM SDK's default preference store is in memory, so its generated id dies with the process. Own the
+        // store so the stored install id can be seeded into it before the first event.
+        val prefs = PostHogMemoryPreferences().also { sdkPrefs = it }
         val config = PostHogConfig(apiKey = PROJECT_TOKEN, host = HOST).apply {
+            cachePreferences = prefs
             errorTrackingConfig.autoCapture = true
             optOut = !crashReportsEnabled
             sendFeatureFlagEvent = false
@@ -88,20 +130,24 @@ internal object DesktopTelemetry {
             flushIntervalSeconds = 10
             releaseIdentifier = version
         }
+        applyInstallId(create = crashReportsEnabled)
         PostHog.setup(config)
         if (crashReportsEnabled) PostHog.optIn() else PostHog.optOut()
         PostHog.register(PostHogPrivacy.GEOIP_DISABLE_PROPERTY, true)
-        PostHog.register("\$app_name", "Tuvora Desktop")
-        PostHog.register("\$app_version", version)
-        PostHog.register("\$app_namespace", "com.tuvora.desktop")
-        PostHog.register("\$device_type", "Desktop")
-        PostHog.register("\$os", System.getProperty("os.name").orEmpty().take(64))
+        for ((k, v) in DesktopTelemetryPayload.staticSuperProperties(
+            version = version,
+            osName = System.getProperty("os.name").orEmpty(),
+            buildFlavor = AppFeaturePolicy.buildFlavor,
+            installSource = INSTALL_SOURCE,
+        )) register(k, v)
         // Re-wrap now that the SDK has installed its own handler, then register super properties.
         installCrashHandler()
         TelemetryRuntime.service?.onSdkReady()
     }
 
     fun setOptIn(enabled: Boolean) {
+        // Turning diagnostics on later is the first moment an opted-out install may get an id.
+        if (enabled && installId == null) applyInstallId(create = true)
         if (enabled) PostHog.optIn() else PostHog.optOut()
     }
 
@@ -119,6 +165,9 @@ internal object DesktopTelemetry {
     }
 
     private const val EXIT_GRACE_MS = 750L
+
+    /** How Desktop is installed (same value on every Desktop build; other platforms report their own). */
+    private const val INSTALL_SOURCE = "direct"
 
     private fun detectGpuName(): String {
         val os = System.getProperty("os.name").orEmpty().lowercase(Locale.ROOT)
@@ -207,9 +256,12 @@ internal class DesktopTelemetryHost(private val gpu: () -> String?) : TelemetryH
     override fun capture(event: String, props: Map<String, Any>, timestampMs: Long?) {
         // Consent is the source of truth. The SDK's opt-in follows it asynchronously (a collector), so a
         // "Turn on" immediately followed by "Send report" would be dropped by an SDK that is still opted out.
-        if (consentEnabled() && PostHog.isOptOut()) PostHog.optIn()
+        if (!consentEnabled()) return
+        if (PostHog.isOptOut()) PostHog.optIn()
         if (DesktopSyncSender.shuttingDown && event == SESSION_HEALTH_EVENT &&
-            DesktopSyncSender.send(event, props + registeredProps(), timestampMs)
+            DesktopSyncSender.send(
+                event, props, DesktopTelemetry.registeredSnapshot(), DesktopTelemetry.distinctIdForExit(), timestampMs,
+            )
         ) return
         if (timestampMs != null) PostHog.capture(event, properties = props, timestamp = Date(timestampMs))
         else PostHog.capture(event, properties = props)
@@ -222,7 +274,7 @@ internal class DesktopTelemetryHost(private val gpu: () -> String?) : TelemetryH
     override fun flush() = PostHog.flush()
 
     override fun registerSuperProperties(props: Map<String, Any>) {
-        for ((k, v) in props) PostHog.register(k, v)
+        for ((k, v) in props) DesktopTelemetry.register(k, v)
     }
 
     override fun hardwareProfile(): Map<String, Any> = buildMap {
@@ -249,13 +301,6 @@ internal class DesktopTelemetryHost(private val gpu: () -> String?) : TelemetryH
     private fun osBean(): com.sun.management.OperatingSystemMXBean? = runCatching {
         java.lang.management.ManagementFactory.getOperatingSystemMXBean() as? com.sun.management.OperatingSystemMXBean
     }.getOrNull()
-
-    private fun registeredProps(): Map<String, Any> = buildMap {
-        loadSupportCode()?.let { put("support_code", it) }
-        put("\$app_name", "Tuvora Desktop")
-        put("\$app_version", appVersion)
-        put("\$os", System.getProperty("os.name").orEmpty().take(64))
-    }
 
     private companion object {
         const val SUPPORT_CODE_FILE = "support_code.txt"

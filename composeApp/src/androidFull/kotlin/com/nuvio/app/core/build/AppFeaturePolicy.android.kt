@@ -23,5 +23,7 @@ actual object AppFeaturePolicy {
     actual val notificationsEnabled: Boolean = true
     actual val externalPlayerSupported: Boolean = true
     actual val downloadForegroundServiceEnabled: Boolean = true
+    /** Build flavor reported in analytics as `build_flavor`: "full" (sideload) or "store" (Play / App Store). */
+    actual val buildFlavor: String = "full"
     actual val customServerConnectionsEnabled: Boolean = false
 }
