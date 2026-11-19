@@ -600,7 +600,7 @@
     <string name="settings_licenses_attributions_mdblist_title">Lista MDBL</string>
     <string name="settings_licenses_attributions_mdblist_body">Tuvora utiliza MDBList para calificaciones y datos de proveedores de puntuaciones externos. Tuvora no está afiliado ni respaldado por MDBList.</string>
     <string name="settings_licenses_attributions_introdb_title">IntroducciónDB</string>
-    <string name="settings_licenses_attributions_introdb_body">Tuvora utiliza la API IntroDB para la introducción, el resumen, los créditos y las marcas de tiempo de vista previa proporcionadas por la comunidad utilizadas por los controles de omisión. Tuvora no está afiliado ni respaldado por IntroDB.</string>
+    <string name="settings_licenses_attributions_introdb_body">Tuvora utiliza la API IntroDB para la introducción, el resumen, los créditos y las marcas de tiempo de vista previa proporcionadas por la comunidad utilizadas por los controles de omisión. Tuvora no está afiliado ni respaldado por IntroDB. Contains data from IntroDB (introdb.app), available under the ODbL.</string>
     <string name="settings_licenses_attributions_mpvkit_title">MPVKit</string>
     <string name="settings_licenses_attributions_mpvkit_body">Se utiliza para la reproducción en compilaciones de iOS.</string>
     <string name="settings_licenses_attributions_mpvkit_license">La fuente MPVKit por sí sola tiene licencia LGPL v3.0. Los paquetes MPVKit, incluidas las bibliotecas libmpv y FFmpeg, también tienen licencia LGPL v3.0.</string>

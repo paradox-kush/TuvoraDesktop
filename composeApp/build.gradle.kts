@@ -237,7 +237,7 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
                 |package com.nuvio.app.features.player.skip
                 |
                 |object IntroDbConfig {
-                |    const val URL = "${props.getProperty("INTRODB_API_URL", "")}" 
+                |    const val URL = "${props.getProperty("INTRODB_API_URL", "").ifBlank { "https://api.introdb.app" }}"
                 |}
                 """.trimMargin()
             )
