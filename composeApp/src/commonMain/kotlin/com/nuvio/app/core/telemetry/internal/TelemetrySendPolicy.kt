@@ -22,8 +22,12 @@ internal object TelemetrySendPolicy {
         "crash", "native_crash", "anr", "initialization_failure", "user_requested_crash",
     )
 
+    /** One-time funnel events: sent on purpose (a handful per install), never an error, never a trail. */
+    val explicitSendEvents: Set<String> = setOf(FirstRunFunnel.EVENT)
+
     fun decide(event: String, props: Map<String, Any>): SendDecision = when {
         event == SCREEN_EVENT -> SendDecision.RECORD_ONLY
+        event in explicitSendEvents -> SendDecision.SEND
         event in countedAlways -> SendDecision.COUNT
         event in countedUnlessFailed -> if (isFailure(props)) SendDecision.SEND else SendDecision.COUNT
         event == "app_exit" -> decideExit(props)
@@ -34,7 +38,7 @@ internal object TelemetrySendPolicy {
 
     /** Error events carry the recorder's last entries (`diag_trail`); routine SEND events do not. */
     fun attachesTrail(event: String, props: Map<String, Any>): Boolean =
-        errorMarkers.any { it in event.lowercase() } || isFailure(props)
+        event !in explicitSendEvents && errorMarkers.any { it in event.lowercase() } || isFailure(props)
 
     fun isFailure(props: Map<String, Any>): Boolean {
         val outcome = (props["outcome"] as? String)?.lowercase()

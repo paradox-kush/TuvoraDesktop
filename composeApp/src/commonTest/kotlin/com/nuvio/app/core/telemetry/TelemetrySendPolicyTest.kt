@@ -65,4 +65,12 @@ class TelemetrySendPolicyTest {
         assertTrue(TelemetrySendPolicy.attachesTrail("app_uncaught_exception_ios", emptyMap()))
         assertFalse(TelemetrySendPolicy.attachesTrail("simkl_sync", mapOf("outcome" to "ok")))
     }
+
+    @Test
+    fun `first_run_step is listed as SEND and attaches no trail`() {
+        val props = mapOf<String, Any>("step" to "first_launch", "schema_version" to 1, "launch_index" to 1, "secs_since_first_launch" to 0)
+        assertEquals(SendDecision.SEND, decide("first_run_step", *props.toList().toTypedArray()))
+        assertFalse(TelemetrySendPolicy.attachesTrail("first_run_step", props))
+        assertTrue("first_run_step" in TelemetrySendPolicy.explicitSendEvents)
+    }
 }
