@@ -257,7 +257,7 @@ object EpisodeReleaseNotificationsRepository {
             }
 
         trackedShowsByKey = buildMap {
-            stored?.followedShows.orEmpty().forEach { trackedShow ->
+            pruneToSeriesShows(stored?.followedShows.orEmpty()).forEach { trackedShow ->
                 put(buildTrackedShowKey(trackedShow.contentType, trackedShow.contentId), trackedShow)
             }
         }
@@ -308,7 +308,7 @@ object EpisodeReleaseNotificationsRepository {
     private fun reconcileTrackedShows(state: LibraryUiState): Boolean {
         if (!state.isLoaded) return false
 
-        val seriesItems = state.items.filter { item -> isSeriesLibraryType(item.type) }
+        val seriesItems = enrollableSeriesItems(state.items)
         val nextTrackedShows = linkedMapOf<String, TrackedFollowedShow>()
 
         seriesItems.forEach { item ->
@@ -427,8 +427,7 @@ object EpisodeReleaseNotificationsRepository {
     private fun currentTestTarget(): LibraryItem? {
         LibraryRepository.ensureLoaded()
         val libraryItems = LibraryRepository.uiState.value.items
-        return libraryItems.firstOrNull { item -> isSeriesLibraryType(item.type) }
-            ?: libraryItems.firstOrNull()
+        return enrollableSeriesItems(libraryItems).firstOrNull()
     }
 
     private suspend fun buildRequestsForShow(trackedShow: TrackedFollowedShow): List<EpisodeReleaseNotificationRequest> {
