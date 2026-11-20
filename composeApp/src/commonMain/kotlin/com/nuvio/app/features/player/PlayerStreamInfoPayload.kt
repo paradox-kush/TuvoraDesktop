@@ -29,6 +29,10 @@ internal data class PlayerStreamInfoPayload(
     val audioChannels: Int? = null,
     val audioSampleRate: Int? = null,
     val audioBitrate: Double? = null,
+    /** HDR transfer (PQ / HLG) in use, when the native side knows. */
+    val hdr: Boolean? = null,
+    /** `hw` or `sw` video decoding, when the native side knows. */
+    val decodeMode: String? = null,
 )
 
 private val streamInfoJson = Json {
@@ -57,6 +61,8 @@ internal fun decodePlayerStreamInfo(json: String?, engineLabel: String): PlayerS
         audioChannelCount = payload.audioChannels?.takeIf { it > 0 },
         audioSampleRate = payload.audioSampleRate?.takeIf { it > 0 },
         audioBitrate = payload.audioBitrate?.takeIf { it > 0.0 }?.toInt(),
+        hdr = payload.hdr,
+        decodeMode = payload.decodeMode?.takeIf { it == "hw" || it == "sw" },
         playerEngine = engineLabel,
     )
 }

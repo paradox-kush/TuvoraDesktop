@@ -722,6 +722,20 @@ internal class NativePlayerController(
         (ensureLiveWorker() ?: throw RejectedExecutionException("player released")).execute(refresh)
     }
 
+    /**
+     * Decode-health facts (telemetry only) for [snapshot], read on the same worker and served from the shadow,
+     * like [videoSizeShadow]: no blocking mpv read on the UI thread.
+     */
+    private val decodeHealthShadow = MpvDecodeHealthShadow(property = { name ->
+        var value = ""
+        withLiveHandle { current -> value = NativePlayerBridge.stringProperty(current, name) }
+        value
+    })
+
+    private fun cachedDecodeHealth(): MpvDecodeHealthShadow.Facts = decodeHealthShadow.current { refresh ->
+        (ensureLiveWorker() ?: throw RejectedExecutionException("player released")).execute(refresh)
+    }
+
     private fun refreshLiveWindow() {
         withLiveHandle { current ->
             val state = NativePlayerBridge.stringProperty(current, "demuxer-cache-state")
@@ -754,6 +768,7 @@ internal class NativePlayerController(
         }
         liveWindowShadow = null
         videoSizeShadow.reset()
+        decodeHealthShadow.reset()
         worker?.shutdownNow()
         if (liveNativeLock.tryLock(LIVE_NATIVE_LOCK_WAIT_MS, TimeUnit.MILLISECONDS)) liveNativeLock.unlock()
     }
@@ -953,6 +968,7 @@ internal class NativePlayerController(
                 voDelayedFrameCount = voFrameStats and 0xFFFF_FFFFL,
                 videoWidth = videoSize.width,
                 videoHeight = videoSize.height,
+                decodeHealth = decodeHealthShadow.signals(cachedDecodeHealth(), voFrameStats ushr 32),
             )
         }.getOrDefault(PlayerPlaybackSnapshot(isLoading = true))
     }
@@ -1289,6 +1305,9 @@ internal class NativePlayerController(
             PlayerStreamInfo(playerEngine = ENGINE_LABEL_LIBMPV)
         }
     }
+
+    /** Telemetry's stream facts, from the decode-health shadow: unlike [getStreamInfo] it never reads mpv here. */
+    override fun getTelemetryStreamInfo(): PlayerStreamInfo = decodeHealthShadow.streamInfo()
 
     override fun getAudioTracks(): List<AudioTrack> =
         decodeTracks { NativePlayerBridge.audioTracksJson(it) }.map { track ->

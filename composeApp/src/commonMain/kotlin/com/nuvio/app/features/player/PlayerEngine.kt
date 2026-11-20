@@ -48,6 +48,13 @@ interface PlayerEngineController {
      * thread when playback starts.
      */
     fun getStreamInfo(): PlayerStreamInfo = PlayerStreamInfo()
+
+    /**
+     * Stream facts for telemetry only. Defaults to [getStreamInfo]; an engine whose [getStreamInfo] makes
+     * blocking native reads (Desktop mpv) overrides this to answer from cached facts, because telemetry is
+     * built on the UI thread.
+     */
+    fun getTelemetryStreamInfo(): PlayerStreamInfo = getStreamInfo()
     fun applyAudioLanguagePreferences(languages: List<String>)
     fun selectAudioTrack(index: Int)
     fun selectSubtitleTrack(index: Int)
