@@ -1,6 +1,7 @@
 package com.nuvio.app.features.notifications
 
 import com.nuvio.app.core.time.parseEpisodeReleaseLocalDate
+import com.nuvio.app.features.library.LibraryItem
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import nuvio.composeapp.generated.resources.Res
@@ -56,11 +57,19 @@ internal fun buildTrackedShowKey(
 ): String = "${normalizeSeriesType(type)}:${id.trim()}"
 
 internal fun normalizeSeriesType(type: String): String = when (type.trim().lowercase()) {
-    "tv", "show", "series", "tvshow" -> "series"
+    "show", "series", "tvshow" -> "series"
     else -> type.trim().lowercase()
 }
 
 internal fun isSeriesLibraryType(type: String): Boolean = normalizeSeriesType(type) == "series"
+
+/** Library items that can have episode alerts: episodic shows only. */
+internal fun enrollableSeriesItems(items: List<LibraryItem>): List<LibraryItem> =
+    items.filter { item -> isSeriesLibraryType(item.type) }
+
+/** Drops stored entries that are not episodic shows (e.g. live channels saved by older builds). */
+internal fun pruneToSeriesShows(shows: List<TrackedFollowedShow>): List<TrackedFollowedShow> =
+    shows.filter { show -> isSeriesLibraryType(show.contentType) }
 
 internal fun releaseDateIso(rawValue: String?): String? {
     return parseEpisodeReleaseLocalDate(rawValue)
