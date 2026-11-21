@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.time.TimeSource
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.getString
 
@@ -231,16 +232,23 @@ class AppUpdaterController internal constructor(
                 )
             }
 
+            // The reader reports per read (thousands of times for one installer); publish whole percents, at most
+            // every 250 ms, so a download does not rebuild the updater state per read (B274).
+            val throttle = UpdateProgressThrottle()
+            val startedAt = TimeSource.Monotonic.markNow()
             val result = AppUpdaterPlatform.downloadUpdateAsset(
                 assetUrl = update.assetUrl,
                 assetName = update.assetName,
             ) { downloadedBytes, totalBytes ->
                 downloadContext.ensureActive()
-                val progress = if (totalBytes != null && totalBytes > 0L) {
-                    (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
-                } else {
-                    null
-                }
+                val knownTotal = totalBytes != null && totalBytes > 0L
+                val progress = throttle.accept(
+                    downloadedBytes = downloadedBytes,
+                    totalBytes = totalBytes,
+                    nowMs = startedAt.elapsedNow().inWholeMilliseconds,
+                )
+                // Unknown total: "preparing" (null) once; known total: only when the throttle lets one through.
+                if (knownTotal && progress == null) return@downloadUpdateAsset
                 _uiState.update { state ->
                     if (state.updateChannel == channel) state.copy(downloadProgress = progress) else state
                 }

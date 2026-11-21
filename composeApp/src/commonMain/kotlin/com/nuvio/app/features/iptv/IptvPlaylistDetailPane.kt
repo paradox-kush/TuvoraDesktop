@@ -1,5 +1,6 @@
 package com.nuvio.app.features.iptv
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -29,7 +30,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -121,7 +121,7 @@ internal fun IptvPlaylistDetailPane(
     // UX179: "Refresh now". The controller owns the work and the cooldown lives in the engine; this only renders it.
     val refreshScope = androidx.compose.runtime.rememberCoroutineScope()
     val refreshController = remember(account.id, refreshScope) { IptvManualRefreshController(refreshScope) }
-    val refreshState by refreshController.state.collectAsState()
+    val refreshState by refreshController.state.collectAsStateWithLifecycle()
     LaunchedEffect(account.id) { refreshController.load(account) }
     Column(
         modifier = modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(start = 8.dp, end = 4.dp, bottom = 24.dp),

@@ -38,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -49,6 +50,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.features.player.ImmersivePlaybackGate
 import com.nuvio.app.features.player.rememberIsInPictureInPicture
@@ -90,17 +93,22 @@ fun AppUpdaterHost(
         return
     }
 
-    val state by controller.uiState.collectAsStateWithLifecycle()
+    // The host reads only the coarse shape of the updater state (is there an update, is a dialog up). Download
+    // progress ticks change `uiState` many times a second, and a host that read all of it would re-run `content`
+    // (the whole app) on every tick; they are read in [UpdateBannerSlot] instead (B274).
+    val shape by remember(controller) {
+        controller.uiState.map { it.hostShape() }.distinctUntilChanged()
+    }.collectAsStateWithLifecycle(initialValue = controller.uiState.value.hostShape())
     var showReleaseNotes by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(controller) {
         controller.ensureAutoCheckStarted()
     }
-    LaunchedEffect(state.update?.tag) {
+    LaunchedEffect(shape.update?.tag) {
         showReleaseNotes = false
     }
 
-    val update = state.update
+    val update = shape.update
     // The banner is a Column sibling of the whole app content (below), so it SHRINKS the UI rather
     // than floating over it. Over a full-bleed player that letterboxes the picture; on mobile the
     // same structure squeezed the PiP window down to a sliver. Ask the policy, don't inline it.
@@ -108,7 +116,7 @@ fun AppUpdaterHost(
     val inPictureInPicture = rememberIsInPictureInPicture()
     val showBanner = UpdateBannerVisibilityPolicy.mayOccupyLayout(
         hasUpdate = update != null,
-        dialogRequested = state.showDialog,
+        dialogRequested = shape.showDialog,
         immersivePlaybackActive = immersivePlaybackActive,
         inPictureInPicture = inPictureInPicture,
     )
@@ -126,13 +134,10 @@ fun AppUpdaterHost(
             ) + fadeOut(animationSpec = tween(durationMillis = 150)),
         ) {
             update?.let { availableUpdate ->
-                AppUpdateBanner(
-                    state = state,
+                UpdateBannerSlot(
+                    controller = controller,
                     update = availableUpdate,
-                    onDownload = controller::downloadUpdate,
-                    onInstall = controller::installDownloadedUpdate,
                     onShowReleaseNotes = { showReleaseNotes = true },
-                    onDismiss = controller::dismissDialog,
                 )
             }
         }
@@ -160,12 +165,43 @@ fun AppUpdaterHost(
         )
     }
 
-    if (state.showInstallPermissionDialog) {
+    if (shape.showInstallPermissionDialog) {
         UnknownSourcesDialog(
             onContinue = controller::resumeInstallation,
             onDismiss = controller::dismissDialog,
         )
     }
+}
+
+/** What the host needs from the updater state: everything that is NOT a download-progress tick. */
+private data class UpdaterHostShape(
+    val update: AppUpdate?,
+    val showDialog: Boolean,
+    val showInstallPermissionDialog: Boolean,
+)
+
+private fun AppUpdaterUiState.hostShape() = UpdaterHostShape(
+    update = update,
+    showDialog = showDialog,
+    showInstallPermissionDialog = showInstallPermissionDialog,
+)
+
+/** The only reader of the full updater state: progress ticks recompose this banner and nothing above it. */
+@Composable
+private fun UpdateBannerSlot(
+    controller: AppUpdaterController,
+    update: AppUpdate,
+    onShowReleaseNotes: () -> Unit,
+) {
+    val state by controller.uiState.collectAsStateWithLifecycle()
+    AppUpdateBanner(
+        state = state,
+        update = update,
+        onDownload = controller::downloadUpdate,
+        onInstall = controller::installDownloadedUpdate,
+        onShowReleaseNotes = onShowReleaseNotes,
+        onDismiss = controller::dismissDialog,
+    )
 }
 
 @Composable
