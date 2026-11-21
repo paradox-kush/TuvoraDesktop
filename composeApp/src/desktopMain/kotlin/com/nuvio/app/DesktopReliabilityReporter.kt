@@ -3,6 +3,7 @@ package com.nuvio.app
 import com.nuvio.app.core.build.AppVersionConfig
 import com.nuvio.app.core.telemetry.api.TelemetryAccess
 import com.nuvio.app.core.telemetry.internal.DesktopTelemetry
+import com.nuvio.app.core.telemetry.internal.TelemetryRuntime
 import com.nuvio.app.features.settings.SentrySettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -17,8 +18,9 @@ import kotlin.io.path.exists
 /**
  * Desktop counterpart of the Android/iOS PostHog setup.
  *
- * The JVM SDK installs exception autocapture, persists its queue, and uploads failures on the
- * next healthy run. Only coarse runtime metadata is registered; file paths, launch arguments,
+ * The JVM SDK installs exception autocapture and queues events as files under telemetry/posthog-queue
+ * (DesktopPostHogConfig sets storagePrefix; without it the SDK drops every event), replaying leftovers
+ * on the next launch. Only coarse runtime metadata is registered; file paths, launch arguments,
  * stream URLs, provider hosts, and account values are deliberately excluded.
  */
 internal object DesktopReliabilityReporter {
@@ -44,8 +46,14 @@ internal object DesktopReliabilityReporter {
                 Thread(
                     {
                         processExitTracker.markCleanExit()
-                        // session_health goes out synchronously inside; see DesktopTelemetry.exitAndFlush.
-                        DesktopTelemetry.exitAndFlush { TelemetryAccess.current().onBackground() }
+                        // session_health is sent synchronously on THIS thread, before the grace period and close
+                        // (onBackground would only start it in a coroutine that the grace period can outrun).
+                        DesktopTelemetry.exitAndFlush(
+                            sendHealthNow = {
+                                TelemetryRuntime.service?.apply { sampleMemoryOnce(); sendHealth() }
+                            },
+                            finalize = { TelemetryAccess.current().onBackground() },
+                        )
                     },
                     "PostHogShutdown",
                 )

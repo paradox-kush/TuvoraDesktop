@@ -15,6 +15,10 @@ internal object DesktopSyncSender {
     var shuttingDown = false
 
     private const val URL = "https://us.i.posthog.com/batch/"
+
+    /** Where [send] posts. Only a test points it elsewhere (a localhost server); production never changes it. */
+    @Volatile
+    internal var endpoint: String = URL
     private const val API_KEY = "phc_o824qv3fcxKW9NvF4K6mYKX3rScK5CBQzrSx4RQ5b6ye"
     private const val TIMEOUT_MS = 3_000L
 
@@ -32,7 +36,7 @@ internal object DesktopSyncSender {
             timestampMs = timestampMs ?: System.currentTimeMillis(),
         )
         val client = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(TIMEOUT_MS)).build()
-        val request = HttpRequest.newBuilder(URI.create(URL))
+        val request = HttpRequest.newBuilder(URI.create(endpoint))
             .timeout(Duration.ofMillis(TIMEOUT_MS))
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(body))

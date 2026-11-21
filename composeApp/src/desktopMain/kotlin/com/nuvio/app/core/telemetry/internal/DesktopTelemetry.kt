@@ -6,10 +6,7 @@ import com.nuvio.app.core.build.AppVersionConfig
 import com.nuvio.app.core.storage.DesktopStorage
 import com.nuvio.app.features.settings.SentrySettingsRepository
 import com.posthog.PostHog
-import com.posthog.PostHogBeforeSend
-import com.posthog.PostHogConfig
 import com.posthog.internal.PostHogMemoryPreferences
-import com.posthog.logs.PostHogBeforeSendLog
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -30,6 +27,14 @@ internal object DesktopTelemetry {
     private const val HOST = "https://us.i.posthog.com"
 
     private var started = false
+
+    /** Queue staleness measured at launch (diagnostics ON only); rides on `session_health` as two numbers. */
+    @Volatile
+    var queueBacklog: TelemetryQueueBacklog? = null
+        private set
+
+    /** The SDK's on-disk event queue lives beside the install id (SDK adds `<apiKey>/` under it). */
+    private val queueRoot: Path = DesktopStorage.rootDir.resolve("telemetry").resolve("posthog-queue")
 
     /** Where the install id lives: beside the support code. Shared by both PostHog paths. */
     private val identity = DesktopInstallIdentity(DesktopTelemetryFileStore(DesktopStorage.rootDir.resolve("telemetry")))
@@ -111,26 +116,14 @@ internal object DesktopTelemetry {
         // The JVM SDK's default preference store is in memory, so its generated id dies with the process. Own the
         // store so the stored install id can be seeded into it before the first event.
         val prefs = PostHogMemoryPreferences().also { sdkPrefs = it }
-        val config = PostHogConfig(apiKey = PROJECT_TOKEN, host = HOST).apply {
-            cachePreferences = prefs
-            errorTrackingConfig.autoCapture = true
-            optOut = !crashReportsEnabled
-            sendFeatureFlagEvent = false
-            preloadFeatureFlags = false
-            surveys = false
-            sessionReplay = false
-            tracingHeaders = emptyList()
-            logs.addBeforeSend(PostHogBeforeSendLog { null })
-            addBeforeSend(PostHogBeforeSend { event ->
-                if (PostHogPrivacy.shouldDropEvent(event.event)) null
-                else event.copy(
-                    properties = PostHogPrivacy.sanitize(event.properties.orEmpty()).toMutableMap(),
-                )
-            })
-            flushIntervalSeconds = 10
-            releaseIdentifier = version
-        }
+        val config = DesktopPostHogConfig.build(PROJECT_TOKEN, HOST, prefs, crashReportsEnabled, version, queueRoot)
         applyInstallId(create = crashReportsEnabled)
+        // Opted out: nothing queued earlier may be uploaded later. Opted in: note how stale the leftover queue is.
+        if (crashReportsEnabled) {
+            queueBacklog = DesktopTelemetryQueue.scan(queueRoot, PROJECT_TOKEN, System.currentTimeMillis())
+        } else {
+            DesktopTelemetryQueue.purge(queueRoot, PROJECT_TOKEN)
+        }
         PostHog.setup(config)
         if (crashReportsEnabled) PostHog.optIn() else PostHog.optOut()
         PostHog.register(PostHogPrivacy.GEOIP_DISABLE_PROPERTY, true)
@@ -148,7 +141,10 @@ internal object DesktopTelemetry {
     fun setOptIn(enabled: Boolean) {
         // Turning diagnostics on later is the first moment an opted-out install may get an id.
         if (enabled && installId == null) applyInstallId(create = true)
-        if (enabled) PostHog.optIn() else PostHog.optOut()
+        if (enabled) PostHog.optIn() else {
+            PostHog.optOut()
+            DesktopTelemetryQueue.purge(queueRoot, PROJECT_TOKEN)
+        }
     }
 
     /**
@@ -156,15 +152,14 @@ internal object DesktopTelemetry {
      * one event that exists only at exit (`session_health`) is POSTed synchronously (short timeout) while
      * [shuttingDown] is set; everything else gets a bounded grace period for the async queue.
      */
-    fun exitAndFlush(finalize: () -> Unit) {
-        DesktopSyncSender.shuttingDown = true
-        runCatching(finalize)
-        runCatching { PostHog.flush() }
-        runCatching { Thread.sleep(EXIT_GRACE_MS) }
-        runCatching { PostHog.close() }
+    fun exitAndFlush(sendHealthNow: () -> Unit = {}, finalize: () -> Unit) {
+        DesktopExitHook.run(
+            sendHealthNow = sendHealthNow,
+            finalize = finalize,
+            flush = { PostHog.flush() },
+            close = { PostHog.close() },
+        )
     }
-
-    private const val EXIT_GRACE_MS = 750L
 
     /** How Desktop is installed (same value on every Desktop build; other platforms report their own). */
     private const val INSTALL_SOURCE = "direct"
@@ -238,8 +233,9 @@ internal class DesktopTelemetryHost(private val gpu: () -> String?) : TelemetryH
     override val appVersion: String = AppVersionConfig.DESKTOP_VERSION_NAME.ifBlank { "dev" }
     override val store: TelemetryFileStore = DesktopTelemetryFileStore(DesktopStorage.rootDir.resolve("telemetry"))
 
-    // The JVM SDK's queue is in memory: after flush() a quick quit can still lose the event, so the service keeps
-    // sending.json and re-sends once more after the delivery-confirm window.
+    // The SDK queue is now on disk (see DesktopPostHogConfig.storagePrefix), but a write is asynchronous: a quick
+    // quit right after flush() can still lose the event. Left false so the service keeps sending.json and
+    // re-sends once more after the delivery-confirm window (the owner may flip this later).
     override val deliveryDurable: Boolean = false
 
     override fun nowMs(): Long = System.currentTimeMillis()
@@ -258,13 +254,15 @@ internal class DesktopTelemetryHost(private val gpu: () -> String?) : TelemetryH
         // "Turn on" immediately followed by "Send report" would be dropped by an SDK that is still opted out.
         if (!consentEnabled()) return
         if (PostHog.isOptOut()) PostHog.optIn()
+        // Delivery-failure signal: how stale the on-disk queue was at launch (numbers only). Diagnostics are ON here.
+        val payload = if (event == SESSION_HEALTH_EVENT) DesktopTelemetry.queueBacklog?.let { props + it.asProps() } ?: props else props
         if (DesktopSyncSender.shuttingDown && event == SESSION_HEALTH_EVENT &&
             DesktopSyncSender.send(
-                event, props, DesktopTelemetry.registeredSnapshot(), DesktopTelemetry.distinctIdForExit(), timestampMs,
+                event, payload, DesktopTelemetry.registeredSnapshot(), DesktopTelemetry.distinctIdForExit(), timestampMs,
             )
         ) return
-        if (timestampMs != null) PostHog.capture(event, properties = props, timestamp = Date(timestampMs))
-        else PostHog.capture(event, properties = props)
+        if (timestampMs != null) PostHog.capture(event, properties = payload, timestamp = Date(timestampMs))
+        else PostHog.capture(event, properties = payload)
     }
 
     override fun captureException(error: Throwable, props: Map<String, Any>) {
