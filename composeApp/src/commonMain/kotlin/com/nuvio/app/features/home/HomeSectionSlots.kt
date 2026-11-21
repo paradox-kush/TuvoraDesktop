@@ -16,6 +16,10 @@ internal class HomeSectionSlots {
     }
 
     fun emit(scope: LazyListScope, order: List<String>) {
-        order.forEach { id -> blocks[id]?.forEach { block -> scope.block() } }
+        // The lazy list may re-run its content lambda without the screen recomposing; blocks that
+        // stayed behind would be emitted again and crash on a duplicate item key. Emit once, then reset.
+        val pending = blocks.toMap()
+        blocks.clear()
+        order.forEach { id -> pending[id]?.forEach { block -> scope.block() } }
     }
 }

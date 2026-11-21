@@ -1008,7 +1008,6 @@ fun HomeScreen(
     LaunchedEffect(hasWatchHistory) { HomeCatalogSettingsRepository.reportWatchHistory(hasWatchHistory) }
     val homeSectionOrder = HomeSectionOrderPolicy.visibleOrder(homeSettingsUiState.homeSections, hasWatchHistory)
     val heroPinnedTop = showHeroSlot && homeSectionOrder.firstOrNull() == HomeSectionIds.HERO
-    val homeSectionSlots = HomeSectionSlots()
     MaintainHomeScrollPosition(
         listState = homeListState,
         profileId = activeProfileId,
@@ -1104,6 +1103,7 @@ fun HomeScreen(
             topPadding = effectiveTopPadding,
             listState = homeListState,
         ) {
+            val homeSectionSlots = HomeSectionSlots()
             if (!heroPinnedTop && announcementSection != null && showAnnouncement) {
                 item(key = "home-announcement", contentType = "announcement") {
                     HomeAnnouncementSlot(
