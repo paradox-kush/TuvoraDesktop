@@ -1,3 +1,8 @@
+<!--
+Hebrew: Android looks for values-iw (it reports Hebrew with the legacy language code "iw"),
+while iOS and desktop look for values-he.
+Therefore, duplicate the values-he directory as values-iw. Keep both directories in the project.
+-->
 <resources>
     <string name="theme_gold">זהב</string>
     <string name="theme_jade">ירקן</string>
@@ -418,7 +423,6 @@
     <string name="compose_nav_library">ספרייה</string>
     <string name="compose_nav_profile">פרופיל</string>
     <string name="compose_nav_search">חיפוש</string>
-    <string name="compose_nav_settings">הגדרות</string>
     <string name="compose_player_audio_tracks">רצועות שמע</string>
     <string name="compose_player_audio_delay">השהיית שמע</string>
     <string name="compose_player_audio_amplification">הגברה</string>
@@ -2567,4 +2571,5 @@
     <string name="subtitle_shadow_opacity">שקיפות הצל</string>
     <string name="subtitle_shadow_size">גודל הצל</string>
     <string name="subtitle_reset_appearance">איפוס מראה</string>
+    <string name="compose_nav_settings">הגדרות</string>
 </resources>
