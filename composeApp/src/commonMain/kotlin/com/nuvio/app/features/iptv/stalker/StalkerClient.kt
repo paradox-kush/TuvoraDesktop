@@ -845,7 +845,7 @@ object StalkerClient : IptvClient {
             is StalkerVodCommandPolicy.Plan.Direct -> {
                 val first = createLinkResult(acc, "vod", plan.cmd)
                 if (first is StalkerLinkResult.Link || !canTryFiles(first)) first
-                else mintFromMovieFiles(acc, streamId, fallback = null, previous = first, skipCmd = plan.cmd)
+                else mintFromMovieFiles(acc, streamId, fallback = plan.fallback, previous = first, skipCmd = plan.cmd)
             }
             is StalkerVodCommandPolicy.Plan.FilesFirst -> mintFromMovieFiles(acc, streamId, plan.fallback, previous = null)
         }
