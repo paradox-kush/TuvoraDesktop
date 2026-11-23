@@ -1,5 +1,6 @@
 package com.nuvio.app.features.livetv
 
+import com.nuvio.app.features.player.keepawake.PlaybackKeepAwakePolicy
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -228,6 +229,7 @@ fun LiveTvScreen(
     // from playbackError so the one-shot automatic re-resolve below does not re-open the ladder.
     var reconnectGaveUp by remember { mutableStateOf(false) }
     var snapshot by remember { mutableStateOf(PlayerPlaybackSnapshot()) }
+    var userPausedPlain by remember { mutableStateOf(false) }
     var controller by remember { mutableStateOf<PlayerEngineController?>(null) }
     // Live TV hosts its own player surface rather than going through PlayerScreen, so the
     // stream readout has to be wired up here too — this is the surface users actually ask
@@ -1008,7 +1010,16 @@ fun LiveTvScreen(
     }
     val onPlayPause: () -> Unit = {
         if (pause.handlesPlayPause) pause.togglePlayPause(snapshot.isPlaying)
-        else if (snapshot.isPlaying) controller?.pause() else controller?.play()
+        else {
+            userPausedPlain = snapshot.isPlaying
+            if (snapshot.isPlaying) controller?.pause() else controller?.play()
+        }
+    }
+    LaunchedEffect(snapshot.isPlaying, source) { if (snapshot.isPlaying) userPausedPlain = false }
+    // The viewer paused on purpose: held until the engine plays again (any resume, zap or retry clears it).
+    val liveUserPaused = when (pauseState) {
+        is LivePauseState.Shifted -> (pauseState as LivePauseState.Shifted).paused
+        else -> userPausedPlain
     }
     val pausePlaying = when (pauseState) {
         is LivePauseState.Shifted -> !(pauseState as LivePauseState.Shifted).paused
@@ -1145,7 +1156,17 @@ fun LiveTvScreen(
         // desktop it is only a display-sleep inhibitor and docked is the normal way to watch, so
         // it stays on there whenever the screen is up — otherwise the monitor sleeps mid-channel.
         if (fullscreen || !LiveTvFullscreenFollowsWindowAspect) {
-            EnterImmersivePlayerMode(keepScreenAwake = snapshot.isPlaying || snapshot.isLoading)
+            // B279: hold by watch intent. A live stall or reconnect reports isPlaying=false with no
+            // spinner, and the old isPlaying||isLoading let the monitor sleep mid-channel.
+            EnterImmersivePlayerMode(
+                keepScreenAwake = PlaybackKeepAwakePolicy.shouldHold(
+                    playIntent = true, // opening, resolving, stalled and reconnecting are all still watching
+                    userPaused = liveUserPaused,
+                    ended = false,
+                    error = playbackError != null || resolveError || reconnectGaveUp,
+                    inBackground = false,
+                ),
+            )
         }
 
         // Fullscreen controls auto-hide while playing; always shown when docked.
