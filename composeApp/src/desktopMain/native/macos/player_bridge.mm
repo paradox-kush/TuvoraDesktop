@@ -213,7 +213,8 @@ static void storeNextCreateStreamLavfOptions(JNIEnv *env, jstring options) {
 - (void)applySubtitleAppearanceWithFont:(NSString *)font
                               fontsDir:(NSString *)fontsDir
                            shadowColor:(NSString *)shadowColor
-                          shadowOffset:(double)shadowOffset;
+                          shadowOffset:(double)shadowOffset
+                            shadowBlur:(double)shadowBlur;
 - (void)handleScriptMessage:(NSDictionary *)message;
 - (void)startMpvEventDrain;
 - (void)applyVolumeSplit:(double)percent;
@@ -2704,12 +2705,14 @@ static void nuvioMpvWakeup(void *ctx) {
 - (void)applySubtitleAppearanceWithFont:(NSString *)font
                               fontsDir:(NSString *)fontsDir
                            shadowColor:(NSString *)shadowColor
-                          shadowOffset:(double)shadowOffset {
+                          shadowOffset:(double)shadowOffset
+                            shadowBlur:(double)shadowBlur {
     if (!_mpv) return;
     if (fontsDir.length > 0) [self setStringProperty:"sub-fonts-dir" value:fontsDir];
     [self setStringProperty:"sub-font" value:font];
     [self setStringProperty:"sub-shadow-color" value:shadowColor];
     mpv_set_property(_mpv, "sub-shadow-offset", MPV_FORMAT_DOUBLE, &shadowOffset);
+    mpv_set_property(_mpv, "sub-blur", MPV_FORMAT_DOUBLE, &shadowBlur);
 }
 
 - (void)applySubtitleStyleWithTextColor:(NSString *)textColor
@@ -3024,7 +3027,7 @@ static void nuvioMpvWakeup(void *ctx) {
 
 - (NSString *)channelLayoutNameWithChannels:(NSString *)channels channelCount:(int)channelCount {
     NSString *normalized = [self ifNotBlank:channels];
-    if (normalized && ![normalized isEqualToString:@"unknown"]) {
+    if (normalized && ![normalized.lowercaseString hasPrefix:@"unknown"]) {
         NSString *lower = normalized.lowercaseString;
         if ([lower isEqualToString:@"mono"]) return @"Mono";
         if ([lower isEqualToString:@"stereo"]) return @"Stereo";
@@ -4139,7 +4142,8 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setSubtitleAppeara
     jstring font,
     jstring fontsDir,
     jstring shadowColor,
-    jfloat shadowOffset
+    jfloat shadowOffset,
+    jfloat shadowBlur
 ) {
     if (handle == 0) return;
     std::string fontName = jstringToString(env, font);
@@ -4150,6 +4154,7 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setSubtitleAppeara
         [player applySubtitleAppearanceWithFont:[NSString stringWithUTF8String:fontName.c_str()]
                                        fontsDir:[NSString stringWithUTF8String:dir.c_str()]
                                     shadowColor:[NSString stringWithUTF8String:shadow.c_str()]
-                                   shadowOffset:(double)shadowOffset];
+                                   shadowOffset:(double)shadowOffset
+                                     shadowBlur:(double)shadowBlur];
     });
 }

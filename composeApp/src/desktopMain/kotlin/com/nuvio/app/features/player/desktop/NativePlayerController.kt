@@ -58,6 +58,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 import javax.swing.SwingUtilities
 import kotlin.concurrent.Volatile
+import kotlin.math.roundToInt
 
 internal typealias NativePlayerCreate = (
     NativePlayerHostTarget,
@@ -1449,12 +1450,13 @@ internal class NativePlayerController(
     }
 
     private fun applySubtitleStyle(handle: Long, style: SubtitleStyleState, useLibass: Boolean) {
+        val shadow = style.toMpvSubtitleShadow()
         NativePlayerBridge.applySubtitleStyle(
             handle = handle,
             textColor = style.textColor.toMpvColorString(),
             backgroundColor = style.backgroundColor.toMpvColorString(),
-            outlineColor = style.outlineColor.toMpvColorString(),
-            outlineSize = if (style.outlineEnabled) style.outlineWidth.toFloat() else 0f,
+            outlineColor = shadow.outlineColor,
+            outlineSize = shadow.outlineSize,
             bold = style.bold,
             fontSize = style.toMpvSubtitleFontSize(),
             subPos = style.toMpvSubtitlePosition(),
@@ -1470,19 +1472,21 @@ internal class NativePlayerController(
                 SubtitleStyleMpvMapping.properties(
                     backgroundColorHex = style.backgroundColor.toMpvColorString(),
                     backgroundAlpha = style.backgroundColor.alpha,
-                    outlineColorHex = style.outlineColor.toMpvColorString(),
-                    outlineSize = if (style.outlineEnabled) style.outlineWidth.toDouble() else 0.0,
+                    // Upstream's softened shadow may swap in a thin transparent outline (glyph guard):
+                    // take the outline from it so this mapping does not undo that.
+                    outlineColorHex = shadow.outlineColor,
+                    outlineSize = shadow.outlineSize.toDouble(),
                     sideMarginPercent = style.sideMarginPercent,
                 ),
             )
         }
-        val shadowAlpha = if (style.appearance.shadowEnabled) (style.appearance.shadowOpacity * 255 / 100) else 0
         NativePlayerBridge.setSubtitleAppearance(
             handle = handle,
             font = SubtitleFontResolver.mpvFontName(style.appearance.fontId),
             fontsDir = SubtitleFontResolver.fontsDir(),
-            shadowColor = "#" + shadowAlpha.toHexByte() + "000000",
-            shadowOffset = if (style.appearance.shadowEnabled) style.appearance.shadowSize.toFloat() else 0f,
+            shadowColor = shadow.color,
+            shadowOffset = shadow.offset,
+            shadowBlur = shadow.blur,
         )
     }
 
@@ -1548,6 +1552,41 @@ private fun Color.toMpvColorString(): String {
 
 private fun SubtitleStyleState.toMpvSubtitlePosition(): Int =
     (100 - (bottomOffset / 2)).coerceIn(0, 150)
+
+private const val OUTLINED_SHADOW_OPACITY_SCALE = 0.47f
+
+private data class MpvSubtitleShadow(
+    val color: String,
+    val offset: Float,
+    val blur: Float,
+    val outlineColor: String,
+    val outlineSize: Float,
+)
+
+private fun SubtitleStyleState.toMpvSubtitleShadow(): MpvSubtitleShadow {
+    val outlineSize = if (outlineEnabled) outlineWidth.toFloat() else 0f
+    val outlineColor = outlineColor.toMpvColorString()
+    if (!appearance.shadowEnabled) {
+        return MpvSubtitleShadow(
+            color = "#00000000",
+            offset = 0f,
+            blur = 0f,
+            outlineColor = outlineColor,
+            outlineSize = outlineSize,
+        )
+    }
+    val softened = backgroundColor.alpha == 0f
+    val needsGlyphGuard = softened && outlineSize == 0f
+    val opacityScale = if (softened && !needsGlyphGuard) OUTLINED_SHADOW_OPACITY_SCALE else 1f
+    val shadowAlpha = (appearance.shadowOpacity * 255 / 100 * opacityScale).roundToInt().coerceIn(0, 255)
+    return MpvSubtitleShadow(
+        color = "#" + shadowAlpha.toHexByte() + "000000",
+        offset = appearance.shadowSize.toFloat(),
+        blur = if (softened) (appearance.shadowSize * 0.5f + 1f).coerceIn(1.5f, 4f) else 0f,
+        outlineColor = if (needsGlyphGuard) "#00000000" else outlineColor,
+        outlineSize = if (needsGlyphGuard) 1f else outlineSize,
+    )
+}
 
 private fun SubtitleStyleState.toMpvSubtitleFontSize(): Float =
     (fontSizeSp * 3f).coerceIn(18f, 96f)
