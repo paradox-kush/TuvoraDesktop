@@ -1436,7 +1436,8 @@ compose.desktop {
             // 1 GB initial and a quarter of RAM as maximum) and G1 keeps hundreds
             // of MB committed for a live set of roughly 100 MB.
             "-Xms128m",
-            "-Xmx2g",
+            // Fork: upstream also adds -Xmx2g here; the -Xmx1g above is the ceiling the memory
+            // budgets are sized against (later -Xmx flags win), so it is not taken.
             "-XX:MinHeapFreeRatio=10",
             "-XX:MaxHeapFreeRatio=30",
             // Lets an idle app hand unused heap back to the system.
