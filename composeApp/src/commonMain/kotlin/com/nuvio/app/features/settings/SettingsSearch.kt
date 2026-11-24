@@ -284,7 +284,11 @@ internal fun settingsSearchEntries(
         title = integrationsPage,
         description = stringResource(Res.string.compose_settings_root_integrations_description),
     )
-    if (notificationsEnabled) {
+    if (com.nuvio.app.core.contracts.notificationsPageVisible(
+            notificationsEnabled,
+            com.nuvio.app.core.contracts.SportsAlertsSettingsSectionAccess.isRegistered(),
+        )
+    ) {
         addPage(
             page = SettingsPage.Notifications,
             key = "notifications",

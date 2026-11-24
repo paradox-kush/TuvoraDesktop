@@ -42,5 +42,14 @@ object SportsAlertsSettingsSectionAccess {
     private var section: SportsAlertsSettingsSection? = null
     fun register(s: SportsAlertsSettingsSection) { section = s }
     fun current(): SportsAlertsSettingsSection? = section
+    fun isRegistered(): Boolean = section != null
     fun resetForTest() { section = null }
 }
+
+/**
+ * Whether the Notifications settings entry and page are reachable. The build policy's [notificationsEnabled] gates the
+ * episode alerts and the test notification; a registered Sports alerts section opens the page on its own (Desktop has
+ * the policy off but still wants Sports alerts). Neutral: settings never names the radar feature.
+ */
+fun notificationsPageVisible(notificationsEnabled: Boolean, sportsAlertsRegistered: Boolean): Boolean =
+    notificationsEnabled || sportsAlertsRegistered

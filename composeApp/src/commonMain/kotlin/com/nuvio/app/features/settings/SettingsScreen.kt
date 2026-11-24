@@ -127,7 +127,10 @@ private fun SettingsPage.isEnabledByPolicy(): Boolean =
         SettingsPage.SupportersContributors -> AppFeaturePolicy.supportersContributorsPageEnabled
         SettingsPage.PlaybackP2p -> P2pSettingsRepository.isVisible
         SettingsPage.PlaybackBuffer -> !isIos && !isDesktop
-        SettingsPage.Notifications -> AppFeaturePolicy.notificationsEnabled
+        SettingsPage.Notifications -> com.nuvio.app.core.contracts.notificationsPageVisible(
+            AppFeaturePolicy.notificationsEnabled,
+            com.nuvio.app.core.contracts.SportsAlertsSettingsSectionAccess.isRegistered(),
+        )
         else -> true
     }
 
@@ -683,7 +686,10 @@ private fun MobileSettingsScreen(
                             onPageClick = { openSearchTarget(SettingsSearchTarget.Page(it)) },
                             onSwitchProfileClick = onSwitchProfile,
                             onWatchPartyClick = watchPartyRowClick,
-                            showNotificationsEntry = AppFeaturePolicy.notificationsEnabled,
+                            showNotificationsEntry = com.nuvio.app.core.contracts.notificationsPageVisible(
+                                AppFeaturePolicy.notificationsEnabled,
+                                com.nuvio.app.core.contracts.SportsAlertsSettingsSectionAccess.isRegistered(),
+                            ),
                         )
                     }
                 }
@@ -757,6 +763,7 @@ private fun MobileSettingsScreen(
                 )
                 SettingsPage.Notifications -> notificationsSettingsContent(
                     isTablet = false,
+                    showEpisodeAlerts = AppFeaturePolicy.notificationsEnabled,
                     uiState = episodeReleaseNotificationsUiState,
                 )
                 SettingsPage.ContinueWatching -> continueWatchingSettingsContent(
@@ -1144,7 +1151,10 @@ private fun TabletSettingsScreen(
                                     onPageClick = ::openInlinePage,
                                     onSwitchProfileClick = onSwitchProfile,
                                     onWatchPartyClick = watchPartyRowClick,
-                                    showNotificationsEntry = AppFeaturePolicy.notificationsEnabled,
+                                    showNotificationsEntry = com.nuvio.app.core.contracts.notificationsPageVisible(
+                                AppFeaturePolicy.notificationsEnabled,
+                                com.nuvio.app.core.contracts.SportsAlertsSettingsSectionAccess.isRegistered(),
+                            ),
                                     category = activeCategory,
                                 )
                             }
@@ -1219,6 +1229,7 @@ private fun TabletSettingsScreen(
                         )
                         SettingsPage.Notifications -> notificationsSettingsContent(
                             isTablet = true,
+                            showEpisodeAlerts = AppFeaturePolicy.notificationsEnabled,
                             uiState = episodeReleaseNotificationsUiState,
                         )
                         SettingsPage.ContinueWatching -> continueWatchingSettingsContent(

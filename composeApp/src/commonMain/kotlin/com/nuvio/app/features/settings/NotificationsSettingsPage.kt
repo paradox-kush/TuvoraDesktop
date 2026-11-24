@@ -34,8 +34,10 @@ import org.jetbrains.compose.resources.stringResource
 internal fun LazyListScope.notificationsSettingsContent(
     isTablet: Boolean,
     uiState: EpisodeReleaseNotificationsUiState,
+    /** False on Desktop: only the Sports alerts section shows (the page is open for it alone). */
+    showEpisodeAlerts: Boolean = true,
 ) {
-    item {
+    if (showEpisodeAlerts) item {
         SettingsSection(
             title = stringResource(Res.string.settings_notifications_section_alerts),
             isTablet = isTablet,
@@ -58,7 +60,7 @@ internal fun LazyListScope.notificationsSettingsContent(
         with(section) { sportsAlertsSettings(isTablet) }
     }
 
-    item {
+    if (showEpisodeAlerts) item {
         SettingsSection(
             title = stringResource(Res.string.settings_notifications_section_test),
             isTablet = isTablet,
