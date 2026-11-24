@@ -100,8 +100,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.first
 
 private val sportsMatchLog = Logger.withTag("SportsChannelMatch")
+
+/** How long a sports alert's "Open game" waits for the hub's own fixture load before it is dropped. */
+private const val GAME_REQUEST_DEADLINE_MS = 15_000L
 
 /** Fast score tick: only leagues/teams with a live-or-imminent fixture, so it transfers a live
  *  subset (often nothing) rather than the whole followed set. */
@@ -166,6 +170,24 @@ fun SportsHubScreen(
             sheetFixture = it
             com.nuvio.app.core.contracts.SportsMatchRequest.consume()
         }
+    }
+    // A sports alert's "Open game": open that game's page once its fixture is held (else today's match sheet).
+    val requestedGamePage by com.nuvio.app.core.contracts.SportsGameRequest.gameId.collectAsStateWithLifecycle()
+    // Waits only for the hub's own load: a fixture still not held once loading has settled (or after the deadline)
+    // drops the request, so the game never opens late and unprompted.
+    LaunchedEffect(requestedGamePage) {
+        val id = requestedGamePage ?: return@LaunchedEffect
+        val fx = withTimeoutOrNull(GAME_REQUEST_DEADLINE_MS) {
+            RadarRepository.uiState.first { s -> s.fixtureByKey(id) != null || !s.loadingFixtures }.fixtureByKey(id)
+        }
+        com.nuvio.app.core.contracts.SportsGameRequest.consume()
+        fx?.let(openFixture)
+    }
+    // Sports alerts never interrupt the game whose page is open (gate 3).
+    val openGameKey = detailFixture?.let(::radarFixtureKey)
+    androidx.compose.runtime.DisposableEffect(openGameKey) {
+        openGameKey?.let(com.nuvio.app.features.radar.alerts.SportsAlerts::openedGame)
+        onDispose { openGameKey?.let(com.nuvio.app.features.radar.alerts.SportsAlerts::closedGame) }
     }
     // Discovery drill-in: a league/event page listing everything happening in it.
     var leaguePage by remember { mutableStateOf<RadarLeague?>(null) }
@@ -278,6 +300,12 @@ fun SportsHubScreen(
                     globalScoresShown = state.scoreSpoiler.shown,
                     onRevealGame = { RadarRepository.revealGame(radarFixtureKey(fx)) },
                     onHideGame = { RadarRepository.hideGame(radarFixtureKey(fx)) },
+                    // Sports alerts for this one game: Default / All / Off (followed games only).
+                    alertsChip = gameAlertsChip(state, fx),
+                    onAlertsChip = {
+                        val start = fx.startEpochMs
+                        if (start != null) com.nuvio.app.features.radar.alerts.SportsAlerts.cycleGame(radarFixtureKey(fx), start)
+                    },
                 )
             }
         }
@@ -295,6 +323,15 @@ fun SportsHubScreen(
             onPlayReplay = onPlayReplay,
         )
     }
+}
+
+/** The game page's alerts chip for [fx], or null when the game is neither in a followed league nor has a followed team. */
+@Composable
+private fun gameAlertsChip(state: RadarUiState, fx: RadarFixture): com.nuvio.app.features.sportsdetail.api.GameAlertsChip? {
+    val signedIn by com.nuvio.app.features.radar.alerts.SportsAlerts.signedIn.collectAsStateWithLifecycle()
+    if (fx.startEpochMs == null) return null
+    return com.nuvio.app.features.radar.alerts.SportsAlerts.gameChip(state, radarFixtureKey(fx), fx.leagueId, fx.homeId, fx.awayId, signedIn)
+        ?.let { com.nuvio.app.features.sportsdetail.api.GameAlertsChip(it.label, it.selected, it.enabled) }
 }
 
 // --- overview (the tab's main scroll) -----------------------------------------
@@ -388,7 +425,7 @@ private fun SportsOverview(
                 null
             },
         )
-        ScoreSpoilerChips(state.scoreSpoiler, Modifier.padding(start = NuvioTokens.Space.s16, end = NuvioTokens.Space.s16, bottom = NuvioTokens.Space.s4))
+        ScoreSpoilerChips(state, Modifier.padding(start = NuvioTokens.Space.s16, end = NuvioTokens.Space.s16, bottom = NuvioTokens.Space.s4))
         Box(Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -1243,15 +1280,26 @@ private fun SportsLiveRail(
  * "Delay: Off / 15 s / 30 s / 60 s" (one press cycles). Both flip the per-profile, synced setting.
  */
 @Composable
-private fun ScoreSpoilerChips(settings: ScoreSpoilerSettings, modifier: Modifier = Modifier) {
+private fun ScoreSpoilerChips(state: RadarUiState, modifier: Modifier = Modifier) {
+    val settings = state.scoreSpoiler
+    val signedIn by com.nuvio.app.features.radar.alerts.SportsAlerts.signedIn.collectAsStateWithLifecycle()
+    val alerts = com.nuvio.app.features.radar.alerts.SportsAlertLabels.hubChip(state.prefs.alerts, signedIn)
     // Desktop keyboard: Left/Right move between the chips (DesktopFocusOrderPolicy); Tab / Enter are Compose defaults.
-    val count = if (settings.shown) 2 else 1
+    // The alerts bell is the last chip: index 1, or 2 while the delay chip is shown.
+    val count = if (settings.shown) 3 else 2
     val requesters = remember(count) { List(count) { androidx.compose.ui.focus.FocusRequester() } }
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8), verticalAlignment = Alignment.CenterVertically) {
         Chip(label = settings.toggleLabel, selected = !settings.shown, onClick = { RadarRepository.toggleScoresShown() }, modifier = Modifier.desktopChipKeys(0, requesters))
         if (settings.shown) {
             Chip(label = settings.delayLabel, selected = settings.delayMs > 0, onClick = { RadarRepository.cycleScoreDelay() }, modifier = Modifier.desktopChipKeys(1, requesters))
         }
+        Chip(
+            label = alerts.label,
+            selected = alerts.selected,
+            enabled = alerts.enabled,
+            onClick = com.nuvio.app.features.radar.alerts.SportsAlerts::toggleEnabled,
+            modifier = Modifier.desktopChipKeys(count - 1, requesters),
+        )
     }
 }
 

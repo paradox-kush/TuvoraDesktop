@@ -110,6 +110,9 @@ fun GameDetailScreen(
     onRevealGame: () -> Unit,
     /** "Hide again": puts this game back under the global Hide scores. */
     onHideGame: () -> Unit,
+    /** Sports alerts for this game ("Alerts: Default / All / Off"); null = not a followed game, no chip. */
+    alertsChip: GameAlertsChip? = null,
+    onAlertsChip: () -> Unit = {},
 ) {
     val service = LocalSportsDetail.current
     val watch = LocalGameWatch.current
@@ -190,6 +193,7 @@ fun GameDetailScreen(
                     onRetryWatch = { scope.launch { controller.retryWatch() } },
                     revealChip = view.revealChip(revealedHere, globalScoresShown), hiddenCard = view.showsHiddenCard,
                     onRevealGame = onRevealGame, onHideGame = onHideGame,
+                    alertsChip = alertsChip, onAlertsChip = onAlertsChip,
                 )
             }
         }
@@ -208,8 +212,13 @@ private fun LoadedContent(
     hiddenCard: Boolean,
     onRevealGame: () -> Unit,
     onHideGame: () -> Unit,
+    alertsChip: GameAlertsChip?,
+    onAlertsChip: () -> Unit,
 ) {
     val detail = s.detail
+    val alertsItem: @Composable () -> Unit = {
+        alertsChip?.let { Chip(label = it.label, selected = it.selected, onClick = onAlertsChip, enabled = it.enabled) }
+    }
     val onChip = if (revealChip == GameRevealChip.HIDE_AGAIN) onHideGame else onRevealGame
     // The card already carries the reveal action, so the chip steps aside for it.
     val showChip = revealChip != GameRevealChip.NONE && !hiddenCard
@@ -246,6 +255,7 @@ private fun LoadedContent(
                     LazyColumn(Modifier.weight(0.44f), verticalArrangement = gap) {
                         item(key = "score") { GameScoreboard(detail) }
                         if (showChip || hiddenCard) item(key = "spoiler") { spoilerItem() }
+                        if (alertsChip != null) item(key = "alerts") { alertsItem() }
                         s.staleLabel?.let { item(key = "stale") { StaleChip(it) } }
                         stripItems(detail)
                         item(key = "watch") { watchCard() }
@@ -262,6 +272,7 @@ private fun LoadedContent(
                 LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = pad, verticalArrangement = gap) {
                     item(key = "score") { GameScoreboard(detail) }
                         if (showChip || hiddenCard) item(key = "spoiler") { spoilerItem() }
+                    if (alertsChip != null) item(key = "alerts") { alertsItem() }
                     s.staleLabel?.let { item(key = "stale") { StaleChip(it) } }
                     stripItems(detail)
                     item(key = "watch") { watchCard() }

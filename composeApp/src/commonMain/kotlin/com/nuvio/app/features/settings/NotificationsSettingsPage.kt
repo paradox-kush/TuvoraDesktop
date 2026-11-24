@@ -53,6 +53,11 @@ internal fun LazyListScope.notificationsSettingsContent(
         }
     }
 
+    // In-app sports alerts (fork, registered by FeatureWiring): absent when the Sports feature is.
+    com.nuvio.app.core.contracts.SportsAlertsSettingsSectionAccess.current()?.let { section ->
+        with(section) { sportsAlertsSettings(isTablet) }
+    }
+
     item {
         SettingsSection(
             title = stringResource(Res.string.settings_notifications_section_test),

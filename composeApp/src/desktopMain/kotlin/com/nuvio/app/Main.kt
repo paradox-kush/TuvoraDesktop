@@ -215,6 +215,8 @@ fun main(args: Array<String>) {
                         }
                     }
             }
+            // Sports alerts keep running while the window is on screen, even unfocused (see AppWindowPresence).
+            TrackAppWindowPresence(windowState)
             DisposableEffect(window, windowState) {
                 val unregisterFullscreenToggle = registerDesktopAppFullscreenToggle(
                     handler = { targetWindow ->
