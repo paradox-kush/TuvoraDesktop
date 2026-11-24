@@ -10,6 +10,7 @@ internal enum class SendDecision { SEND, RECORD_ONLY, COUNT }
  */
 internal object TelemetrySendPolicy {
     const val SCREEN_EVENT = "\$screen"
+    private const val SPORTS_ALERT = "sports_alert"
 
     private val countedAlways = setOf("playback_started", "iptv_index_build")
     private val countedUnlessFailed = setOf("iptv_load", "epg_ingest", "epg_resolve", "epg_mapping")
@@ -31,6 +32,8 @@ internal object TelemetrySendPolicy {
         event in countedAlways -> SendDecision.COUNT
         event in countedUnlessFailed -> if (isFailure(props)) SendDecision.SEND else SendDecision.COUNT
         event == "app_exit" -> decideExit(props)
+        // In-app sports alerts (review round 1): a banner shown and a banner action are sent; holds and drops are counts.
+        event == SPORTS_ALERT -> if (props["outcome"] in setOf("shown", "action")) SendDecision.SEND else SendDecision.COUNT
         else -> SendDecision.SEND
     }
 
