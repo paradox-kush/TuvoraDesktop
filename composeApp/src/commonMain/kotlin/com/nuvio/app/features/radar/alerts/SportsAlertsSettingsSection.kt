@@ -67,8 +67,8 @@ private fun SportsAlertsSettingsContent(isTablet: Boolean) {
                 if (SportsAlerts.duringPlaybackConfigurable) {
                     CycleRow("While something plays", "Banners over the player", SportsAlertLabels.duringPlayback(s.duringPlayback), isTablet, SportsAlerts::cycleDuringPlayback)
                 } else {
-                    // Desktop: the native video layer covers the app, so a banner could not show over a player. Fixed, not a choice.
-                    CycleRow("While something plays", "The video covers the app on Desktop, so banners wait until it stops", SportsAlertLabels.duringPlayback(DuringPlayback.Never), isTablet, onClick = null)
+                    // Desktop: the native video layer covers the app, so alerts during playback are dropped (not delayed). Fixed, not a choice.
+                    CycleRow("While something plays", "Banners don't show while a video plays on Desktop", SportsAlertLabels.duringPlayback(DuringPlayback.Never), isTablet, onClick = null)
                 }
                 SettingsGroupDivider(isTablet = isTablet)
                 CycleRow("At most", "Banners in any hour", SportsAlertLabels.perHour(s.maxPerHour), isTablet, SportsAlerts::cyclePerHour)
