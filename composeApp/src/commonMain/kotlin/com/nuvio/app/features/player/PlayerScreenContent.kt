@@ -1,5 +1,6 @@
 package com.nuvio.app.features.player
 
+import com.nuvio.app.features.player.keepawake.PlaybackKeepAwakePolicy
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -147,9 +148,14 @@ internal fun PlayerScreenContent(args: PlayerScreenArgs) {
     }
     val keepScreenAwake by remember(runtime) {
         derivedStateOf {
-            runtime.errorMessage == null &&
-                (runtime.playbackSnapshot.isPlaying ||
-                    (runtime.shouldPlay && runtime.playbackSnapshot.isLoading))
+            // B279: watch intent, not the engine's isPlaying (a stall or reconnect reports isPlaying=false).
+            PlaybackKeepAwakePolicy.shouldHold(
+                playIntent = true,
+                userPaused = !runtime.shouldPlay,
+                ended = runtime.playbackSnapshot.isEnded,
+                error = runtime.errorMessage != null,
+                inBackground = false, // the display-sleep inhibitor is released when the effect leaves composition
+            )
         }
     }
 
