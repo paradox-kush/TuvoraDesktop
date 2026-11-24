@@ -23,10 +23,28 @@ internal object DesktopSyncSender {
     private const val TIMEOUT_MS = 3_000L
 
     /**
+     * Set when an exit send failed or timed out (offline, blocked, slow). Later exit sends skip the network and
+     * fall back to the SDK queue, so a dead network costs the quit one timeout, not one per event.
+     */
+    @Volatile
+    internal var exitSendFailed = false
+
+    /** Which events are worth a synchronous POST at exit: the two that exist only because the app is quitting. */
+    internal fun sendsSynchronouslyAtExit(event: String, props: Map<String, Any>): Boolean =
+        event == "session_health" || (event == FirstRunFunnel.EVENT && props["step"] == "first_leave")
+
+    /**
      * True when PostHog answered 2xx within the deadline. Never throws. [props] must already hold the registered
      * super properties (see [DesktopTelemetryPayload.exitBody]); [distinctId] is the install id.
      */
-    fun send(event: String, props: Map<String, Any>, registered: Map<String, Any>, distinctId: String, timestampMs: Long?): Boolean = try {
+    fun send(event: String, props: Map<String, Any>, registered: Map<String, Any>, distinctId: String, timestampMs: Long?): Boolean {
+        if (shuttingDown && exitSendFailed) return false
+        val ok = post(event, props, registered, distinctId, timestampMs)
+        if (!ok && shuttingDown) exitSendFailed = true
+        return ok
+    }
+
+    private fun post(event: String, props: Map<String, Any>, registered: Map<String, Any>, distinctId: String, timestampMs: Long?): Boolean = try {
         val body = DesktopTelemetryPayload.exitBody(
             apiKey = API_KEY,
             event = event,

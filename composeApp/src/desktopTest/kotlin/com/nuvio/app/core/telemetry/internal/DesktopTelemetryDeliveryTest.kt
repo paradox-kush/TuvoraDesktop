@@ -30,6 +30,7 @@ class DesktopTelemetryDeliveryTest {
     fun setUp() {
         queueRoot = Files.createTempDirectory("tuvora-posthog-queue").resolve("posthog-queue")
         DesktopSyncSender.shuttingDown = false
+        DesktopSyncSender.exitSendFailed = false
     }
 
     @AfterTest
@@ -37,6 +38,7 @@ class DesktopTelemetryDeliveryTest {
         runCatching { PostHog.close() }
         server?.stop()
         DesktopSyncSender.shuttingDown = false
+        DesktopSyncSender.exitSendFailed = false
         DesktopSyncSender.endpoint = "https://us.i.posthog.com/batch/"
     }
 

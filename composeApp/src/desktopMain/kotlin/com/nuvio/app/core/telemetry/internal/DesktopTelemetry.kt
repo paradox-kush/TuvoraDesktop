@@ -256,7 +256,8 @@ internal class DesktopTelemetryHost(private val gpu: () -> String?) : TelemetryH
         if (PostHog.isOptOut()) PostHog.optIn()
         // Delivery-failure signal: how stale the on-disk queue was at launch (numbers only). Diagnostics are ON here.
         val payload = if (event == SESSION_HEALTH_EVENT) DesktopTelemetry.queueBacklog?.let { props + it.asProps() } ?: props else props
-        if (DesktopSyncSender.shuttingDown && event == SESSION_HEALTH_EVENT &&
+        // first_leave is captured on this same exit path (quit / last window closed), so it rides the same bounded POST.
+        if (DesktopSyncSender.shuttingDown && DesktopSyncSender.sendsSynchronouslyAtExit(event, props) &&
             DesktopSyncSender.send(
                 event, payload, DesktopTelemetry.registeredSnapshot(), DesktopTelemetry.distinctIdForExit(), timestampMs,
             )
