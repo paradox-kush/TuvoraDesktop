@@ -28,6 +28,7 @@ internal class RecordingTelemetryPort(private val onEmit: (String, Map<String, A
     override fun onPlaybackScopeOpened() {}
     override fun onPlaybackScopeClosed() {}
     override fun previousSessionTrail(): String? = null
-    val counts = ArrayList<String>()
-    override fun count(key: String, by: Int) { repeat(by) { counts += key } }
+    val playbackSignals = ArrayList<com.nuvio.app.core.telemetry.api.PlaybackSignal>()
+    override fun recordPlayback(signal: com.nuvio.app.core.telemetry.api.PlaybackSignal) { playbackSignals += signal }
+    override fun recordUncleanExit(wasPlaying: Boolean, kind: String?, engine: String?) {}
 }

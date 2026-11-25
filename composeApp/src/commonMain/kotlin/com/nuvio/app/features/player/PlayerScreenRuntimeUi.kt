@@ -64,6 +64,10 @@ import com.nuvio.app.features.streams.streamAddonInstanceId
 import com.nuvio.app.isIos
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.nuvio.app.core.telemetry.api.FallbackTrigger
+import com.nuvio.app.core.telemetry.api.PlaybackEngine
+import com.nuvio.app.core.telemetry.api.PlaybackKind
+import com.nuvio.app.core.telemetry.api.PlaybackSignal
 import com.nuvio.app.core.telemetry.api.ReportCategory
 import com.nuvio.app.core.telemetry.api.ReportContext
 import com.nuvio.app.core.telemetry.api.ReportResult
@@ -663,9 +667,9 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
         // Reset per source so a reconnect or source switch records a fresh start; the persisted
         // side of the breadcrumb is what says "died while streaming" on the next launch.
         val playbackStartRecorded = remember(playerSurfaceSourceUrl) { mutableStateOf(false) }
-        // Time-to-first-frame clock (telemetry): starts when this source is handed to the engine, stops at the first
-        // start signal below. A live reconnect mints a new URL, so it is a new request with its own clock.
-        val playRequestedAtMs = remember(playerSurfaceSourceUrl) { com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs() }
+        // Time to first frame runs from the moment this source was asked for (a failover or Retry on the same source
+        // keeps counting: the viewer waited that long). The first-frame signal is the app's own start policy.
+        val ttffMark = remember(playerSurfaceSourceUrl) { TimeSource.Monotonic.markNow() }
         DisposableEffect(playerSurfaceSourceUrl) {
             onDispose {
                 if (isLiveStream) freezeReporter.onLiveSnapshotStopped(playbackSnapshot)
@@ -801,18 +805,19 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
                     }
                     if (!playbackStartRecorded.value && LivePlaybackStartupPolicy.hasStarted(snapshot)) {
                         playbackStartRecorded.value = true
-                        val startedAtMs = com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs()
-                        com.nuvio.app.core.telemetry.api.PlaybackTelemetry.ttff(
-                            kind = if (isLiveStream) "live" else "vod",
-                            engine = playerController?.getStreamInfo()?.playerEngine ?: "unknown",
-                            ms = startedAtMs - playRequestedAtMs,
+                        TelemetryAccess.current().recordPlayback(
+                            PlaybackSignal.Ttff(
+                                kind = if (isLiveStream) PlaybackKind.LIVE else PlaybackKind.VOD,
+                                engine = PlaybackEngine.fromLabel(playerController?.getStreamInfo()?.playerEngine),
+                                ms = ttffMark.elapsedNow().inWholeMilliseconds,
+                            ),
                         )
                         Breadcrumbs.playbackStarted(
                             kind = if (isLiveStream) "live" else "vod",
                             engine = playerController?.getStreamInfo()?.playerEngine?.lowercase() ?: "unknown",
                             surface = LIVE_FREEZE_SURFACE_PLAYER,
                             container = LivePlaybackFreezeReporter.streamContainerOf(playerSurfaceSourceUrl),
-                            nowMs = startedAtMs,
+                            nowMs = com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs(),
                         )
                     }
                     if (isLiveStream) {
@@ -859,7 +864,10 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
                     if (message != null && tryFallbackToNextSourceAfterError(message)) {
                         return@PlatformPlayerSurface
                     }
-                    if (message != null && !isDesktop && maybeFailoverPlaybackEngine(resolvedAutoEngine)) {
+                    if (message != null && !isDesktop && maybeFailoverPlaybackEngine(
+                            resolvedAutoEngine,
+                            trigger = FallbackTrigger.fromFailureCategory(PlaybackFailureCategoryPolicy.categorize(message)),
+                        )) {
                         return@PlatformPlayerSurface
                     }
                     errorMessage = message

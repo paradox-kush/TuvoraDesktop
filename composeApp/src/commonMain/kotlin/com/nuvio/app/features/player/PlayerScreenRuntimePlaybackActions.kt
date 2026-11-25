@@ -1,5 +1,9 @@
 package com.nuvio.app.features.player
 
+import com.nuvio.app.core.telemetry.api.FallbackTrigger
+import com.nuvio.app.core.telemetry.api.PlaybackEngine
+import com.nuvio.app.core.telemetry.api.PlaybackSignal
+import com.nuvio.app.core.telemetry.api.TelemetryAccess
 import com.nuvio.app.features.addons.AddonEventDispatcher
 import com.nuvio.app.features.addons.AddonPlayerAction
 import com.nuvio.app.features.addons.AddonPlayerEventTarget
@@ -578,6 +582,13 @@ internal fun PlayerScreenRuntime.startOverFromBeginning() {
     if (controller != null) controller.restartFromBeginning() else startOverGeneration += 1
 }
 
+/** The engine as the telemetry contract names it. `Auto` is never a running engine: it reads as `other`. */
+internal fun AndroidPlaybackEngine.telemetryEngine(): PlaybackEngine = when (this) {
+    AndroidPlaybackEngine.ExoPlayer -> PlaybackEngine.MEDIA3
+    AndroidPlaybackEngine.Libmpv -> PlaybackEngine.LIBMPV
+    AndroidPlaybackEngine.Auto -> PlaybackEngine.OTHER
+}
+
 internal val AndroidPlaybackEngine.switchTarget: AndroidPlaybackEngine
     get() = if (this == AndroidPlaybackEngine.Libmpv) AndroidPlaybackEngine.ExoPlayer else AndroidPlaybackEngine.Libmpv
 
@@ -591,6 +602,9 @@ internal fun PlayerScreenRuntime.switchPlaybackEngine() {
     // Capture the current track selection so it can be restored on the new engine.
     rememberCurrentTrackPreferenceForEngineSwitch(target)
     playbackEngineOverride = target
+    playerController?.playbackEngine?.let {
+        TelemetryAccess.current().recordPlayback(PlaybackSignal.Fallback(it.telemetryEngine(), target.telemetryEngine(), FallbackTrigger.USER))
+    }
     // A manual switch is an explicit user decision: never let the automatic engine
     // failover drag the user back to the engine they just switched away from.
     engineFailoverDisarmed = true
@@ -618,6 +632,7 @@ internal fun PlayerScreenRuntime.refreshStreamInfo() {
  */
 internal fun PlayerScreenRuntime.maybeFailoverPlaybackEngine(
     resolvedAutoEngine: AndroidPlaybackEngine?,
+    trigger: FallbackTrigger = FallbackTrigger.OTHER,
 ): Boolean {
     if (!playerSettingsUiState.autoSwitchPlaybackEngineOnError) return false
     if (engineFailoverDisarmed) return false
@@ -636,6 +651,7 @@ internal fun PlayerScreenRuntime.maybeFailoverPlaybackEngine(
 
     engineFailoverTriggered = true
     engineFailoverSourceIdentity = sourceIdentity
+    TelemetryAccess.current().recordPlayback(PlaybackSignal.Fallback(current.telemetryEngine(), target.telemetryEngine(), trigger))
     // Same rule as a manual switch (B59-H1): before the first frame the snapshot still reads 0 while
     // the engine seeks to the resume point, so keep the requested target instead of failing over to 0:00.
     val swapStart = sourceSwapStart()

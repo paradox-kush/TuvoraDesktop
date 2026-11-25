@@ -119,8 +119,8 @@ private fun TrailerPlaybackSurface(
     var restoringPosition by remember { mutableStateOf(resumePositionMs > 0L) }
     var controller by remember { mutableStateOf<PlayerEngineController?>(null) }
     var snapshot by remember { mutableStateOf(PlayerPlaybackSnapshot()) }
-    // Time-to-first-frame clock (telemetry): this trailer source being handed to the engine is the play request.
-    val playRequestedAtMs = remember(source.videoUrl) { com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs() }
+    // Time to first frame: this trailer source being handed to the engine is the play request (a count, never an event).
+    val ttffMark = remember(source.videoUrl) { kotlin.time.TimeSource.Monotonic.markNow() }
     var firstFrameCounted by remember(source.videoUrl) { mutableStateOf(false) }
 
     LaunchedEffect(controller, snapshot.isLoading, snapshot.durationMs, restoringPosition) {
@@ -161,10 +161,12 @@ private fun TrailerPlaybackSurface(
             snapshot = it
             if (!firstFrameCounted && LivePlaybackStartupPolicy.hasStarted(it)) {
                 firstFrameCounted = true
-                com.nuvio.app.core.telemetry.api.PlaybackTelemetry.ttff(
-                    kind = "preview",
-                    engine = controller?.getStreamInfo()?.playerEngine ?: "unknown",
-                    ms = com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs() - playRequestedAtMs,
+                com.nuvio.app.core.telemetry.api.TelemetryAccess.current().recordPlayback(
+                    com.nuvio.app.core.telemetry.api.PlaybackSignal.Ttff(
+                        kind = com.nuvio.app.core.telemetry.api.PlaybackKind.PREVIEW,
+                        engine = com.nuvio.app.core.telemetry.api.PlaybackEngine.fromLabel(controller?.getStreamInfo()?.playerEngine),
+                        ms = ttffMark.elapsedNow().inWholeMilliseconds,
+                    ),
                 )
             }
             if (!restoringPosition && presentationId == state.presentationId) state.snapshot = it
