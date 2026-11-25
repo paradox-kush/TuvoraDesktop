@@ -22,7 +22,8 @@ class PlaybackTelemetryServiceTest {
         s.count("stall:live:recovered")
         assertTrue(host.sent.isEmpty(), "nothing is sent while counting: ${host.sent.map { it.event }}")
         s.onBackground()
-        assertEquals(listOf("session_health"), host.sent.map { it.event }, "one summary, no per-start events")
+        assertEquals(1, host.sent.count { it.event == "session_health" }, "one summary")
+        assertTrue(host.sent.none { it.event.startsWith("ttff") || it.event.startsWith("stall") || it.event.startsWith("teardown") }, "no per-start events")
         val health = host.sent.single().props
         assertEquals(2, health["n_ttff:live:libmpv:lt1000"])
         assertEquals(1, health["n_teardown:libmpv:clean"])
