@@ -12,4 +12,12 @@ internal actual object EpisodeReleaseNotificationsStorage {
     actual fun savePayload(payload: String) {
         store.putString(ProfileScopedKey.of("episode_release_notifications"), payload)
     }
+
+    /** Device-local side files (viewing history, alert bookkeeping), kept per profile and never synced. */
+    actual fun loadAux(name: String): String? =
+        store.getString(ProfileScopedKey.of("episode_release_notifications_$name"))
+
+    actual fun saveAux(name: String, payload: String) {
+        store.putString(ProfileScopedKey.of("episode_release_notifications_$name"), payload)
+    }
 }

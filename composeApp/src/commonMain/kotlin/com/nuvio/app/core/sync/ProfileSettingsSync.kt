@@ -14,6 +14,7 @@ import com.nuvio.app.features.details.MetaScreenSettingsRepository
 import com.nuvio.app.features.mdblist.MdbListMetadataService
 import com.nuvio.app.features.mdblist.MdbListSettingsStorage
 import com.nuvio.app.features.mdblist.MdbListSettingsRepository
+import com.nuvio.app.features.notifications.AlertPreferencesSyncCodec
 import com.nuvio.app.features.notifications.EpisodeReleaseNotificationsRepository
 import com.nuvio.app.features.player.PlayerSettingsStorage
 import com.nuvio.app.features.player.PlayerSettingsRepository
@@ -328,6 +329,7 @@ object ProfileSettingsSync {
                 traktCommentsSettings = TraktCommentsStorage.exportToSyncPayload(),
                 notificationsSettings = NotificationsSettingsPayload(
                     episodeReleaseAlertsEnabled = EpisodeReleaseNotificationsRepository.uiState.value.isEnabled,
+                    alertPreferences = AlertPreferencesSyncCodec.encode(EpisodeReleaseNotificationsRepository.uiState.value.preferences),
                 ),
             ),
         )
@@ -410,7 +412,10 @@ object ProfileSettingsSync {
         TraktCommentsStorage.replaceFromSyncPayload(blob.features.traktCommentsSettings)
         TraktCommentsSettings.onProfileChanged()
 
-        EpisodeReleaseNotificationsRepository.applyFromSyncEnabled(blob.features.notificationsSettings.episodeReleaseAlertsEnabled)
+        EpisodeReleaseNotificationsRepository.applyFromSync(
+            enabled = blob.features.notificationsSettings.episodeReleaseAlertsEnabled,
+            remotePreferences = blob.features.notificationsSettings.alertPreferences,
+        )
     }
 
     private fun ensureRepositoriesLoaded() {
@@ -503,6 +508,12 @@ internal data class NotificationsSettingsPayload(
     @SerialName("episode_release_alerts_enabled")
     @Serializable(with = LenientSettingBooleanSerializer::class)
     val episodeReleaseAlertsEnabled: Boolean = false,
+    /**
+     * The viewer's alert timing, quiet hours, cap and end-of-episode prompt choice (see [AlertPreferencesSyncCodec]).
+     * An object so one odd value never fails the pull; absent on blobs written before alert controls existed.
+     */
+    @SerialName("alert_preferences")
+    val alertPreferences: JsonObject = JsonObject(emptyMap()),
 )
 
 /**

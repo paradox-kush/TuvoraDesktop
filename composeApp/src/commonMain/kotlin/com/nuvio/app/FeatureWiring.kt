@@ -32,6 +32,7 @@ import com.nuvio.app.features.recordings.api.startPlatformRecordings
 import com.nuvio.app.core.contracts.CalendarScreenContentAccess
 import com.nuvio.app.core.contracts.DetailsCalendarBellAccess
 import com.nuvio.app.core.contracts.HomeCalendarSectionAccess
+import com.nuvio.app.features.calendar.api.CalendarFeature
 import com.nuvio.app.features.calendar.api.CalendarUiSlots
 import com.nuvio.app.features.livetv.LiveNowWatching
 import com.nuvio.app.features.radar.RadarGameWatch
@@ -92,6 +93,10 @@ fun registerFeatureContributions() {
     // Calendar + reminders: the Home section (reminders card, opt-in Coming up row), the bell on details, the page.
     HomeCalendarSectionAccess.register(CalendarUiSlots.homeSection())
     DetailsCalendarBellAccess.register(CalendarUiSlots.detailsBell())
+    // One per-show switch drives the OS episode alert and the Calendar bell: Notifications owns the switch, the Calendar
+    // owns the bell (core/contracts/ShowAlerts.kt).
+    com.nuvio.app.core.contracts.ShowAlertSwitchAccess.register(com.nuvio.app.features.notifications.EpisodeReleaseNotificationsShowSwitch)
+    com.nuvio.app.core.contracts.ShowAlertBellMirrorAccess.register(CalendarFeature.alertBellMirror())
     CalendarScreenContentAccess.register(CalendarUiSlots.screen())
     // Game screen: registered at process init so every entry point finds the service, not only those wrapped in installFeatures.
     SportsDetailAccess.register(sportsDetailService, gameWatch)
