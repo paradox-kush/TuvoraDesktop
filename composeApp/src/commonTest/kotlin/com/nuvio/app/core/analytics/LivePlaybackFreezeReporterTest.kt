@@ -12,9 +12,9 @@ import kotlin.test.assertTrue
 class LivePlaybackFreezeReporterTest {
 
     private val events = mutableListOf<Pair<String, Map<String, Any>>>()
-    private val reporter = LivePlaybackFreezeReporter { name, properties ->
+    private val reporter = LivePlaybackFreezeReporter(capture = { name, properties ->
         events += name to properties
-    }
+    }, recordPlayback = {})
 
     private fun profile(engine: String = "libmpv") = LivePlaybackFreezeReporter.Profile(
         engine = engine,
