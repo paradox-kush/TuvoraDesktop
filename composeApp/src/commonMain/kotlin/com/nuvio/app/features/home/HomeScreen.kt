@@ -1933,10 +1933,6 @@ internal fun splitUpcomingItems(
     return main to sortedUpcoming
 }
 
-internal fun ContinueWatchingItem.isUpcoming(nowEpochMs: Long = WatchProgressClock.nowEpochMs()): Boolean =
-    isNextUp && parseReleaseDateToEpochMs(released)
-        ?.let { releaseEpochMs -> releaseEpochMs > nowEpochMs } == true
-
 internal fun ContinueWatchingClickAction.opensDetails(
     item: ContinueWatchingItem,
     nowEpochMs: Long = WatchProgressClock.nowEpochMs(),
