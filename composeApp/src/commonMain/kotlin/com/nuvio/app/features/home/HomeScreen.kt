@@ -647,6 +647,8 @@ fun HomeScreen(
         )
     }
     val hasContinueWatchingRows = continueWatchingItems.isNotEmpty() || upcomingItems.isNotEmpty()
+    // The launch resume prompt offers the first item of this exact row (see ResumePromptPicker).
+    LaunchedEffect(continueWatchingItems) { ContinueWatchingRowSnapshot.publish(continueWatchingItems) }
 
     LaunchedEffect(activeProfileId) {
         hasUserScrolledContinueWatching = false
