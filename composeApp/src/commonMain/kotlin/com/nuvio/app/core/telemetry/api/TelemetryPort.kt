@@ -64,6 +64,13 @@ interface TelemetryPort {
     /** Sends a crash record left by the previous run, at most once. Call off Main after the SDK is set up. */
     suspend fun sendPendingCrash()
 
+    /**
+     * Adds [by] to a `session_health` count key of the playback telemetry contract (`PlaybackTelemetryKeys`). A key
+     * outside that closed vocabulary is ignored, and nothing is kept or sent while the user's switch is off. Never an
+     * event of its own. Default no-op so other implementers keep compiling.
+     */
+    fun count(key: String, by: Int = 1) {}
+
     /** Playback produced output: memory sampling runs while this scope is open (and only then). */
     fun onPlaybackScopeOpened()
 

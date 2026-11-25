@@ -24,6 +24,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import com.nuvio.app.features.player.EnterImmersivePlayerMode
+import com.nuvio.app.features.player.LivePlaybackStartupPolicy
 import com.nuvio.app.features.player.PlatformPlayerSurface
 import com.nuvio.app.features.player.PlayerControlsAction
 import com.nuvio.app.features.player.PlayerEngineController
@@ -118,6 +119,9 @@ private fun TrailerPlaybackSurface(
     var restoringPosition by remember { mutableStateOf(resumePositionMs > 0L) }
     var controller by remember { mutableStateOf<PlayerEngineController?>(null) }
     var snapshot by remember { mutableStateOf(PlayerPlaybackSnapshot()) }
+    // Time-to-first-frame clock (telemetry): this trailer source being handed to the engine is the play request.
+    val playRequestedAtMs = remember(source.videoUrl) { com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs() }
+    var firstFrameCounted by remember(source.videoUrl) { mutableStateOf(false) }
 
     LaunchedEffect(controller, snapshot.isLoading, snapshot.durationMs, restoringPosition) {
         val player = controller
@@ -155,6 +159,14 @@ private fun TrailerPlaybackSurface(
         },
         onSnapshot = {
             snapshot = it
+            if (!firstFrameCounted && LivePlaybackStartupPolicy.hasStarted(it)) {
+                firstFrameCounted = true
+                com.nuvio.app.core.telemetry.api.PlaybackTelemetry.ttff(
+                    kind = "preview",
+                    engine = controller?.getStreamInfo()?.playerEngine ?: "unknown",
+                    ms = com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs() - playRequestedAtMs,
+                )
+            }
             if (!restoringPosition && presentationId == state.presentationId) state.snapshot = it
         },
         onError = { if (presentationId == state.presentationId) state.error = it },

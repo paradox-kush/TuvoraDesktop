@@ -4,6 +4,7 @@ import com.nuvio.app.core.analytics.PostHogPrivacy
 import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.core.build.AppVersionConfig
 import com.nuvio.app.core.storage.DesktopStorage
+import com.nuvio.app.core.telemetry.api.PlaybackTelemetryBuckets
 import com.nuvio.app.features.settings.SentrySettingsRepository
 import com.posthog.PostHog
 import com.posthog.internal.PostHogMemoryPreferences
@@ -95,6 +96,8 @@ internal object DesktopTelemetry {
         started = true
         // Handler first: a failure while the service itself is built is then still seen (and handed on).
         installCrashHandler()
+        // QA mirror: read once, here, before anything can play. Off (and free) unless -Dtuvora.qa=1 / TUVORA_QA=1.
+        DesktopQaMirror.install()
         TelemetryRuntime.start(DesktopTelemetryHost { gpuName })
         Thread({ gpuName = detectGpuName() }, "TelemetryGpuProbe").apply { isDaemon = true }.start()
     }
@@ -282,9 +285,15 @@ internal class DesktopTelemetryHost(private val gpu: () -> String?) : TelemetryH
         put("hw_arch", System.getProperty("os.arch").orEmpty().take(16))
         put("hw_cpu_cores", Runtime.getRuntime().availableProcessors())
         totalRamMb()?.let { put("hw_total_ram_mb", it) }
+        PlaybackTelemetryBuckets.ramClass(totalRamMb())?.let { put("ram_class", it) }
         put("hw_gpu", gpu() ?: "unknown")
     }
 
+    /**
+     * JVM and process facts only. The JVM has no PSS and no native-heap number worth trusting, so those fields are
+     * absent here (never estimated): `java_mb` heap used, `java_max_mb` heap ceiling, `ram_free_mb` OS free memory,
+     * `threads` live JVM threads, `fds` open file descriptors (macOS and Linux only; Windows has no such count).
+     */
     override fun memorySample(): Map<String, Long> {
         val rt = Runtime.getRuntime()
         val mb = 1024L * 1024L
@@ -292,6 +301,11 @@ internal class DesktopTelemetryHost(private val gpu: () -> String?) : TelemetryH
             put("java_mb", (rt.totalMemory() - rt.freeMemory()) / mb)
             put("java_max_mb", rt.maxMemory() / mb)
             osBean()?.let { put("ram_free_mb", it.freeMemorySize / mb) }
+            runCatching { java.lang.management.ManagementFactory.getThreadMXBean().threadCount.toLong() }.getOrNull()?.let { put("threads", it) }
+            runCatching {
+                (java.lang.management.ManagementFactory.getOperatingSystemMXBean() as? com.sun.management.UnixOperatingSystemMXBean)
+                    ?.openFileDescriptorCount
+            }.getOrNull()?.takeIf { it >= 0L }?.let { put("fds", it) }
         }
     }
 

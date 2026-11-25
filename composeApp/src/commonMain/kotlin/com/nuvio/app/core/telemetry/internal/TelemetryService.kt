@@ -24,6 +24,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.channels.Channel
 import com.nuvio.app.core.analytics.PostHogPrivacy
+import com.nuvio.app.core.telemetry.api.PlaybackTelemetryKeys
+import com.nuvio.app.core.telemetry.api.QaMirror
 
 /**
  * The one place that decides what leaves the device. Every SDK call in the shared code goes through here via
@@ -63,6 +65,9 @@ internal class TelemetryService(
     private val persistRequests = Channel<Unit>(Channel.CONFLATED)
     private val forcePersist = atomic(false)
     private val previousTrail: String? = host.store.read(RING_FILE)?.takeIf { it.length <= DiagTrailPolicy.MAX_BYTES * 2 }
+
+    // The previous run's last memory sample, read before this run's first sample overwrites the file. It rides on `app_exit`.
+    private val previousMemory: Map<String, Long> = MemoryContext.decode(runCatching { host.store.read(MemoryContext.FILE) }.getOrNull())
 
     init {
         scope.launch { for (ignored in persistRequests) persistNow() }
@@ -174,7 +179,16 @@ internal class TelemetryService(
         persistRingIfDue(force = false)
     }
 
-    override fun emit(event: String, props: Map<String, Any>) {
+    /** Only keys [PlaybackTelemetryKeys] could have built; nothing is kept while the user's switch is off. */
+    override fun count(key: String, by: Int) {
+        if (by <= 0 || !PlaybackTelemetryKeys.isValid(key)) return
+        if (!consentEnabled()) return
+        health.count(key, by)
+    }
+
+    override fun emit(event: String, props: Map<String, Any>) = route(event, MemoryContext.attach(event, props, previousMemory))
+
+    private fun route(event: String, props: Map<String, Any>) {
         val decision = TelemetrySendPolicy.decide(event, props)
         recorder.record(entryFor(event, props))
         if (event == TelemetrySendPolicy.SCREEN_EVENT) {
@@ -312,6 +326,17 @@ internal class TelemetryService(
         lastMemory.value = sample
         health.noteMemory(sample["java_mb"], sample["pss_mb"])
         recorder.record(DiagEntry(host.nowMs(), DiagArea.MEMORY, "sample", sample))
+        QaMirror.mirror("mem") { sample.filterKeys { it in MemoryContext.FIELDS } }
+        persistLastMemory(sample)
+    }
+
+    /** One tiny file, replaced on each sample (while playing: about once a minute). Removed while reports are off. */
+    private fun persistLastMemory(sample: Map<String, Long>) {
+        if (!consentEnabled()) {
+            runCatching { host.store.delete(MemoryContext.FILE) }
+            return
+        }
+        runCatching { host.store.writeAtomic(MemoryContext.FILE, MemoryContext.encode(sample)) }
     }
 
     override fun previousSessionTrail(): String? = previousTrail

@@ -333,6 +333,13 @@ class LivePlaybackFreezeReporter(
     ) {
         val activeProfile = profile ?: return
         val kind = freezeKind ?: return
+        // Counted before the rate cap below: the cap bounds EVENTS, the session_health count should see every stall.
+        // `recovered = false` here is the ladder conceding or the viewer leaving a frozen picture: both are `gave_up`.
+        com.nuvio.app.core.telemetry.api.PlaybackTelemetry.stall(
+            kind = "live",
+            recovered = recovered,
+            ms = (nowMs - freezeStartedAtMs).coerceAtLeast(0L),
+        )
         if (!allowEmit(nowMs)) return
 
         val properties = buildMap<String, Any> {

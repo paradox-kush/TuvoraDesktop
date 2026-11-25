@@ -3,6 +3,7 @@ package com.nuvio.app.features.player.desktop
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.IntSize
 import co.touchlab.kermit.Logger
+import com.nuvio.app.core.telemetry.api.PlaybackTelemetry
 import com.nuvio.app.features.player.LivePlaybackStartupPolicy
 import com.nuvio.app.features.player.LiveSeekWindow
 import com.nuvio.app.features.player.MpvLiveCache
@@ -1039,7 +1040,7 @@ internal class NativePlayerController(
                     val current = if (failureMessage == null) detachPlayerHandle() else 0L
                     if (current != 0L) {
                         log.d { "pre-navigation dispose started handle=$current" }
-                        runCatching { nativeDispose(current) }
+                        timedNativeDispose(current)
                             .onSuccess { log.d { "pre-navigation dispose completed handle=$current" } }
                             .onFailure { error ->
                                 failureMessage = "Native player shutdown failed. Quit Nuvio before removing the player."
@@ -1085,6 +1086,21 @@ internal class NativePlayerController(
         }
     }
 
+    /**
+     * [nativeDispose] with its duration counted as `teardown:libmpv:<clean|slow|failed>` (telemetry). The count is a
+     * `session_health` key, never an event; a teardown that never returns is counted by the release watchdog.
+     */
+    private fun timedNativeDispose(current: Long): Result<Unit> {
+        val startedNs = System.nanoTime()
+        val result = runCatching { nativeDispose(current) }
+        PlaybackTelemetry.teardown(
+            engine = "libmpv",
+            ms = (System.nanoTime() - startedNs) / 1_000_000L,
+            failed = result.isFailure,
+        )
+        return result
+    }
+
     private fun startReleaseWatchdog(worker: Thread) {
         Thread({
             try {
@@ -1099,6 +1115,8 @@ internal class NativePlayerController(
                 releaseCallbacks.toList().also { releaseCallbacks.clear() }
             }
             if (callbacks.isEmpty()) return@Thread
+            // A teardown that outlives its deadline is failed for the viewer even if it finishes later (which counts again as slow).
+            PlaybackTelemetry.teardown(engine = "libmpv", ms = releaseTimeoutMs, failed = true)
             SwingUtilities.invokeLater {
                 callbacks.forEach { pending ->
                     runCatching {
@@ -1209,7 +1227,7 @@ internal class NativePlayerController(
         disposeInFlight = Thread(
             {
                 awaitThreadCompletion(prior, "prior native teardown")
-                runCatching { nativeDispose(current) }
+                timedNativeDispose(current)
                     .onFailure { error -> recordTerminalDisposeFailure(error, "native", current) }
             },
             "nuvio-player-dispose",

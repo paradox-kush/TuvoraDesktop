@@ -11,7 +11,7 @@ import kotlinx.atomicfu.locks.synchronized
  * Counts are never dropped on a lifecycle change. A summary is [snapshot]ted, sent, and only a SUCCESSFUL send
  * [commit]s it (subtracting exactly what was sent, so increments that landed meanwhile survive).
  */
-internal class SessionHealth(private var windowStartMs: Long, private val maxKeys: Int = 80) {
+internal class SessionHealth(private var windowStartMs: Long, private val maxKeys: Int = 128) {
     private val lock = SynchronizedObject()
     private val counts = LinkedHashMap<String, Int>()
     private var peakJavaMb = 0L
@@ -21,7 +21,8 @@ internal class SessionHealth(private var windowStartMs: Long, private val maxKey
     class Pending(val payload: Map<String, Any>, internal val sent: Map<String, Int>)
 
     fun count(key: String, by: Int = 1) {
-        val safe = key.lowercase().filter { it.isLetterOrDigit() || it == '_' }.take(48)
+        // `:` is kept for the playback telemetry keys (`ttff:live:libmpv:lt1000`); they are validated before they get here.
+        val safe = key.lowercase().filter { it.isLetterOrDigit() || it == '_' || it == ':' }.take(64)
         if (safe.isEmpty()) return
         synchronized(lock) {
             if (safe !in counts && counts.size >= maxKeys) return

@@ -663,6 +663,9 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
         // Reset per source so a reconnect or source switch records a fresh start; the persisted
         // side of the breadcrumb is what says "died while streaming" on the next launch.
         val playbackStartRecorded = remember(playerSurfaceSourceUrl) { mutableStateOf(false) }
+        // Time-to-first-frame clock (telemetry): starts when this source is handed to the engine, stops at the first
+        // start signal below. A live reconnect mints a new URL, so it is a new request with its own clock.
+        val playRequestedAtMs = remember(playerSurfaceSourceUrl) { com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs() }
         DisposableEffect(playerSurfaceSourceUrl) {
             onDispose {
                 if (isLiveStream) freezeReporter.onLiveSnapshotStopped(playbackSnapshot)
@@ -798,12 +801,18 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
                     }
                     if (!playbackStartRecorded.value && LivePlaybackStartupPolicy.hasStarted(snapshot)) {
                         playbackStartRecorded.value = true
+                        val startedAtMs = com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs()
+                        com.nuvio.app.core.telemetry.api.PlaybackTelemetry.ttff(
+                            kind = if (isLiveStream) "live" else "vod",
+                            engine = playerController?.getStreamInfo()?.playerEngine ?: "unknown",
+                            ms = startedAtMs - playRequestedAtMs,
+                        )
                         Breadcrumbs.playbackStarted(
                             kind = if (isLiveStream) "live" else "vod",
                             engine = playerController?.getStreamInfo()?.playerEngine?.lowercase() ?: "unknown",
                             surface = LIVE_FREEZE_SURFACE_PLAYER,
                             container = LivePlaybackFreezeReporter.streamContainerOf(playerSurfaceSourceUrl),
-                            nowMs = com.nuvio.app.features.trakt.TraktPlatformClock.nowEpochMs(),
+                            nowMs = startedAtMs,
                         )
                     }
                     if (isLiveStream) {

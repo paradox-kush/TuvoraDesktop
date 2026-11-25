@@ -1,6 +1,8 @@
 package com.nuvio.app
 
+import com.nuvio.app.core.analytics.Breadcrumbs
 import com.nuvio.app.core.build.AppVersionConfig
+import com.nuvio.app.core.telemetry.api.PlaybackTelemetryKeys
 import com.nuvio.app.core.telemetry.api.TelemetryAccess
 import com.nuvio.app.core.telemetry.internal.DesktopTelemetry
 import com.nuvio.app.core.telemetry.internal.TelemetryRuntime
@@ -41,6 +43,14 @@ internal object DesktopReliabilityReporter {
             DesktopTelemetry.configurePostHog(crashReportsEnabled, version)
 
             val processExitTracker = DesktopProcessExitTracker.start(version)
+            // What the run was doing when it died: the NEXT launch reads it back as `prev_playing` / `prev_kind` /
+            // `prev_engine` on `app_exit`. Desktop has no multiview, so there is no `prev_tiles`.
+            Breadcrumbs.crashWriter = object : Breadcrumbs.CrashWriter {
+                override fun onScreen(name: String) = Unit
+                override fun onPlaybackStarted(kind: String, engine: String, surface: String) =
+                    processExitTracker.notePlayback(kind, engine)
+                override fun onPlaybackStopped() = processExitTracker.noteStopped()
+            }
 
             Runtime.getRuntime().addShutdownHook(
                 Thread(
@@ -75,9 +85,41 @@ internal object DesktopReliabilityReporter {
  */
 private class DesktopProcessExitTracker private constructor(
     private val marker: Path,
+    private val properties: Properties,
 ) {
+    // One daemon worker keeps marker rewrites in order and off the UI thread.
+    private val writer = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "RunMarkerWriter").apply { isDaemon = true }
+    }
+
     fun markCleanExit() {
+        // Let an in-flight rewrite finish first, or it could recreate the marker we are about to delete.
+        runCatching { writer.shutdown(); writer.awaitTermination(500, java.util.concurrent.TimeUnit.MILLISECONDS) }
         runCatching { Files.deleteIfExists(marker) }
+    }
+
+    fun notePlayback(kind: String, engine: String) = update {
+        setProperty("playing", "1")
+        setProperty("kind", kind.take(24))
+        setProperty("engine", engine.take(24))
+    }
+
+    fun noteStopped() = update { setProperty("playing", "0") }
+
+    private fun update(change: Properties.() -> Unit) {
+        runCatching {
+            writer.execute {
+                runCatching {
+                    properties.change()
+                    Files.newOutputStream(
+                        marker,
+                        StandardOpenOption.CREATE,
+                        StandardOpenOption.TRUNCATE_EXISTING,
+                        StandardOpenOption.WRITE,
+                    ).use { properties.store(it, "Tuvora desktop run marker") }
+                }
+            }
+        }
     }
 
     companion object {
@@ -104,7 +146,7 @@ private class DesktopProcessExitTracker private constructor(
                     StandardOpenOption.WRITE,
                 ).use { properties.store(it, "Tuvora desktop run marker") }
             }
-            return DesktopProcessExitTracker(marker)
+            return DesktopProcessExitTracker(marker, properties)
         }
 
         private fun reportStaleMarkers(directory: Path) {
@@ -132,6 +174,14 @@ private class DesktopProcessExitTracker private constructor(
                 put("diagnostic_source", "desktop_run_marker")
                 put("failed_app_version", failedVersion)
                 startedAt?.let { put("failed_run_started_at_ms", it) }
+                // The run's last breadcrumb, as closed values (a marker from before this change says nothing).
+                putAll(
+                    PlaybackTelemetryKeys.previousRun(
+                        playing = properties.getProperty("playing")?.let { it == "1" },
+                        kindLabel = properties.getProperty("kind"),
+                        engineLabel = properties.getProperty("engine"),
+                    ),
+                )
             }
             val trail = TelemetryAccess.current().previousSessionTrail()
             val exitProps = if (trail != null) props + ("diag_trail" to trail) else props
