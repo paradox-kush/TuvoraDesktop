@@ -460,7 +460,7 @@ object ProfileSettingsSync {
         "continue=${ContinueWatchingPreferencesRepository.uiState.value}",
         "trakt_settings=${TrackingSettingsRepository.uiState.value}",
         "trakt_comments=${TraktCommentsSettings.enabled.value}",
-        "episode_release_alerts=${EpisodeReleaseNotificationsRepository.uiState.value.isEnabled}",
+        "episode_release_alerts=${EpisodeReleaseNotificationsRepository.uiState.value.isEnabled}:${EpisodeReleaseNotificationsRepository.uiState.value.preferences}",
     ).joinToString(separator = "||")
 
 }

@@ -2256,7 +2256,8 @@ private fun BoxScope.RenderPlaybackOverlays(
                 showNextEpisodeCard = false
                 nextEpisodeFlowIsManual = false
             },
-            episodeAlertPrompt = if (isSeries) {
+            // Only where the OS can deliver an alert (Desktop v1 is in-app only, so asking would end in a refusal).
+            episodeAlertPrompt = if (isSeries && com.nuvio.app.core.build.AppFeaturePolicy.notificationsEnabled) {
                 com.nuvio.app.features.notifications.EpisodeAlertPromptInput(
                     contentType = parentMetaType,
                     contentId = parentMetaId,

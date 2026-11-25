@@ -611,7 +611,7 @@ private fun PlayerScreenRuntime.BindPlayerUiVisibilityEffects() {
         if (!previousIsPlaying && playbackSnapshot.isPlaying) {
             emitAddonPlayerEvent(AddonPlayerAction.START)
             // When episode alerts arrive is learned from when playback starts on this phone (never leaves it).
-            if (!activeStreamType.equals("live", ignoreCase = true)) {
+            if (com.nuvio.app.core.build.AppFeaturePolicy.notificationsEnabled && !activeStreamType.equals("live", ignoreCase = true)) {
                 com.nuvio.app.features.notifications.EpisodeReleaseNotificationsRepository.recordPlaybackStart()
             }
         }

@@ -95,7 +95,11 @@ fun registerFeatureContributions() {
     DetailsCalendarBellAccess.register(CalendarUiSlots.detailsBell())
     // One per-show switch drives the OS episode alert and the Calendar bell: Notifications owns the switch, the Calendar
     // owns the bell (core/contracts/ShowAlerts.kt).
-    com.nuvio.app.core.contracts.ShowAlertSwitchAccess.register(com.nuvio.app.features.notifications.EpisodeReleaseNotificationsShowSwitch)
+    // Desktop has no OS notification delivery yet (notificationsEnabled = false), so the switch is not offered at all: the
+    // Calendar keeps its own bell and in-app New episodes card, with no "Alert me" chip that could only report a refusal.
+    if (com.nuvio.app.core.build.AppFeaturePolicy.notificationsEnabled) {
+        com.nuvio.app.core.contracts.ShowAlertSwitchAccess.register(com.nuvio.app.features.notifications.EpisodeReleaseNotificationsShowSwitch)
+    }
     com.nuvio.app.core.contracts.ShowAlertBellMirrorAccess.register(CalendarFeature.alertBellMirror())
     CalendarScreenContentAccess.register(CalendarUiSlots.screen())
     // Game screen: registered at process init so every entry point finds the service, not only those wrapped in installFeatures.
