@@ -2256,6 +2256,17 @@ private fun BoxScope.RenderPlaybackOverlays(
                 showNextEpisodeCard = false
                 nextEpisodeFlowIsManual = false
             },
+            episodeAlertPrompt = if (isSeries) {
+                com.nuvio.app.features.notifications.EpisodeAlertPromptInput(
+                    contentType = parentMetaType,
+                    contentId = parentMetaId,
+                    showTitle = title,
+                    nextEpisodeAired = nextEpisodeInfo?.hasAired,
+                    atEnd = isAtEpisodeEndForAlertPrompt(),
+                )
+            } else {
+                null
+            },
             errorMessage = errorMessage,
             onDismissError = { requestBack() },
             onRetryError = if (vodStartFailed || liveReconnectFailed) {

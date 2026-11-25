@@ -194,6 +194,8 @@ internal data class AppTabActions(
     val onRecordingsClick: (() -> Unit)? = null,
     // Fork: the Calendar page (features/calendar), opened from Library's top bar and the Home calendar section.
     val onCalendarClick: () -> Unit = {},
+    // Home's "Change in Settings" on the alert chip: Settings > Notifications.
+    val onNotificationSettingsClick: () -> Unit = {},
     val onContinueWatchingClick: ((ContinueWatchingItem) -> Unit)? = null,
     val onContinueWatchingLongPress: ((ContinueWatchingItem) -> Unit)? = null,
     val onSwitchProfile: (() -> Unit)? = null,
@@ -280,6 +282,7 @@ internal fun AppTabHost(
                         onPlaySportsReplay = actions.onPlaySportsReplay,
                         onAddIptvPlaylist = actions.onIptvAddProvider,
                         onOpenCalendar = actions.onCalendarClick,
+                        onOpenNotificationSettings = actions.onNotificationSettingsClick,
                     )
                 }
             }
