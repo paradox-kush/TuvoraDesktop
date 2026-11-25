@@ -2,7 +2,7 @@ package com.nuvio.app.core.contracts
 
 /**
  * Whether a library / Continue Watching item is an EPISODIC show: something that releases episodes on dates, so an
- * alert can mean something for it. The one rule Notifications uses.
+ * alert or a Calendar bell can mean something for it. The one rule Notifications uses.
  *
  * "tv" is both a show alias (TMDB media type) and the type of a live IPTV channel (a favourite or a pin puts one in
  * the Library). The id tells them apart: a channel's id is an own-source id (`xtream:acc:live:42`, see
