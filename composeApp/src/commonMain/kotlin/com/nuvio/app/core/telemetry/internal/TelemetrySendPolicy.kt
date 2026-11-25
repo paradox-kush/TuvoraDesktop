@@ -23,12 +23,21 @@ internal object TelemetrySendPolicy {
         "crash", "native_crash", "anr", "initialization_failure", "user_requested_crash",
     )
 
-    /** One-time funnel events: sent on purpose (a handful per install), never an error, never a trail. */
-    val explicitSendEvents: Set<String> = setOf(FirstRunFunnel.EVENT)
+    /** Alert choices and outcomes: a handful per person, never an error, never a trail. Declared before its use below. */
+    private val alertSendEvents = setOf("alert_setting_changed", "alert_permission_result", "alert_aftermath")
+
+    /** One-time funnel events and the alert choices: sent on purpose (a handful per person), never an error, never a trail. */
+    val explicitSendEvents: Set<String> = setOf(FirstRunFunnel.EVENT) + alertSendEvents
+
+    /** Alert planning counters: folded into `session_health` (the property `n` says how many), never sent one by one. */
+    val alertCounterEvents: Set<String> = setOf(
+        "alerts_planned", "alerts_skipped_opened_today", "alerts_delayed_quiet", "alerts_capped", "alert_meta_fetches",
+    )
 
     fun decide(event: String, props: Map<String, Any>): SendDecision = when {
         event == SCREEN_EVENT -> SendDecision.RECORD_ONLY
         event in explicitSendEvents -> SendDecision.SEND
+        event in alertCounterEvents -> SendDecision.COUNT
         event in countedAlways -> SendDecision.COUNT
         event in countedUnlessFailed -> if (isFailure(props)) SendDecision.SEND else SendDecision.COUNT
         event == "app_exit" -> decideExit(props)
