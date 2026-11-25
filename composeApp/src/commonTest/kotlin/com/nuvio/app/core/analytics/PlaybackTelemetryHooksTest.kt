@@ -48,6 +48,35 @@ class PlaybackTelemetryHooksTest {
     }
 
     @Test
+    fun `a freeze still open when the viewer leaves records an abandoned live stall`() {
+        playUntilVideoStalls()
+        sample(26_500L, 700L)
+        reporter.onLivePlaybackStopped(nowMs = 30_000L, positionMs = 30_000L, bufferedPositionMs = 32_000L)
+        val stall = signals.single() as PlaybackSignal.Stall
+        assertEquals(PlaybackKind.LIVE, stall.kind)
+        assertEquals(StallOutcome.ABANDONED, stall.outcome)
+        assertEquals(10_000L, stall.ms, "counted from the video stall start")
+    }
+
+    @Test
+    fun `a freeze that gave up is not counted again as abandoned on leave`() {
+        playUntilVideoStalls()
+        sample(26_500L, 700L)
+        reporter.onRecoveryGaveUp(nowMs = 28_000L)
+        reporter.onLivePlaybackStopped(nowMs = 30_000L, positionMs = 30_000L, bufferedPositionMs = 32_000L)
+        assertEquals(StallOutcome.GAVE_UP, (signals.single() as PlaybackSignal.Stall).outcome)
+    }
+
+    @Test
+    fun `a recovered freeze is not counted again as abandoned on leave`() {
+        playUntilVideoStalls()
+        sample(24_000L, 700L)
+        sample(27_500L, 730L)
+        reporter.onLivePlaybackStopped(nowMs = 40_000L, positionMs = 40_000L, bufferedPositionMs = 45_000L)
+        assertEquals(StallOutcome.RECOVERED, (signals.single() as PlaybackSignal.Stall).outcome)
+    }
+
+    @Test
     fun `healthy playback records no stall`() {
         reporter.onLivePlaybackStarted(profile(), nowMs = 0L, positionMs = 0L, videoProgressTicks = 100L)
         var ticks = 100L
