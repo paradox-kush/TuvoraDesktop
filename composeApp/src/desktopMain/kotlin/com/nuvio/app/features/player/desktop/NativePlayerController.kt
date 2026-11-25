@@ -3,7 +3,9 @@ package com.nuvio.app.features.player.desktop
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.IntSize
 import co.touchlab.kermit.Logger
-import com.nuvio.app.core.telemetry.api.PlaybackTelemetry
+import com.nuvio.app.core.telemetry.api.PlaybackEngine
+import com.nuvio.app.core.telemetry.api.PlaybackSignal
+import com.nuvio.app.core.telemetry.api.TelemetryAccess
 import com.nuvio.app.features.player.LivePlaybackStartupPolicy
 import com.nuvio.app.features.player.LiveSeekWindow
 import com.nuvio.app.features.player.MpvLiveCache
@@ -1093,11 +1095,11 @@ internal class NativePlayerController(
     private fun timedNativeDispose(current: Long): Result<Unit> {
         val startedNs = System.nanoTime()
         val result = runCatching { nativeDispose(current) }
-        PlaybackTelemetry.teardown(
-            engine = "libmpv",
-            ms = (System.nanoTime() - startedNs) / 1_000_000L,
-            failed = result.isFailure,
-        )
+        runCatching {
+            TelemetryAccess.current().recordPlayback(
+                PlaybackSignal.Teardown(PlaybackEngine.LIBMPV, (System.nanoTime() - startedNs) / 1_000_000L, failed = result.isFailure),
+            )
+        }
         return result
     }
 
@@ -1116,7 +1118,9 @@ internal class NativePlayerController(
             }
             if (callbacks.isEmpty()) return@Thread
             // A teardown that outlives its deadline is failed for the viewer even if it finishes later (which counts again as slow).
-            PlaybackTelemetry.teardown(engine = "libmpv", ms = releaseTimeoutMs, failed = true)
+            runCatching {
+                TelemetryAccess.current().recordPlayback(PlaybackSignal.Teardown(PlaybackEngine.LIBMPV, releaseTimeoutMs, failed = true))
+            }
             SwingUtilities.invokeLater {
                 callbacks.forEach { pending ->
                     runCatching {

@@ -111,7 +111,7 @@ actual fun PlatformPlayerSurface(
     val onControllerReady = engineOnControllerReady
     // Every engine failure lands in the flight recorder as closed codes (surface/engine/category/phase), never the text.
     val failureTrail = remember(sourceUrl) {
-        PlaybackFailureTrailRecorder(PlaybackFailureTrail.surfaceOf(streamType, isCatchUpPlayback))
+        PlaybackFailureTrailRecorder(PlaybackFailureTrail.surfaceOf(streamType, isCatchUpPlayback), sourceUrl)
     }
     if (DesktopHostOs.current == DesktopHostOs.MACOS ||
         DesktopHostOs.current == DesktopHostOs.WINDOWS ||

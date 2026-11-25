@@ -4,7 +4,6 @@ import com.nuvio.app.core.analytics.PostHogPrivacy
 import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.core.build.AppVersionConfig
 import com.nuvio.app.core.storage.DesktopStorage
-import com.nuvio.app.core.telemetry.api.PlaybackTelemetryBuckets
 import com.nuvio.app.features.settings.SentrySettingsRepository
 import com.posthog.PostHog
 import com.posthog.internal.PostHogMemoryPreferences
@@ -96,8 +95,6 @@ internal object DesktopTelemetry {
         started = true
         // Handler first: a failure while the service itself is built is then still seen (and handed on).
         installCrashHandler()
-        // QA mirror: read once, here, before anything can play. Off (and free) unless -Dtuvora.qa=1 / TUVORA_QA=1.
-        DesktopQaMirror.install()
         TelemetryRuntime.start(DesktopTelemetryHost { gpuName })
         Thread({ gpuName = detectGpuName() }, "TelemetryGpuProbe").apply { isDaemon = true }.start()
     }
@@ -284,8 +281,12 @@ internal class DesktopTelemetryHost(private val gpu: () -> String?) : TelemetryH
         put("hw_os_version", System.getProperty("os.version").orEmpty().take(32))
         put("hw_arch", System.getProperty("os.arch").orEmpty().take(16))
         put("hw_cpu_cores", Runtime.getRuntime().availableProcessors())
-        totalRamMb()?.let { put("hw_total_ram_mb", it) }
-        PlaybackTelemetryBuckets.ramClass(totalRamMb())?.let { put("ram_class", it) }
+        totalRamMb()?.let {
+            // `hw_ram_total_mb` is the key every platform's profile uses and the one the shared service derives `ram_class`
+            // from; `hw_total_ram_mb` is Desktop's older spelling, kept so existing queries keep working.
+            put("hw_ram_total_mb", it)
+            put("hw_total_ram_mb", it)
+        }
         put("hw_gpu", gpu() ?: "unknown")
     }
 
@@ -300,7 +301,10 @@ internal class DesktopTelemetryHost(private val gpu: () -> String?) : TelemetryH
         return buildMap {
             put("java_mb", (rt.totalMemory() - rt.freeMemory()) / mb)
             put("java_max_mb", rt.maxMemory() / mb)
-            osBean()?.let { put("ram_free_mb", it.freeMemorySize / mb) }
+            osBean()?.let {
+                put("ram_free_mb", it.freeMemorySize / mb)
+                put("avail_mb", it.freeMemorySize / mb)
+            }
             runCatching { java.lang.management.ManagementFactory.getThreadMXBean().threadCount.toLong() }.getOrNull()?.let { put("threads", it) }
             runCatching {
                 (java.lang.management.ManagementFactory.getOperatingSystemMXBean() as? com.sun.management.UnixOperatingSystemMXBean)
@@ -308,6 +312,11 @@ internal class DesktopTelemetryHost(private val gpu: () -> String?) : TelemetryH
             }.getOrNull()?.takeIf { it >= 0L }?.let { put("fds", it) }
         }
     }
+
+    /** `-Dtuvora.qa=1` or `TUVORA_QA=1`, read once when the host is created (before anything can play). */
+    override val qaMirrorEnabled: Boolean = DesktopQaMirror.enabledAtStartup()
+
+    override fun qaMirrorLine(line: String) = DesktopQaMirror.write(line)
 
     private fun totalRamMb(): Long? = osBean()?.let { it.totalMemorySize / (1024L * 1024L) }
 

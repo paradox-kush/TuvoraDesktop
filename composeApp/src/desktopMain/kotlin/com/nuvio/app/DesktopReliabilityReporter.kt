@@ -2,7 +2,6 @@ package com.nuvio.app
 
 import com.nuvio.app.core.analytics.Breadcrumbs
 import com.nuvio.app.core.build.AppVersionConfig
-import com.nuvio.app.core.telemetry.api.PlaybackTelemetryKeys
 import com.nuvio.app.core.telemetry.api.TelemetryAccess
 import com.nuvio.app.core.telemetry.internal.DesktopTelemetry
 import com.nuvio.app.core.telemetry.internal.TelemetryRuntime
@@ -44,7 +43,7 @@ internal object DesktopReliabilityReporter {
 
             val processExitTracker = DesktopProcessExitTracker.start(version)
             // What the run was doing when it died: the NEXT launch reads it back as `prev_playing` / `prev_kind` /
-            // `prev_engine` on `app_exit`. Desktop has no multiview, so there is no `prev_tiles`.
+            // `prev_engine` on `app_exit`. Desktop has no multiview: no `prev_tiles`.
             Breadcrumbs.crashWriter = object : Breadcrumbs.CrashWriter {
                 override fun onScreen(name: String) = Unit
                 override fun onPlaybackStarted(kind: String, engine: String, surface: String) =
@@ -174,14 +173,16 @@ private class DesktopProcessExitTracker private constructor(
                 put("diagnostic_source", "desktop_run_marker")
                 put("failed_app_version", failedVersion)
                 startedAt?.let { put("failed_run_started_at_ms", it) }
-                // The run's last breadcrumb, as closed values (a marker from before this change says nothing).
-                putAll(
-                    PlaybackTelemetryKeys.previousRun(
-                        playing = properties.getProperty("playing")?.let { it == "1" },
-                        kindLabel = properties.getProperty("kind"),
-                        engineLabel = properties.getProperty("engine"),
-                    ),
-                )
+                // The run's last breadcrumb. The shared `app_exit` path turns these three into `prev_playing` / `prev_kind` /
+                // `prev_engine` (closed values) and attaches the previous run's last memory sample. A marker from before
+                // this change says nothing about it, so nothing is added.
+                properties.getProperty("playing")?.let { playing ->
+                    put("was_playing", playing == "1")
+                    if (playing == "1") {
+                        properties.getProperty("kind")?.let { put("playback_kind", it.lowercase().take(24)) }
+                        properties.getProperty("engine")?.let { put("playback_engine", it.lowercase().take(24)) }
+                    }
+                }
             }
             val trail = TelemetryAccess.current().previousSessionTrail()
             val exitProps = if (trail != null) props + ("diag_trail" to trail) else props
