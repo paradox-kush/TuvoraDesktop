@@ -32,6 +32,7 @@ import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.notifications.AlertCap
 import com.nuvio.app.features.notifications.AlertClock
 import com.nuvio.app.features.notifications.AlertTimingMode
+import com.nuvio.app.features.notifications.AwayGroupState
 import com.nuvio.app.features.notifications.AwayReminder
 import com.nuvio.app.features.notifications.EpisodeReleaseNotificationsRepository
 import com.nuvio.app.features.notifications.EpisodeReleaseNotificationsUiState
@@ -247,28 +248,33 @@ internal fun LazyListScope.notificationsSettingsContent(
             isTablet = isTablet,
         ) {
             SettingsGroup(isTablet = isTablet) {
-                SettingsChipRow(
-                    title = stringResource(Res.string.settings_alerts_away_title),
-                    description = stringResource(Res.string.settings_alerts_away_description),
-                    isTablet = isTablet,
-                ) {
-                    AwayReminder.entries.forEach { choice ->
-                        Chip(
-                            label = if (choice == AwayReminder.Off) {
-                                stringResource(Res.string.settings_alerts_away_off)
-                            } else {
-                                stringResource(Res.string.settings_alerts_away_days, choice.days)
-                            },
-                            selected = uiState.awayReminder == choice,
-                            onClick = { actions.setAwayReminder(choice) },
-                        )
+                if (uiState.awayGroup == AwayGroupState.Denied) {
+                    // The choice is kept; it takes effect once the phone allows notifications again.
+                    PermissionDeniedPanel(isTablet = isTablet, onOpenSettings = actions.openSystemSettings)
+                } else {
+                    SettingsChipRow(
+                        title = stringResource(Res.string.settings_alerts_away_title),
+                        description = stringResource(Res.string.settings_alerts_away_description),
+                        isTablet = isTablet,
+                    ) {
+                        AwayReminder.entries.forEach { choice ->
+                            Chip(
+                                label = if (choice == AwayReminder.Off) {
+                                    stringResource(Res.string.settings_alerts_away_off)
+                                } else {
+                                    stringResource(Res.string.settings_alerts_away_days, choice.days)
+                                },
+                                selected = uiState.awayReminder == choice,
+                                onClick = { actions.setAwayReminder(choice) },
+                            )
+                        }
                     }
                 }
             }
         }
     }
 
-    item {
+    if (showEpisodeAlerts) item {
         SettingsSection(
             title = stringResource(Res.string.settings_notifications_section_test),
             isTablet = isTablet,
